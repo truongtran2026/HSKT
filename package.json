@@ -1,0 +1,35 @@
+{
+  "name": "ptools-adn1",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "import-legacy": "tsx scripts/import-legacy.ts",
+    "import-device-v2": "tsx scripts/import-device-v2.ts",
+    "backfill-device-category": "tsx scripts/backfill-device-category.ts",
+    "cleanup-empty-device-ports": "tsx scripts/cleanup-empty-device-ports.ts",
+    "migrate-notes-to-position-columns": "tsx scripts/migrate-notes-to-position-columns.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "dotenv": "^16.4.5",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}

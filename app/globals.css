@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-50 text-slate-800;
+}
+
+/* Dùng chung cho form sửa/thêm dữ liệu (PortTable và các form sau này) */
+.input {
+  @apply w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500;
+}
+.btn-primary {
+  @apply rounded-md bg-primary-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50;
+}
+.btn-secondary {
+  @apply rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50;
+}

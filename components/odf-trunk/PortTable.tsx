@@ -1,0 +1,1280 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { compareValues } from "@/lib/sort";
+import { useSort } from "@/lib/useSort";
+import { matchesFilter } from "@/lib/tableFilter";
+import type { CircuitOptions } from "@/lib/circuitOptions";
+import SortableTh from "@/components/ui/SortableTh";
+import FilterInput from "@/components/ui/FilterInput";
+
+export interface PortView {
+  id: string;
+  portNumber: number;
+  fiberNumber: number | null;
+  status: string;
+  linkRole: "tx" | "rx" | "single" | null;
+  transitText: string | null;
+  transitLinkId: string | null;
+  circuit: {
+    id: string;
+    name: string;
+    interfaceType: string | null;
+    counterpartText: string | null;
+    responsePlanText: string | null;
+    executionStationText: string | null;
+    notes: string | null;
+    circuitRole: string;
+  } | null;
+}
+
+interface Group {
+  ports: PortView[]; // 1 hoặc 2 port, đã sắp theo port_number
+}
+
+// Gộp hiển thị 2 port liên tiếp cùng circuit_id (rowspan) — CHỈ khi liền kề
+// đúng 1 số port. Không liền kề hoặc chỉ 1 sợi -> mỗi port 1 dòng riêng, luôn
+// hiện đầy đủ tên luồng (nguyên tắc bắt buộc, xem CLAUDE.md).
+function buildGroups(ports: PortView[]): Group[] {
+  const groups: Group[] = [];
+  let i = 0;
+  while (i < ports.length) {
+    const cur = ports[i];
+    const next = ports[i + 1];
+    if (next && cur.circuit && next.circuit && cur.circuit.id === next.circuit.id && next.portNumber - cur.portNumber === 1) {
+      groups.push({ ports: [cur, next] });
+      i += 2;
+    } else {
+      groups.push({ ports: [cur] });
+      i += 1;
+    }
+  }
+  return groups;
+}
+
+// Toàn bộ port (trong rack) đang thuộc về 1 luồng — DÙNG CHO SỬA/XÓA/COPY/DI
+// CHUYỂN, khác với buildGroups() (chỉ dùng để quyết định HIỂN THỊ rowspan).
+// Bắt buộc tách riêng 2 khái niệm này: 1 luồng ghép 2 port KHÔNG liền kề vẫn
+// phải sửa/xóa được như 1 thể thống nhất, dù buildGroups() luôn tách chúng
+// thành 2 dòng riêng để hiển thị đúng (CLAUDE.md #2 — không liền kề thì luôn
+// hiện đầy đủ tên luồng từng dòng).
+function linkedPortsFor(allPorts: PortView[], circuitId: string): PortView[] {
+  return allPorts.filter((p) => p.circuit?.id === circuitId).sort((a, b) => a.portNumber - b.portNumber);
+}
+
+// Sắp xếp áp dụng ở CẤP NHÓM (sau khi đã gộp Tx/Rx theo port vật lý liền kề)
+// — không sắp xếp mảng ports thô, để không phá vỡ quy tắc gộp rowspan (luôn
+// dựa theo port_number liền kề, xem buildGroups ở trên và CLAUDE.md #1/#2).
+type SortKey = "port" | "fiber" | "name" | "interface" | "counterpart" | "responsePlan" | "station" | "notes";
+
+function groupValue(g: Group, key: SortKey): string | number | null {
+  const first = g.ports[0];
+  const c = first.circuit;
+  switch (key) {
+    case "port":
+      return first.portNumber;
+    case "fiber":
+      return first.fiberNumber;
+    case "name":
+      return c?.name ?? null;
+    case "interface":
+      return c?.interfaceType ?? null;
+    case "counterpart":
+      return c?.counterpartText ?? null;
+    case "responsePlan":
+      return c?.responsePlanText ?? null;
+    case "station":
+      return c?.executionStationText ?? null;
+    case "notes":
+      return c?.notes ?? null;
+  }
+}
+
+// Lọc theo cột dùng thêm "transit" (Chuyển tiếp) — không đưa vào SortKey vì
+// 2 port của 1 nhóm có thể có nội dung khác nhau, không có 1 giá trị đại
+// diện rõ ràng để SẮP XẾP, nhưng LỌC thì gộp (nối) nội dung cả 2 port lại
+// vẫn hợp lý (khớp nếu 1 trong 2 port chứa từ khóa).
+type FilterKey = SortKey | "transit";
+
+function filterValue(g: Group, key: FilterKey): string | number | null {
+  if (key === "transit") return g.ports.map((p) => p.transitText ?? "").join(" ");
+  return groupValue(g, key);
+}
+
+const FILTER_KEYS: FilterKey[] = ["port", "fiber", "name", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
+
+interface ClipboardData {
+  sourcePortIds: string[];
+  label: string;
+  name: string;
+  interfaceType: string;
+  counterpartText: string;
+  responsePlanText: string;
+  executionStationText: string;
+  notes: string;
+}
+
+interface EditState {
+  portIds: string[]; // Port ĐANG gắn với luồng này trước khi lưu (1 hoặc 2) — [] coi như chưa có gì với luồng mới tạo trên portIds[0]
+  circuitId: string | null; // null = đang tạo luồng mới
+  name: string;
+  interfaceType: string;
+  transitText: string; // dùng CHUNG cho cả 2 port khi ghép (xem saveEdit)
+  counterpartText: string;
+  responsePlanText: string;
+  executionStationText: string;
+  notes: string;
+  mergeEnabled: boolean; // đang ghép port chính với 1 port khác (liền kề hoặc không)
+  secondPortNumber: string; // số port ghép cùng, dạng text để gõ tự do
+  secondPortId: string | null; // port thực tương ứng, null nếu chưa hợp lệ
+  secondPortError: string | null;
+}
+
+// Tìm port theo SỐ port gõ tay (không nhất thiết liền kề) trong cùng rack —
+// phục vụ yêu cầu "ghép 2 port không liền kề": gõ số port khác vào là tự
+// đồng bộ, không bắt buộc phải là port kế tiếp nữa.
+function resolveSecondPort(
+  portsList: PortView[],
+  numberText: string,
+  primaryPortId: string,
+  currentCircuitId: string | null
+): { id: string | null; error: string | null } {
+  const trimmed = numberText.trim();
+  if (!trimmed) return { id: null, error: null };
+  const n = Number(trimmed);
+  if (!Number.isInteger(n)) return { id: null, error: "Số port không hợp lệ." };
+  const found = portsList.find((p) => p.portNumber === n);
+  if (!found) return { id: null, error: `Không tìm thấy port ${n} trong rack này.` };
+  if (found.id === primaryPortId) return { id: null, error: "Không thể ghép với chính port đang thao tác." };
+  // Port đã thuộc CHÍNH luồng đang sửa (vd đang ghép sẵn, gõ lại đúng số cũ)
+  // -> vẫn hợp lệ, không phải "đang có luồng khác".
+  if (found.circuit && found.circuit.id !== currentCircuitId) {
+    return { id: null, error: `Port ${n} đang có luồng khác, không ghép được.` };
+  }
+  return { id: found.id, error: null };
+}
+
+// Ghép/bỏ ghép 1 tên trạm vào chuỗi "Trạm thực hiện" (nối bằng ", ") — cho
+// phép chọn NHIỀU trạm cùng lúc bằng cách bấm nhiều chip, vẫn gõ tay tự do
+// được nếu trạm chưa có trong danh sách gợi ý.
+function toggleStationToken(text: string, token: string): string {
+  const tokens = text
+    .split(/[,;]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const exists = tokens.some((t) => t.toLowerCase() === token.toLowerCase());
+  const next = exists ? tokens.filter((t) => t.toLowerCase() !== token.toLowerCase()) : [...tokens, token];
+  return next.join(", ");
+}
+
+// Giai đoạn 4 (architecture.md mục 4.2): di chuyển 1 luồng từ port/rack nguồn
+// sang port/rack đích — thao tác riêng, không phải xóa-rồi-nhập-tay lại. Đích
+// cũng chọn được 2 port (liền kề hoặc không), giống cơ chế "Port ghép cùng"
+// ở form Sửa — mọi trường/cột khác của luồng giữ nguyên, chỉ port thay đổi.
+interface MoveState {
+  sourcePortIds: string[];
+  circuitId: string;
+  circuitName: string;
+  racks: { id: string; code: string; cable_route_name: string | null }[];
+  targetRackId: string | null;
+  targetPorts: { id: string; port_number: number; status: string }[];
+  targetPortsLoading: boolean;
+  targetPortId: string | null;
+  mergeEnabled: boolean;
+  secondTargetPortNumber: string;
+  secondTargetPortId: string | null;
+  secondTargetPortError: string | null;
+}
+
+// Giống resolveSecondPort nhưng tra trên danh sách port RACK ĐÍCH đã tải
+// riêng (chỉ có id/port_number/status, không có "circuit" đầy đủ).
+function resolveMoveTargetPort(
+  targetPorts: MoveState["targetPorts"],
+  numberText: string,
+  primaryPortId: string | null
+): { id: string | null; error: string | null } {
+  const trimmed = numberText.trim();
+  if (!trimmed) return { id: null, error: null };
+  const n = Number(trimmed);
+  if (!Number.isInteger(n)) return { id: null, error: "Số port không hợp lệ." };
+  const found = targetPorts.find((p) => p.port_number === n);
+  if (!found) return { id: null, error: `Không tìm thấy port ${n} ở rack đích.` };
+  if (found.id === primaryPortId) return { id: null, error: "Không thể ghép với chính port đích đang chọn." };
+  if (found.status !== "unused") return { id: null, error: `Port ${n} đang có luồng khác, không ghép được.` };
+  return { id: found.id, error: null };
+}
+
+// Độ rộng cột co dãn được (px) — nhớ lại lựa chọn của người dùng giữa các
+// lần vào trang (áp dụng chung cho mọi rack, không riêng từng rack).
+type ResizableCol = "name" | "transit" | "responsePlan";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, transit: 200, responsePlan: 220 };
+const COL_WIDTHS_STORAGE_KEY = "odf-trunk-col-widths";
+
+function loadColWidths(): Record<ResizableCol, number> {
+  if (typeof window === "undefined") return DEFAULT_COL_WIDTHS;
+  try {
+    const saved = window.localStorage.getItem(COL_WIDTHS_STORAGE_KEY);
+    return saved ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(saved) } : DEFAULT_COL_WIDTHS;
+  } catch {
+    return DEFAULT_COL_WIDTHS;
+  }
+}
+
+export default function PortTable({ rackId, initialPorts, options }: { rackId: string; initialPorts: PortView[]; options: CircuitOptions }) {
+  const router = useRouter();
+  const [ports] = useState(initialPorts);
+  const [edit, setEdit] = useState<EditState | null>(null);
+  const [move, setMove] = useState<MoveState | null>(null);
+  const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [colWidths, setColWidths] = useState<Record<ResizableCol, number>>(loadColWidths);
+  const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
+  const [filters, setFilters] = useState<Record<FilterKey, string>>({
+    port: "",
+    fiber: "",
+    name: "",
+    interface: "",
+    transit: "",
+    counterpart: "",
+    responsePlan: "",
+    station: "",
+    notes: "",
+  });
+
+  function setFilter(key: FilterKey, value: string) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function resizeCol(key: ResizableCol, width: number) {
+    setColWidths((prev) => {
+      const next = { ...prev, [key]: Math.max(120, Math.min(600, width)) };
+      try {
+        window.localStorage.setItem(COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* bỏ qua nếu localStorage không dùng được */
+      }
+      return next;
+    });
+  }
+
+  const groups = buildGroups(ports);
+  const filteredGroups = useMemo(
+    () => groups.filter((g) => FILTER_KEYS.every((k) => matchesFilter(filterValue(g, k), filters[k]))),
+    [groups, filters]
+  );
+  const sortedGroups = useMemo(() => {
+    const arr = [...filteredGroups].sort((a, b) => compareValues(groupValue(a, sortKey), groupValue(b, sortKey)));
+    return sortDir === "desc" ? arr.reverse() : arr;
+  }, [filteredGroups, sortKey, sortDir]);
+
+  // Toàn bộ port đang "dính" vào phiên sửa/tạo hiện tại — gồm portIds gốc +
+  // port thứ 2 đang chọn ghép (kể cả khi port đó nằm ở 1 group HIỂN THỊ khác
+  // vì không liền kề). Dùng để quyết định group nào cần "biết" về phiên sửa
+  // này, dù group đó không phải nơi hiện form.
+  const sessionPortIds = edit
+    ? [...edit.portIds, ...(edit.mergeEnabled && edit.secondPortId && !edit.portIds.includes(edit.secondPortId) ? [edit.secondPortId] : [])]
+    : [];
+
+  // Group này có LIÊN QUAN tới phiên sửa/tạo đang mở không (để ẩn nút thao
+  // tác thường đi, tránh bấm chồng chéo trong lúc đang ghép port khác rack).
+  function editInvolvesGroup(group: Group): boolean {
+    return group.ports.some((p) => sessionPortIds.includes(p.id));
+  }
+
+  // Group này có phải nơi HIỆN FORM sửa không (luôn là group chứa port
+  // chính — portIds[0]) — group liên quan còn lại chỉ hiện ghi chú tham chiếu.
+  function isEditingGroup(group: Group): boolean {
+    if (!edit) return false;
+    return group.ports.some((p) => p.id === edit.portIds[0]);
+  }
+
+  function openEditExisting(group: Group) {
+    setMove(null);
+    const circuit = group.ports[0].circuit!;
+    // Port ĐANG BẤM "Sửa" luôn là port CỐ ĐỊNH (portIds[0]) — port còn lại
+    // (nếu có, kể cả khi không liền kề) là port có thể đổi sang số khác qua
+    // "Port ghép cùng". Trước đây lấy port SỐ NHỎ HƠN làm cố định bất kể bấm
+    // từ đâu, gây hiểu nhầm "đẩy nhầm chiều" khi sửa từ port số lớn.
+    const clickedPort = group.ports[0];
+    const linkedPorts = linkedPortsFor(ports, circuit.id);
+    const otherPort = linkedPorts.find((p) => p.id !== clickedPort.id) ?? null;
+    const isPair = linkedPorts.length === 2;
+    setEdit({
+      portIds: otherPort ? [clickedPort.id, otherPort.id] : [clickedPort.id],
+      circuitId: circuit.id,
+      name: circuit.name,
+      interfaceType: circuit.interfaceType ?? "",
+      transitText: clickedPort.transitText ?? "",
+      counterpartText: circuit.counterpartText ?? "",
+      responsePlanText: circuit.responsePlanText ?? "",
+      executionStationText: circuit.executionStationText ?? "",
+      notes: circuit.notes ?? "",
+      mergeEnabled: isPair,
+      secondPortNumber: otherPort ? String(otherPort.portNumber) : "",
+      secondPortId: otherPort ? otherPort.id : null,
+      secondPortError: null,
+    });
+    setError(null);
+  }
+
+  function openCreateNew(port: PortView, prefill?: ClipboardData) {
+    setMove(null);
+    const idx = ports.findIndex((p) => p.id === port.id);
+    const next = ports[idx + 1];
+    const adjacentEligible = port.portNumber % 2 === 1 && !!next && !next.circuit && next.portNumber - port.portNumber === 1;
+    setEdit({
+      portIds: [port.id],
+      circuitId: null,
+      name: prefill?.name ?? "",
+      interfaceType: prefill?.interfaceType ?? "",
+      transitText: port.transitText ?? "",
+      counterpartText: prefill?.counterpartText ?? "",
+      responsePlanText: prefill?.responsePlanText ?? "",
+      executionStationText: prefill?.executionStationText ?? "",
+      notes: prefill?.notes ?? "",
+      mergeEnabled: adjacentEligible,
+      secondPortNumber: adjacentEligible ? String(next!.portNumber) : "",
+      secondPortId: adjacentEligible ? next!.id : null,
+      secondPortError: null,
+    });
+    setError(null);
+  }
+
+  function cancelEdit() {
+    setEdit(null);
+    setError(null);
+  }
+
+  // Bấm tick "Ghép port" -> bật kèm gợi ý mặc định (port liền kề nếu còn
+  // trống); bỏ tick -> chỉ tắt cờ, giữ nguyên số đã gõ để lỡ tick lại không
+  // mất công gõ lại.
+  function toggleMerge(checked: boolean) {
+    if (!edit) return;
+    if (!checked) {
+      setEdit({ ...edit, mergeEnabled: false });
+      return;
+    }
+    let numberText = edit.secondPortNumber;
+    if (!numberText) {
+      const idx = ports.findIndex((p) => p.id === edit.portIds[0]);
+      const cur = ports[idx];
+      const next = ports[idx + 1];
+      const adjacentEligible = !!cur && cur.portNumber % 2 === 1 && !!next && !next.circuit && next.portNumber - cur.portNumber === 1;
+      if (adjacentEligible) numberText = String(next!.portNumber);
+    }
+    const { id, error: err } = resolveSecondPort(ports, numberText, edit.portIds[0], edit.circuitId);
+    setEdit({ ...edit, mergeEnabled: true, secondPortNumber: numberText, secondPortId: id, secondPortError: err });
+  }
+
+  function changeSecondPortNumber(text: string) {
+    if (!edit) return;
+    const { id, error: err } = resolveSecondPort(ports, text, edit.portIds[0], edit.circuitId);
+    setEdit({ ...edit, secondPortNumber: text, secondPortId: id, secondPortError: err });
+  }
+
+  async function saveEdit() {
+    if (!edit) return;
+    if (edit.mergeEnabled && edit.secondPortNumber.trim() && !edit.secondPortId) {
+      setError(edit.secondPortError ?? "Port ghép cùng không hợp lệ.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const isNew = edit.circuitId === null;
+      const primaryPortId = edit.portIds[0];
+      const originalPortIds = isNew ? [] : edit.portIds;
+      const activePortIds = edit.mergeEnabled && edit.secondPortId ? [primaryPortId, edit.secondPortId] : [primaryPortId];
+
+      // Port trống, chưa từng có luồng, và người dùng CHỈ điền "Chuyển tiếp"
+      // (không có tên luồng hay trường nào khác của luồng) -> KHÔNG tạo
+      // circuit rỗng/"(chưa đặt tên)" chỉ vì 1 ghi chú vị trí đấu nối — chỉ
+      // ghi/xóa "Chuyển tiếp" trực tiếp trên port, port vẫn ở trạng thái
+      // trống. Đây là cách sửa/xóa "Chuyển tiếp" cho 1 port trống mà không
+      // bắt buộc phải đặt tên luồng.
+      const hasCircuitData = !!(
+        edit.name.trim() ||
+        edit.interfaceType.trim() ||
+        edit.counterpartText.trim() ||
+        edit.responsePlanText.trim() ||
+        edit.executionStationText.trim() ||
+        edit.notes.trim()
+      );
+      if (isNew && !hasCircuitData) {
+        const transitOnly = edit.transitText.trim();
+        for (const portId of activePortIds) {
+          const port = ports.find((p) => p.id === portId);
+          if (port?.transitLinkId) {
+            if (transitOnly === "") {
+              const { error: delErr } = await supabase.from("transit_links").delete().eq("id", port.transitLinkId);
+              if (delErr) throw delErr;
+            } else {
+              const { error: updErr } = await supabase.from("transit_links").update({ raw_text: transitOnly }).eq("id", port.transitLinkId);
+              if (updErr) throw updErr;
+            }
+          } else if (transitOnly !== "") {
+            const { error: insErr } = await supabase
+              .from("transit_links")
+              .insert({ source_port_id: portId, target_type: "text_only", raw_text: transitOnly });
+            if (insErr) throw insErr;
+          }
+        }
+        setEdit(null);
+        router.refresh();
+        return;
+      }
+
+      const circuitFields = {
+        name: edit.name.trim() || "(chưa đặt tên)",
+        interface_type: edit.interfaceType.trim() || null,
+        counterpart_text: edit.counterpartText.trim() || null,
+        response_plan_text: edit.responsePlanText.trim() || null,
+        execution_station_text: edit.executionStationText.trim() || null,
+        notes: edit.notes.trim() || null,
+      };
+
+      let circuitId = edit.circuitId;
+      if (circuitId) {
+        const { error: err } = await supabase.from("circuits").update(circuitFields).eq("id", circuitId);
+        if (err) throw err;
+      } else {
+        const { data, error: err } = await supabase.from("circuits").insert(circuitFields).select("id").single();
+        if (err) throw err;
+        circuitId = data.id as string;
+      }
+
+      const removedPortIds = originalPortIds.filter((id) => !activePortIds.includes(id));
+      const addedPortIds = activePortIds.filter((id) => !originalPortIds.includes(id));
+
+      // Port bị bỏ khỏi cặp (tách luồng, vd nhả tick vì tick nhầm trước đó):
+      // gỡ liên kết + XÓA LUÔN "Chuyển tiếp" của port đó (dữ liệu cũ không
+      // còn hợp lệ nữa), trả port về trống — port đang giữ luồng (primary)
+      // không đổi gì.
+      if (removedPortIds.length > 0) {
+        const { error: unlinkErr } = await supabase
+          .from("port_circuit_links")
+          .delete()
+          .eq("circuit_id", circuitId)
+          .in("port_id", removedPortIds);
+        if (unlinkErr) throw unlinkErr;
+        const { error: statusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", removedPortIds);
+        if (statusErr) throw statusErr;
+        for (const portId of removedPortIds) {
+          const port = ports.find((p) => p.id === portId);
+          if (port?.transitLinkId) {
+            const { error: delErr } = await supabase.from("transit_links").delete().eq("id", port.transitLinkId);
+            if (delErr) throw delErr;
+          }
+        }
+      }
+
+      // Nâng từ 1 port (single) lên cặp: đổi lại link_role port chính từ
+      // "single" -> "tx" cho đúng nghĩa.
+      if (!isNew && activePortIds.length === 2 && originalPortIds.length === 1) {
+        const { error: roleErr } = await supabase
+          .from("port_circuit_links")
+          .update({ link_role: "tx" })
+          .eq("circuit_id", circuitId)
+          .eq("port_id", primaryPortId);
+        if (roleErr) throw roleErr;
+      }
+      // Ngược lại: từ cặp về 1 port (tách luồng) -> đổi lại "single".
+      if (!isNew && activePortIds.length === 1 && originalPortIds.length === 2) {
+        const { error: roleErr } = await supabase
+          .from("port_circuit_links")
+          .update({ link_role: "single" })
+          .eq("circuit_id", circuitId)
+          .eq("port_id", primaryPortId);
+        if (roleErr) throw roleErr;
+      }
+
+      if (addedPortIds.length > 0) {
+        const linkRows: { port_id: string; circuit_id: string; link_role: "tx" | "rx" | "single" }[] = addedPortIds.map((portId) => ({
+          port_id: portId,
+          circuit_id: circuitId!,
+          link_role: portId === primaryPortId ? (activePortIds.length === 2 ? "tx" : "single") : "rx",
+        }));
+        const { error: linkErr } = await supabase.from("port_circuit_links").insert(linkRows);
+        if (linkErr) throw linkErr;
+        const { error: statusErr } = await supabase.from("ports").update({ status: "in_use" }).in("id", addedPortIds);
+        if (statusErr) throw statusErr;
+      }
+
+      // "Chuyển tiếp" dùng CHUNG 1 giá trị cho cả 2 port khi đang ghép — ghi
+      // giống nhau cho mọi port đang active để bảng hiển thị gộp đúng.
+      const transitText = edit.transitText.trim();
+      for (const portId of activePortIds) {
+        const port = ports.find((p) => p.id === portId);
+        if (port?.transitLinkId) {
+          if (transitText === "") {
+            const { error: delErr } = await supabase.from("transit_links").delete().eq("id", port.transitLinkId);
+            if (delErr) throw delErr;
+          } else {
+            const { error: updErr } = await supabase.from("transit_links").update({ raw_text: transitText }).eq("id", port.transitLinkId);
+            if (updErr) throw updErr;
+          }
+        } else if (transitText !== "") {
+          const { error: insErr } = await supabase
+            .from("transit_links")
+            .insert({ source_port_id: portId, target_type: "text_only", raw_text: transitText });
+          if (insErr) throw insErr;
+        }
+      }
+
+      setEdit(null);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteGroup(group: Group) {
+    const circuit = group.ports[0].circuit;
+    if (!circuit) return;
+    const linkedPorts = linkedPortsFor(ports, circuit.id);
+    if (!confirm(`Xóa luồng "${circuit.name}"? Sẽ giải phóng port ${linkedPorts.map((p) => p.portNumber).join(", ")} về trạng thái trống.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const portIds = linkedPorts.map((p) => p.id);
+      const { error: linkErr } = await supabase.from("port_circuit_links").delete().eq("circuit_id", circuit.id);
+      if (linkErr) throw linkErr;
+      const { error: circuitErr } = await supabase.from("circuits").delete().eq("id", circuit.id);
+      if (circuitErr) throw circuitErr;
+      const { error: statusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", portIds);
+      if (statusErr) throw statusErr;
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function copyGroup(group: Group) {
+    const c = group.ports[0].circuit;
+    if (!c) return;
+    const linkedPorts = linkedPortsFor(ports, c.id);
+    const portNumbers = linkedPorts.map((p) => p.portNumber).join("-");
+    setClipboard({
+      sourcePortIds: linkedPorts.map((p) => p.id),
+      label: `Port ${portNumbers}: ${c.name}`,
+      name: c.name,
+      interfaceType: c.interfaceType ?? "",
+      counterpartText: c.counterpartText ?? "",
+      responsePlanText: c.responsePlanText ?? "",
+      executionStationText: c.executionStationText ?? "",
+      notes: c.notes ?? "",
+    });
+  }
+
+  // Giống isEditingGroup: group "chính" hiện form là group chứa port đầu
+  // tiên trong sourcePortIds — group liên quan còn lại (không liền kề) chỉ
+  // hiện ghi chú tham chiếu (xem moveInvolvesGroup).
+  function isMovingGroup(group: Group): boolean {
+    if (!move) return false;
+    return group.ports.some((p) => p.id === move.sourcePortIds[0]);
+  }
+
+  function moveInvolvesGroup(group: Group): boolean {
+    if (!move) return false;
+    return group.ports.some((p) => move.sourcePortIds.includes(p.id));
+  }
+
+  async function openMove(group: Group) {
+    const circuit = group.ports[0].circuit!;
+    const linkedPorts = linkedPortsFor(ports, circuit.id);
+    setEdit(null);
+    setError(null);
+    setMove({
+      sourcePortIds: linkedPorts.map((p) => p.id),
+      circuitId: circuit.id,
+      circuitName: circuit.name,
+      racks: [],
+      targetRackId: null,
+      targetPorts: [],
+      targetPortsLoading: false,
+      targetPortId: null,
+      mergeEnabled: false,
+      secondTargetPortNumber: "",
+      secondTargetPortId: null,
+      secondTargetPortError: null,
+    });
+    const { data, error: err } = await supabase
+      .from("racks")
+      .select("id, code, cable_route_name")
+      .eq("domain", "trunk")
+      .order("code", { ascending: true });
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setMove((m) => (m ? { ...m, racks: (data ?? []) as MoveState["racks"] } : m));
+  }
+
+  async function selectTargetRack(targetRackId: string) {
+    setMove((m) =>
+      m
+        ? {
+            ...m,
+            targetRackId,
+            targetPorts: [],
+            targetPortId: null,
+            mergeEnabled: false,
+            secondTargetPortNumber: "",
+            secondTargetPortId: null,
+            secondTargetPortError: null,
+            targetPortsLoading: true,
+          }
+        : m
+    );
+    if (!targetRackId) return;
+    const { data, error: err } = await supabase
+      .from("ports")
+      .select("id, port_number, status")
+      .eq("rack_id", targetRackId)
+      .order("port_number", { ascending: true });
+    if (err) {
+      setError(err.message);
+      setMove((m) => (m ? { ...m, targetPortsLoading: false } : m));
+      return;
+    }
+    setMove((m) => (m ? { ...m, targetPorts: (data ?? []) as MoveState["targetPorts"], targetPortsLoading: false } : m));
+  }
+
+  function selectTargetPort(targetPortId: string) {
+    setMove((m) =>
+      m ? { ...m, targetPortId: targetPortId || null, mergeEnabled: false, secondTargetPortNumber: "", secondTargetPortId: null, secondTargetPortError: null } : m
+    );
+  }
+
+  function toggleMoveMerge(checked: boolean) {
+    setMove((m) => {
+      if (!m) return m;
+      if (!checked) return { ...m, mergeEnabled: false };
+      const { id, error: err } = resolveMoveTargetPort(m.targetPorts, m.secondTargetPortNumber, m.targetPortId);
+      return { ...m, mergeEnabled: true, secondTargetPortId: id, secondTargetPortError: err };
+    });
+  }
+
+  function changeMoveSecondPortNumber(text: string) {
+    setMove((m) => {
+      if (!m) return m;
+      const { id, error: err } = resolveMoveTargetPort(m.targetPorts, text, m.targetPortId);
+      return { ...m, secondTargetPortNumber: text, secondTargetPortId: id, secondTargetPortError: err };
+    });
+  }
+
+  function cancelMove() {
+    setMove(null);
+    setError(null);
+  }
+
+  async function confirmMove() {
+    if (!move || !move.targetPortId) return;
+    if (move.mergeEnabled && move.secondTargetPortNumber.trim() && !move.secondTargetPortId) {
+      setError(move.secondTargetPortError ?? "Port đích ghép cùng không hợp lệ.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const destPortIds =
+        move.mergeEnabled && move.secondTargetPortId ? [move.targetPortId, move.secondTargetPortId] : [move.targetPortId];
+
+      const linkRows: { port_id: string; circuit_id: string; link_role: "tx" | "rx" | "single" }[] =
+        destPortIds.length === 2
+          ? [
+              { port_id: destPortIds[0], circuit_id: move.circuitId, link_role: "tx" },
+              { port_id: destPortIds[1], circuit_id: move.circuitId, link_role: "rx" },
+            ]
+          : [{ port_id: destPortIds[0], circuit_id: move.circuitId, link_role: "single" }];
+      const { error: linkErr } = await supabase.from("port_circuit_links").insert(linkRows);
+      if (linkErr) throw linkErr;
+      const { error: statusErr } = await supabase.from("ports").update({ status: "in_use" }).in("id", destPortIds);
+      if (statusErr) throw statusErr;
+
+      // Theo đúng architecture.md mục 4.2: luôn hỏi xác nhận trước khi xóa
+      // dữ liệu port nguồn. Không đồng ý -> cho phép luồng gán tạm cả 2 nơi
+      // (đang chuyển đổi ứng cứu).
+      const removeSource = confirm(
+        `Đã gán luồng "${move.circuitName}" sang port mới. Xóa dữ liệu ở port nguồn (port ${move.sourcePortIds.length === 2 ? "cũ (2 sợi)" : "cũ"}) luôn không?\n\nChọn Hủy nếu muốn giữ tạm ở cả 2 nơi trong lúc chuyển đổi ứng cứu.`
+      );
+      if (removeSource) {
+        const { error: delErr } = await supabase
+          .from("port_circuit_links")
+          .delete()
+          .eq("circuit_id", move.circuitId)
+          .in("port_id", move.sourcePortIds);
+        if (delErr) throw delErr;
+        const { error: srcStatusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", move.sourcePortIds);
+        if (srcStatusErr) throw srcStatusErr;
+      }
+
+      setMove(null);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      {error && <div className="mb-3 rounded-md bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">Lỗi: {error}</div>}
+      {clipboard && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <span>
+            📋 Đang copy: <strong>{clipboard.label}</strong> — bấm &quot;Dán&quot; ở 1 port trống để dùng lại dữ liệu này.
+          </span>
+          <button className="text-amber-700 hover:underline" onClick={() => setClipboard(null)}>
+            Hủy copy
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            <col style={{ width: 56 }} />
+            <col style={{ width: 56 }} />
+            <col style={{ width: colWidths.name }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: colWidths.transit }} />
+            <col style={{ width: 170 }} />
+            <col style={{ width: colWidths.responsePlan }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 170 }} />
+            <col style={{ width: 200 }} />
+          </colgroup>
+          <thead className="bg-primary-50 text-primary-800">
+            <tr>
+              <SortableTh label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <SortableTh label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <ResizableTh
+                label="Tên luồng"
+                width={colWidths.name}
+                onResize={(w) => resizeCol("name", w)}
+                sortKey="name"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableTh label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <ResizableTh
+                label="Chuyển tiếp"
+                width={colWidths.transit}
+                onResize={(w) => resizeCol("transit", w)}
+              />
+              <SortableTh label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <ResizableTh
+                label="PA ứng cứu"
+                width={colWidths.responsePlan}
+                onResize={(w) => resizeCol("responsePlan", w)}
+                sortKey="responsePlan"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableTh label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <SortableTh label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+              <th className="px-3 py-2 text-left font-semibold">Thao tác</th>
+            </tr>
+            <tr className="bg-white">
+              <th className="px-2 py-1">
+                <FilterInput value={filters.port} onChange={(v) => setFilter("port", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.fiber} onChange={(v) => setFilter("fiber", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.name} onChange={(v) => setFilter("name", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.interface} onChange={(v) => setFilter("interface", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.transit} onChange={(v) => setFilter("transit", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.counterpart} onChange={(v) => setFilter("counterpart", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.responsePlan} onChange={(v) => setFilter("responsePlan", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.station} onChange={(v) => setFilter("station", v)} />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.notes} onChange={(v) => setFilter("notes", v)} />
+              </th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {sortedGroups.length === 0 && (
+              <tr>
+                <td colSpan={10} className="px-4 py-6 text-center text-slate-400">
+                  Không tìm thấy port nào khớp bộ lọc.
+                </td>
+              </tr>
+            )}
+            {sortedGroups.map((group) => {
+              const key = group.ports.map((p) => p.id).join("-");
+              if (isEditingGroup(group) || (edit && edit.circuitId === null && edit.portIds[0] === group.ports[0].id)) {
+                return (
+                  <EditRow
+                    key={key}
+                    edit={edit!}
+                    options={options}
+                    onChange={setEdit}
+                    onToggleMerge={toggleMerge}
+                    onSecondPortNumberChange={changeSecondPortNumber}
+                    onSave={saveEdit}
+                    onCancel={cancelEdit}
+                    busy={busy}
+                    colSpan={10}
+                  />
+                );
+              }
+              if (isMovingGroup(group)) {
+                return (
+                  <MoveRow
+                    key={key}
+                    move={move!}
+                    onSelectRack={selectTargetRack}
+                    onSelectPort={selectTargetPort}
+                    onToggleMerge={toggleMoveMerge}
+                    onSecondPortNumberChange={changeMoveSecondPortNumber}
+                    onConfirm={confirmMove}
+                    onCancel={cancelMove}
+                    busy={busy}
+                    colSpan={10}
+                  />
+                );
+              }
+              // Port kia của 1 cặp KHÔNG liền kề đang được sửa/di chuyển ở
+              // 1 dòng khác (xem sessionPortIds/moveInvolvesGroup) — không
+              // hiện nút thao tác ở đây để tránh bấm chồng chéo lên cùng 1
+              // luồng từ 2 nơi khác nhau cùng lúc.
+              if (editInvolvesGroup(group)) {
+                const primaryPortNumber = ports.find((p) => p.id === edit!.portIds[0])?.portNumber;
+                return group.ports.map((port) => (
+                  <tr key={port.id} className="border-t border-slate-100 bg-primary-50/40 text-slate-400 italic">
+                    <td className="px-3 py-2">{port.portNumber}</td>
+                    <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>
+                    <td className="px-3 py-2" colSpan={8}>
+                      Đang được ghép/sửa cùng port {primaryPortNumber} ở dòng đang sửa.
+                    </td>
+                  </tr>
+                ));
+              }
+              if (moveInvolvesGroup(group)) {
+                const primaryPortNumber = ports.find((p) => p.id === move!.sourcePortIds[0])?.portNumber;
+                return group.ports.map((port) => (
+                  <tr key={port.id} className="border-t border-slate-100 bg-amber-50/40 text-slate-400 italic">
+                    <td className="px-3 py-2">{port.portNumber}</td>
+                    <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>
+                    <td className="px-3 py-2" colSpan={8}>
+                      Đang được chuyển tuyến cùng port {primaryPortNumber} ở dòng phía trên.
+                    </td>
+                  </tr>
+                ));
+              }
+              const circuit = group.ports[0].circuit;
+              // Cột "Chuyển tiếp" chỉ gộp (rowspan) khi CẢ 2 sợi của 1 cặp có
+              // đúng cùng nội dung — khớp yêu cầu người dùng: sợi lẻ hoặc 2
+              // sợi có nội dung khác nhau thì vẫn để riêng từng dòng.
+              const transitMerged = group.ports.length === 2 && group.ports[0].transitText === group.ports[1].transitText;
+              const isCopiedSource = !!clipboard && group.ports.some((p) => clipboard.sourcePortIds.includes(p.id));
+              return group.ports.map((port, idx) => (
+                <tr
+                  key={port.id}
+                  className={`border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""}`}
+                >
+                  <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
+                  <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>
+                  {idx === 0 && (
+                    <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
+                      {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
+                    </td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
+                      {circuit?.interfaceType ?? ""}
+                    </td>
+                  )}
+                  {transitMerged ? (
+                    idx === 0 && (
+                      <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
+                        {group.ports[0].transitText ?? ""}
+                      </td>
+                    )
+                  ) : (
+                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">{port.transitText ?? ""}</td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
+                      {circuit?.counterpartText ?? ""}
+                    </td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
+                      {circuit?.responsePlanText ?? ""}
+                    </td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
+                      {circuit?.executionStationText ?? ""}
+                    </td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
+                      {circuit?.notes ?? ""}
+                    </td>
+                  )}
+                  {idx === 0 && (
+                    <td className="px-3 py-2" rowSpan={group.ports.length}>
+                      <div className="flex flex-wrap gap-2">
+                        {circuit ? (
+                          <>
+                            <button className="text-primary-600 hover:underline" onClick={() => openEditExisting(group)} disabled={busy}>
+                              Sửa
+                            </button>
+                            <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
+                              Xóa
+                            </button>
+                            <button className="text-slate-500 hover:underline" onClick={() => copyGroup(group)} disabled={busy}>
+                              Copy
+                            </button>
+                            <button className="text-amber-600 hover:underline" onClick={() => openMove(group)} disabled={busy}>
+                              Chuyển tuyến
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="text-primary-600 hover:underline" onClick={() => openCreateNew(port)} disabled={busy}>
+                              {port.transitText ? "Sửa" : "Thêm luồng"}
+                            </button>
+                            {clipboard && (
+                              <button className="text-slate-500 hover:underline" onClick={() => openCreateNew(port, clipboard)} disabled={busy}>
+                                Dán
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ));
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ResizableTh({
+  label,
+  width,
+  onResize,
+  sortKey,
+  activeSortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  width: number;
+  onResize: (width: number) => void;
+  sortKey?: SortKey;
+  activeSortKey?: SortKey;
+  sortDir?: "asc" | "desc";
+  onSort?: (key: SortKey) => void;
+}) {
+  function handleMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = width;
+    function onMouseMove(ev: MouseEvent) {
+      onResize(startWidth + (ev.clientX - startX));
+    }
+    function onMouseUp() {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }
+
+  const sortable = sortKey && onSort;
+  const active = sortable && activeSortKey === sortKey;
+
+  return (
+    <th
+      className={`relative px-3 py-2 text-left font-semibold select-none ${sortable ? "cursor-pointer hover:bg-primary-100" : ""}`}
+      onClick={sortable ? () => onSort!(sortKey!) : undefined}
+      title={sortable ? "Bấm để sắp xếp" : undefined}
+    >
+      {label}
+      {sortable && (
+        <span className={`ml-1 text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
+          {active ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+        </span>
+      )}
+      <span
+        onMouseDown={handleMouseDown}
+        title="Kéo để đổi độ rộng cột"
+        className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary-300 active:bg-primary-400"
+      />
+    </th>
+  );
+}
+
+function EditRow({
+  edit,
+  options,
+  onChange,
+  onToggleMerge,
+  onSecondPortNumberChange,
+  onSave,
+  onCancel,
+  busy,
+  colSpan,
+}: {
+  edit: EditState;
+  options: CircuitOptions;
+  onChange: (e: EditState) => void;
+  onToggleMerge: (checked: boolean) => void;
+  onSecondPortNumberChange: (text: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  busy: boolean;
+  colSpan: number;
+}) {
+  return (
+    <tr className="border-t border-primary-200 bg-primary-50/60">
+      <td colSpan={colSpan} className="px-4 py-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Tên luồng">
+            <input className="input" value={edit.name} onChange={(e) => onChange({ ...edit, name: e.target.value })} autoFocus />
+          </Field>
+          <Field label="Giao tiếp">
+            <input
+              className="input"
+              list="port-table-interface-options"
+              value={edit.interfaceType}
+              onChange={(e) => onChange({ ...edit, interfaceType: e.target.value })}
+              placeholder="Chọn hoặc gõ mới..."
+            />
+            <datalist id="port-table-interface-options">
+              {options.interfaceTypes.map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Chuyển tiếp">
+            <input
+              className="input"
+              list="port-table-transit-options"
+              value={edit.transitText}
+              onChange={(e) => onChange({ ...edit, transitText: e.target.value })}
+              placeholder="Chọn hoặc gõ vị trí ODF mới..."
+            />
+            <datalist id="port-table-transit-options">
+              {options.transitTexts.map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Đối phương">
+            <textarea
+              className="input"
+              rows={2}
+              value={edit.counterpartText}
+              onChange={(e) => onChange({ ...edit, counterpartText: e.target.value })}
+            />
+          </Field>
+          <Field label="Phương án ứng cứu">
+            <textarea
+              className="input"
+              rows={2}
+              value={edit.responsePlanText}
+              onChange={(e) => onChange({ ...edit, responsePlanText: e.target.value })}
+            />
+          </Field>
+          <Field label="Trạm thực hiện">
+            <input
+              className="input"
+              value={edit.executionStationText}
+              onChange={(e) => onChange({ ...edit, executionStationText: e.target.value })}
+              placeholder="Gõ tự do hoặc bấm chọn bên dưới..."
+            />
+            <div className="mt-1 flex flex-wrap gap-1">
+              {options.executionStations.map((s) => {
+                const selected = edit.executionStationText
+                  .split(/[,;]/)
+                  .map((t) => t.trim().toLowerCase())
+                  .includes(s.toLowerCase());
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onChange({ ...edit, executionStationText: toggleStationToken(edit.executionStationText, s) })}
+                    className={`rounded px-2 py-0.5 text-xs border ${
+                      selected ? "bg-primary-600 text-white border-primary-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+          <Field label="Ghi chú">
+            <textarea className="input" rows={2} value={edit.notes} onChange={(e) => onChange({ ...edit, notes: e.target.value })} />
+          </Field>
+
+          <div className="sm:col-span-2 rounded-md border border-slate-200 bg-white p-3">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={edit.mergeEnabled} onChange={(e) => onToggleMerge(e.target.checked)} />
+              Ghép với port khác (dùng 2 sợi Tx/Rx cho cùng 1 luồng — liền kề hoặc không liền kề đều được)
+            </label>
+            {edit.mergeEnabled && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-sm text-slate-500">Port ghép cùng:</span>
+                <input
+                  className="input w-24"
+                  value={edit.secondPortNumber}
+                  onChange={(e) => onSecondPortNumberChange(e.target.value)}
+                  placeholder="Số port"
+                />
+                <span className="text-xs text-slate-400">(đổi số port ở đây rồi Lưu để tự chuyển dữ liệu sang port mới)</span>
+                {edit.secondPortError && <span className="text-xs text-red-600">{edit.secondPortError}</span>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <button className="btn-primary" onClick={onSave} disabled={busy}>
+            Lưu
+          </button>
+          <button className="btn-secondary" onClick={onCancel} disabled={busy}>
+            Hủy
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function MoveRow({
+  move,
+  onSelectRack,
+  onSelectPort,
+  onToggleMerge,
+  onSecondPortNumberChange,
+  onConfirm,
+  onCancel,
+  busy,
+  colSpan,
+}: {
+  move: MoveState;
+  onSelectRack: (rackId: string) => void;
+  onSelectPort: (portId: string) => void;
+  onToggleMerge: (checked: boolean) => void;
+  onSecondPortNumberChange: (text: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+  colSpan: number;
+}) {
+  const unusedPorts = move.targetPorts.filter((p) => p.status === "unused");
+
+  return (
+    <tr className="border-t border-amber-300 bg-amber-50/60">
+      <td colSpan={colSpan} className="px-4 py-4">
+        <p className="text-sm text-slate-700 mb-3">
+          Chuyển luồng <span className="font-medium">&quot;{move.circuitName}&quot;</span> sang port khác (các trường khác của luồng giữ
+          nguyên, chỉ đổi port gắn):
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="Rack đích">
+            <select className="input" value={move.targetRackId ?? ""} onChange={(e) => onSelectRack(e.target.value)}>
+              <option value="">— Chọn rack —</option>
+              {move.racks.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.code} — {r.cable_route_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Port đích (đang trống)">
+            <select
+              className="input"
+              value={move.targetPortId ?? ""}
+              disabled={!move.targetRackId || move.targetPortsLoading}
+              onChange={(e) => onSelectPort(e.target.value)}
+            >
+              <option value="">{move.targetPortsLoading ? "Đang tải..." : unusedPorts.length === 0 ? "Rack này hết port trống" : "— Chọn port —"}</option>
+              {unusedPorts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Port {p.port_number}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        {move.targetPortId && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-white p-3">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={move.mergeEnabled} onChange={(e) => onToggleMerge(e.target.checked)} />
+              Ghép thêm 1 port đích nữa (dùng 2 sợi Tx/Rx — liền kề hoặc không liền kề đều được)
+            </label>
+            {move.mergeEnabled && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-sm text-slate-500">Port đích ghép cùng:</span>
+                <input
+                  className="input w-24"
+                  value={move.secondTargetPortNumber}
+                  onChange={(e) => onSecondPortNumberChange(e.target.value)}
+                  placeholder="Số port"
+                />
+                {move.secondTargetPortError && <span className="text-xs text-red-600">{move.secondTargetPortError}</span>}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 flex gap-2">
+          <button className="btn-primary" onClick={onConfirm} disabled={busy || !move.targetPortId}>
+            Xác nhận chuyển
+          </button>
+          <button className="btn-secondary" onClick={onCancel} disabled={busy}>
+            Hủy
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block text-sm">
+      <span className="block text-slate-500 mb-1">{label}</span>
+      {children}
+    </label>
+  );
+}

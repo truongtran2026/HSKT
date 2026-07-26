@@ -1,0 +1,32 @@
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# Dependencies
+/node_modules/
+
+# Biến môi trường thật — KHÔNG commit key Supabase
+.env
+.env.local
+.env*.local
+
+# Log & OS
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Supabase CLI local
+/supabase/.branches
+/supabase/.temp
+
+# Dữ liệu Excel gốc thật của trạm — không đưa lên git chung (kể cả trong
+# thư mục con theo lĩnh vực, vd data/IP/*.xlsx)
+/data/**/*.xls
+/data/**/*.xlsx
+import-report.json
+import-device-v2-report.json
+
+.vercel
+.env*
