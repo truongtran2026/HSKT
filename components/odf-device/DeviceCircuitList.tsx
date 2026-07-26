@@ -321,9 +321,13 @@ export default function DeviceCircuitList({
   // Bước 1: chọn lĩnh vực trước — thu hẹp danh sách thiết bị đưa vào khung
   // chọn thiết bị (bước 2) thay vì trộn chung hết. Bấm 1 lĩnh vực lần đầu từ
   // trạng thái "tất cả" (null) sẽ CÔ LẬP về đúng lĩnh vực đó (đúng nhu cầu
-  // "chọn IP trước"); bấm thêm lĩnh vực khác sau đó mới cộng dồn vào. Đổi
-  // phạm vi lĩnh vực thì reset lại phần chọn thiết bị cụ thể cho khỏi rối
-  // (thiết bị đã chọn có thể không còn thuộc lĩnh vực mới).
+  // "chọn IP trước"); bấm thêm lĩnh vực khác sau đó mới cộng dồn vào. KHÔNG
+  // reset deviceNames ở đây nữa (yêu cầu người dùng 2026-07-26): trước đây
+  // mỗi lần đổi lĩnh vực sẽ xóa sạch các thiết bị đã tick, nên tick ở lượt
+  // lọc trước bị mất ngay khi lọc sang lĩnh vực khác. Giờ thiết bị đã tick
+  // được giữ nguyên qua nhiều lượt đổi lĩnh vực — lĩnh vực chỉ thu hẹp danh
+  // sách HIỂN THỊ trong khung chọn thiết bị (giống cách ô tìm kiếm trong
+  // GroupedMultiSelect không xóa tick của mục đang bị ẩn).
   function toggleCategory(cat: string) {
     setCategoryFilter((prev) => {
       if (prev === null) return [cat];
@@ -333,12 +337,10 @@ export default function DeviceCircuitList({
       }
       return [...prev, cat];
     });
-    setDeviceNames(null);
   }
 
   function resetCategory() {
     setCategoryFilter(null);
-    setDeviceNames(null);
   }
 
   const scopedDeviceItems = useMemo(() => {
@@ -349,13 +351,18 @@ export default function DeviceCircuitList({
 
   const filtered = useMemo(() => {
     let list = circuits;
-    if (categoryFilter !== null) {
-      const set = new Set(categoryFilter);
-      list = list.filter((c) => set.has(categoryByDeviceName.get(c.deviceName ?? "(chưa xác định)") ?? UNCATEGORIZED_LABEL));
-    }
+    // Đã tick cụ thể thiết bị nào (deviceNames khác null) thì lấy ĐÚNG tập đó
+    // làm chuẩn để lọc bảng, không lọc thêm theo categoryFilter nữa — lúc này
+    // lĩnh vực chỉ còn là công cụ tìm thêm thiết bị để tick (thu hẹp khung
+    // chọn ở bước 2). Nếu vẫn AND thêm categoryFilter thì thiết bị đã tick ở
+    // lĩnh vực trước sẽ biến mất khỏi bảng ngay khi đổi sang lĩnh vực khác dù
+    // vẫn còn tick, sai với yêu cầu "tick dồn qua nhiều lượt lọc" (2026-07-26).
     if (deviceNames !== null) {
       const set = new Set(deviceNames);
       list = list.filter((c) => set.has(c.deviceName ?? "(chưa xác định)"));
+    } else if (categoryFilter !== null) {
+      const set = new Set(categoryFilter);
+      list = list.filter((c) => set.has(categoryByDeviceName.get(c.deviceName ?? "(chưa xác định)") ?? UNCATEGORIZED_LABEL));
     }
 
     list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k), filters[k])));
