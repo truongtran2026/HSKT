@@ -12,7 +12,8 @@ import {
   normalizeDeviceNameKey,
   normalizeDevicePositionKey,
 } from "@/lib/deviceNotes";
-import { deviceCategoryLabel, UNCATEGORIZED_LABEL } from "@/lib/devices";
+import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
+import { parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -259,6 +260,38 @@ export default function DeviceCircuitList({
       device_position: tribText.trim() || null,
       odf_position: odf,
     });
+  }
+
+  const existingDeviceKeys = useMemo(() => new Set(devices.map((d) => normalizeDeviceNameKey(d.name))), [devices]);
+
+  // Ô "Đối phương" đôi khi ghi rõ thiết bị + tọa độ ADN1 ở đầu bên kia (vd
+  // "ADN1.PSS24X#3 BB1 (2-3-21)") mà bảng devices CHƯA có — theo yêu cầu
+  // người dùng 2026-07-26 (và đúng architecture.md mục 3.7 "hỏi xác nhận tạo
+  // mới" vốn định làm cho ô "Chuyển tiếp" bên trung kế nhưng chưa gắn UI nào
+  // cả), khi phát hiện tên thiết bị ADN1 lạ thì hỏi xác nhận rồi tạo luôn.
+  // CHỈ áp dụng ô Đối phương ở đây — "Chuyển tiếp" bên ODF trung kế là phạm
+  // vi khác, chưa làm. Không chặn việc lưu luồng dù người dùng từ chối tạo
+  // hay tạo thất bại — đây chỉ là bước phụ sau khi luồng đã lưu xong.
+  async function maybeCreateCounterpartDevice(counterpartText: string) {
+    const parsed = parseTransitText(counterpartText.trim());
+    if (!parsed.matched || !parsed.stationCode || !parsed.deviceName || !isManagedStationCode(parsed.stationCode)) return;
+    const key = normalizeDeviceNameKey(parsed.deviceName);
+    if (!key || existingDeviceKeys.has(key)) return;
+    const fullName = `ADN1.${parsed.deviceName.trim()}`;
+    if (!confirm(`Chưa có thiết bị "${fullName}" trong hệ thống (nhận diện từ ô Đối phương).\n\nTạo mới thiết bị này?`)) return;
+    try {
+      const stationId = await getAdn1StationId();
+      const { error: err } = await supabase.from("devices").insert({
+        station_id: stationId,
+        name: fullName,
+        coordinate_text: parsed.coordinateText ?? null,
+        full_label: `${fullName}(${parsed.coordinateText ?? ""})`,
+        source: "auto",
+      });
+      if (err) throw err;
+    } catch (e) {
+      setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // Cuộn tới đúng dòng + tô sáng tạm thời khi hash là "#dc-<id>" — cả lúc
@@ -519,6 +552,7 @@ export default function DeviceCircuitList({
       return;
     }
     await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
+    await maybeCreateCounterpartDevice(edit.counterpartText);
     setBusy(false);
     setEdit(null);
     router.refresh();
@@ -569,6 +603,7 @@ export default function DeviceCircuitList({
       return;
     }
     await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
+    await maybeCreateCounterpartDevice(createDraft.counterpartText);
     setBusy(false);
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);

@@ -45,9 +45,15 @@ export function extractDevicePositions(notes: string | null): DevicePositions {
 // sẵn (luôn tưởng là "chưa có", rồi âm thầm ghi thêm dòng mới trùng lặp vào
 // device_position_map mỗi lần lưu luồng). App chỉ quản lý đúng 1 trạm ADN1
 // (xem CLAUDE.md) nên tiền tố này không có giá trị phân biệt, bỏ đi an toàn.
+//
+// Coi "/" như khoảng trắng (phát hiện thực tế 2026-07-26): dữ liệu thật có
+// cả 2 cách viết cho cùng 1 thiết bị, vd "PSS24X#1/BB1" và "PSS24X#1 BB1" —
+// không gộp thì tính năng "thiết bị này đã có chưa" (tự tạo devices từ ô
+// Đối phương, tự điền thư viện vị trí) sẽ tưởng nhầm là chưa có, tạo trùng.
 export function normalizeDeviceNameKey(name: string): string {
   return normalizeVN(name)
     .replace(/^adn1\.\s*/, "")
+    .replace(/\//g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
