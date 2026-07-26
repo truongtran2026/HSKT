@@ -28,5 +28,10 @@ Thumbs.db
 import-report.json
 import-device-v2-report.json
 
+# Backup tự động trước khi script dọn dữ liệu chạy --commit (xem
+# scripts/dedupe-device-position-map.ts) — dữ liệu thật của trạm, không đưa
+# lên git chung, tương tự /data/**/*.xlsx ở trên.
+/data/_backups/
+
 .vercel
 .env*

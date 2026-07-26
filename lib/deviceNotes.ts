@@ -35,8 +35,21 @@ export function extractDevicePositions(notes: string | null): DevicePositions {
 // Khóa gộp nhóm tên thiết bị — bỏ dấu + khoảng trắng thừa, KHÔNG tự ý sửa
 // tên hiển thị (chỉ dùng để gộp các biến thể chính tả của cùng 1 thiết bị
 // thật, người dùng vẫn chọn tên chuẩn hiển thị ở UI chuẩn hóa).
+//
+// Bỏ luôn tiền tố "ADN1." nếu có (phát hiện thực tế 2026-07-26): bảng
+// `devices` lưu tên CÓ tiền tố trạm (vd "ADN1.3650#1 IPCC"), trong khi
+// device_position_map.device_name lại lưu tên KHÔNG có tiền tố (vd
+// "3650#1 IPCC") — 2 cách viết cho CÙNG 1 thiết bị, nếu không bỏ tiền tố thì
+// khóa so khớp sẽ không bao giờ trùng nhau, khiến tính năng tự điền Trib <->
+// Vị trí ODF trong DeviceCircuitList không bao giờ tìm thấy thư viện đã có
+// sẵn (luôn tưởng là "chưa có", rồi âm thầm ghi thêm dòng mới trùng lặp vào
+// device_position_map mỗi lần lưu luồng). App chỉ quản lý đúng 1 trạm ADN1
+// (xem CLAUDE.md) nên tiền tố này không có giá trị phân biệt, bỏ đi an toàn.
 export function normalizeDeviceNameKey(name: string): string {
-  return normalizeVN(name).replace(/\s+/g, " ").trim();
+  return normalizeVN(name)
+    .replace(/^adn1\.\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Khóa so khớp vị trí DDF/ODF khi kiểm tra 1 vị trí không bị gán cho 2
