@@ -5,6 +5,14 @@
 
 Người dùng là kỹ sư Điện tử Viễn thông (ETE), không phải lập trình viên chuyên nghiệp — code cần **rõ ràng, có comment giải thích tại sao (không chỉ cái gì)**, tránh trừu tượng hóa quá mức không cần thiết.
 
+## Môi trường làm việc (đa máy: nhà + cơ quan)
+- **Từ 2026-07-26**, thư mục làm việc chính của project là:
+  `F:\OneDrive - 602m3f\Cong Viec\Dai DNG\Kiem tra HSKT\CODE\HSKT` (đồng bộ qua OneDrive giữa máy nhà và laptop cơ quan). Thư mục cũ `H:\CLAUDE_CODE\HSKT` là bản sao gốc trước khi chuyển, không còn cập nhật — có thể xóa khi rảnh.
+- **Git remote**: `https://github.com/truongtran2026/HSKT` (repo **riêng tư**). Quy trình: `git pull` trước khi bắt đầu 1 buổi làm việc, `git push` sau khi xong — tránh làm lệch code giữa 2 máy (OneDrive đồng bộ file thô real-time, nhưng vẫn nên coi Git là nguồn đúng cho code, phòng trường hợp OneDrive sync trễ hoặc đang mở IDE ở cả 2 máy cùng lúc).
+- **`.env.local`** (chứa Supabase Secret key) — **không** đưa lên Git (đã chặn trong `.gitignore`), nhưng có mặt ở cả 2 máy nhờ OneDrive đồng bộ nguyên thư mục. Không cần setup lại tay.
+- **`data/`** (file Excel gốc thật của trạm, nhiều file .xlsx/.xls) — cũng không đưa lên Git, chỉ tồn tại qua OneDrive.
+- Lưu ý: `node_modules/` và `.next/` cũng đang nằm trong thư mục OneDrive-sync (không đưa lên Git) — nếu thấy OneDrive đồng bộ chậm/nặng do 2 thư mục này (hàng chục nghìn file nhỏ), có thể loại trừ khỏi đồng bộ OneDrive và chạy `npm install` riêng ở mỗi máy thay vì đồng bộ qua cloud.
+
 ## Stack bắt buộc
 - Next.js 14+ (App Router), TypeScript, TailwindCSS.
 - Supabase (Postgres) qua `@supabase/supabase-js`. KHÔNG viết backend Express/FastAPI riêng — Supabase client gọi thẳng từ Next.js Server Components/Route Handlers.
