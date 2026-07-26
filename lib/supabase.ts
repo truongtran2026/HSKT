@@ -22,4 +22,16 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// QUAN TRỌNG (phát hiện thực tế 2026-07-26): `export const dynamic =
+// "force-dynamic"` ở mỗi trang KHÔNG đủ để tắt cache — Next.js vẫn cache lại
+// kết quả gọi supabase-js đầu tiên trong vòng đời server (dev server hay 1
+// lambda "ấm" trên Vercel), các request sau nhận y nguyên dữ liệu cũ dù DB đã
+// đổi (đã kiểm chứng: thêm dòng mới vào device_position_map, gọi lại trang
+// nhiều lần vẫn không thấy — số dòng bảng đứng yên bất kể dữ liệu thật đã
+// tăng). Ép fetch riêng của client này luôn "no-store" thì Next.js mới thực
+// sự không cache, áp dụng chung cho MỌI bảng, không chỉ device_position_map.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+  },
+});
