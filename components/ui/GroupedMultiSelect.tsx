@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeVN } from "@/lib/text";
 import FilterInput from "@/components/ui/FilterInput";
 
@@ -30,6 +30,20 @@ export default function GroupedMultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Bấm ra ngoài khung thì tự đóng (yêu cầu người dùng 2026-07-26) — đỡ phải
+  // bấm riêng 1 nút "Đóng" (đã bỏ nút đó, xem JSX bên dưới).
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
 
   const allValues = useMemo(() => items.map((i) => i.value), [items]);
 
@@ -77,22 +91,28 @@ export default function GroupedMultiSelect({
   const selectedCount = selected === null ? items.length : selected.length;
 
   return (
-    <div className="relative inline-block">
+    <div className="relative inline-block" ref={containerRef}>
       <button type="button" className="btn-secondary" onClick={() => setOpen((v) => !v)}>
         {buttonLabel} ({selectedCount}/{items.length})
       </button>
       {open && (
         <div className="absolute z-20 mt-1 w-80 rounded-lg border border-slate-200 bg-white shadow-lg">
-          <div className="flex justify-between border-b border-slate-100 px-3 py-2 text-xs">
-            <button className="text-primary-600 hover:underline" onClick={selectAllVisible}>
-              Chọn tất cả{query.trim() && " (đang lọc)"}
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+            <button
+              type="button"
+              className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
+              onClick={selectAllVisible}
+            >
+              Chọn tất cả
             </button>
-            <button className="text-primary-600 hover:underline" onClick={clearVisible}>
-              Bỏ chọn{query.trim() && " (đang lọc)"}
+            <button
+              type="button"
+              className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
+              onClick={clearVisible}
+            >
+              Bỏ chọn
             </button>
-            <button className="text-slate-500 hover:underline" onClick={() => setOpen(false)}>
-              Đóng
-            </button>
+            {query.trim() && <span className="ml-auto text-xs text-slate-400">(theo kết quả đang lọc)</span>}
           </div>
           <div className="border-b border-slate-100 p-2">
             <FilterInput value={query} onChange={setQuery} />
