@@ -304,3 +304,25 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
    chuyển 1 lần bằng `scripts/migrate-notes-to-position-columns.ts`, các
    nhãn khác trong `notes` ("Thiết bị chuyển tiếp:", "TBi đầu cuối:", ghi
    chú gốc, "ID gốc:") giữ nguyên.
+
+5. **`devices.updated_at`** (migration `20260727000001`) / **`circuits.updated_at`**
+   (migration `20260727000002`) — mốc "lần cuối sửa", tự cập nhật qua trigger
+   Postgres dùng chung `set_updated_at()` (định nghĩa 1 lần ở migration đầu,
+   tái dùng ở migration sau), KHÔNG cần code tự set tay ở bất kỳ chỗ nào. Hiện
+   ở UI dạng chữ nhỏ dưới tên thiết bị/tên luồng (`lib/format.ts`
+   `formatLastUpdated`), KHÔNG thêm cột bảng mới — theo đúng yêu cầu người
+   dùng 2026-07-27, tránh làm rối bảng.
+
+6. **"Vị trí ODF (tiếp theo)" tách 3 ô khi sửa/nhập luồng thiết bị** (yêu cầu
+   người dùng 2026-07-27, KHÔNG đổi schema — vẫn 1 cột
+   `circuits.device_position_next`): UI tách thành Ô1 (tọa độ ODF), Ô2 (thiết
+   bị HOẶC tên tuyến cáp trung kế nếu thiết bị đấu thẳng ra trung kế — chọn
+   qua toggle, xem `PositionNextMode` trong `DeviceCircuitList.tsx`), Ô3
+   (Trib/sợi), ghép lại đúng 1 chuỗi qua `combinePositionNext()`
+   (`lib/parsers/transit-text.ts`) khi lưu — cùng cơ chế đã dùng cho "Chuyển
+   tiếp" bên ODF trung kế (`splitOdfDeviceStructure`/`PortTable.tsx`).
+   Tương tự, ô "Đối phương" từng bị nhầm lẫn giữa thiết bị ADN1 nội bộ và
+   trạm/thực thể khác thật (lỗi gõ "AĐN1" có dấu Đ khiến parser cũ bỏ sót —
+   đã sửa `parseTransitText`/`isManagedStationCode` dùng `normalizeVN`); dữ
+   liệu cũ đã di chuyển 1 lần bằng
+   `scripts/migrate-counterpart-to-position-next.ts`.

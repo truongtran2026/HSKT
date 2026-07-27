@@ -9,6 +9,7 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
 import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
+import { formatLastUpdated } from "@/lib/format";
 import SortableTh from "@/components/ui/SortableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DeviceRow } from "@/lib/devices";
@@ -31,15 +32,6 @@ const SOURCE_LABEL: Record<DeviceRow["source"], string> = {
   auto: "Tự sinh",
   manual: "Nhập tay",
 };
-
-// Chữ nhỏ dưới tên thiết bị — KHÔNG làm cột riêng (yêu cầu người dùng
-// 2026-07-27: 1 thiết bị có thể chuẩn hóa nhiều lần, muốn biết lần cuối khi
-// nào nhưng đừng thêm cột cho rối bảng).
-function formatLastUpdated(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 interface RawVariant {
   text: string;

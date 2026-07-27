@@ -71,10 +71,19 @@ export function isManagedStationCode(stationCode: string): boolean {
 // xét ở đây, cứ để matched=false).
 //
 // Neo vào " - " có khoảng trắng 2 bên (KHÔNG khớp dấu "-" dính liền trong tên
-// như "S2-5" hay "ADN1_NPB-CGS...") NGAY TRƯỚC cụm cuối chuỗi dạng "tên(port)"
-// — dùng (.+) GREEDY ở phần đầu để luôn bắt đúng dấu " - " CUỐI CÙNG trước
-// cụm (port) kết thúc chuỗi, dù phần tọa độ ODF phía trước có dấu ngoặc/gạch
-// ngang riêng của nó (vd "ODF 11/3 (09,10) - ...").
+// như "S2-5" hay "ADN1_NPB-CGS...") NGAY SAU tọa độ ODF ở đầu chuỗi — dùng
+// (.+?) LAZY ở phần đầu để bắt đúng dấu " - " ĐẦU TIÊN, dừng lại ngay khi
+// phần còn lại đã khớp được "tên(port)" ở cuối chuỗi.
+//
+// Đổi từ GREEDY sang LAZY (2026-07-27) sau khi phát hiện thật: tên tuyến cáp
+// trung kế (racks.cable_route_name) rất hay có dạng "96FO#1 ADN1 - 2T9" —
+// TỰ NÓ đã chứa " - " (khảo sát thật: 19/30 tên tuyến cáp thật ở ADN1 có dấu
+// này). Với bản GREEDY cũ, chuỗi ghép "ODF1/1 (01,02) - 96FO#1 ADN1 - 2T9
+// (1,2)" (tính năng "Cáp quang (tiếp theo)") sẽ bị tách SAI — nuốt luôn nửa
+// đầu tên tuyến cáp vào phần tọa độ ODF, vì (.+) greedy luôn neo vào dấu " - "
+// CUỐI CÙNG. Đã kiểm tra thật 503 dòng transit_links + 2222 dòng
+// device_position_next: đổi sang LAZY không phá ca nào đang chạy đúng (không
+// có tọa độ ODF nào tự chứa " - " ở dữ liệu thật hiện có).
 export interface OdfDeviceSplit {
   raw: string;
   matched: boolean;
@@ -89,7 +98,7 @@ export interface OdfDeviceSplit {
   port?: string;
 }
 
-const ODF_DEVICE_SPLIT_PATTERN = /^(.+)\s-\s([^()]+?)\s*\(([^()]+)\)\s*$/;
+const ODF_DEVICE_SPLIT_PATTERN = /^(.+?)\s-\s([^()]+?)\s*\(([^()]+)\)\s*$/;
 
 export function splitOdfDeviceStructure(raw: string): OdfDeviceSplit {
   const trimmed = raw.trim();

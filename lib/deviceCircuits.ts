@@ -18,6 +18,7 @@ export interface DeviceCircuitRow {
   deviceId: string | null; // đã chuẩn hóa qua /odf-device/chuan-hoa hay chưa
   devicePositionOwn: string | null; // vị trí ODF/DDF cáp CHÍNH thiết bị này đấu ra
   devicePositionNext: string | null; // vị trí ODF tiếp theo / nhảy lên ODF trung kế đi ra ngoài
+  updatedAt: string; // lần cuối sửa (migration circuits.updated_at, 2026-07-27)
 }
 
 interface RawRow {
@@ -30,6 +31,7 @@ interface RawRow {
   device_id: string | null;
   device_position_own: string | null;
   device_position_next: string | null;
+  updated_at: string;
   devices: { name: string } | null;
   port_circuit_links: { id: string }[] | null;
 }
@@ -43,7 +45,7 @@ async function fetchAllCircuits(): Promise<RawRow[]> {
     const { data, error } = await supabase
       .from("circuits")
       .select(
-        "id, name, interface_type, trib_text, counterpart_text, notes, device_id, device_position_own, device_position_next, devices(name), port_circuit_links(id)"
+        "id, name, interface_type, trib_text, counterpart_text, notes, device_id, device_position_own, device_position_next, updated_at, devices(name), port_circuit_links(id)"
       )
       .order("name", { ascending: true })
       .order("id", { ascending: true })
@@ -74,5 +76,6 @@ export async function fetchDeviceCircuits(): Promise<DeviceCircuitRow[]> {
       deviceId: r.device_id,
       devicePositionOwn: r.device_position_own,
       devicePositionNext: r.device_position_next,
+      updatedAt: r.updated_at,
     }));
 }

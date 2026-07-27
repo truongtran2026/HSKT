@@ -13,12 +13,14 @@ import {
   normalizeDevicePositionKey,
 } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
+import { formatLastUpdated } from "@/lib/format";
 import {
   parseTransitText,
   isManagedStationCode,
   splitOdfDeviceStructure,
   combinePositionNext,
 } from "@/lib/parsers/transit-text";
+import { matchTrunkPosition, findPortsByFiberNumbers, parseNumberList, type TrunkPortRow, type TrunkPositionMatch } from "@/lib/trunkPorts";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
@@ -128,12 +130,19 @@ function compareByKey(key: SortKey, a: DeviceCircuitRow, b: DeviceCircuitRow): n
 const FILTER_KEYS: FilterKey[] = ["name", "trib", "device", "positionOwn", "positionNext", "interface", "counterpart", "notes"];
 
 // Ô "Vị trí ODF (tiếp theo)" tách 3 ô khi sửa/nhập (yêu cầu người dùng
-// 2026-07-27): Ô1 = tọa độ ODF, Ô2 = tên thiết bị "tiếp theo" (thuộc node
-// local ADN1 — có thể là tên thiết bị THẬT, hoặc mã ODF trung kế nếu thiết bị
-// đấu THẲNG ra trung kế không qua thiết bị trung gian), Ô3 = Trib/sợi "tiếp
-// theo". Vẫn lưu gộp lại ĐÚNG 1 chuỗi vào circuits.device_position_next
-// (KHÔNG đổi schema — xem combinePositionNext trong lib/parsers/transit-text)
-// giống hệt cách "Chuyển tiếp" bên trung kế đã làm.
+// 2026-07-27, tinh chỉnh lại yêu cầu ngày 2026-07-27 sau: tự nhận diện chế độ
+// Thiết bị/Cáp quang trung kế, KHÔNG cần chọn tay nữa): Ô1 = tọa độ ODF, Ô2 =
+// "tiếp theo" là THIẾT BỊ hay CÁP QUANG TRUNG KẾ, Ô3 = Trib/Sợi "tiếp theo".
+// Chế độ được SUY RA từ chính Ô1 qua matchTrunkPosition() (lib/trunkPorts.ts)
+// — nếu Ô1 khớp được 1 rack trung kế THẬT thì chắc chắn là ca "đấu thẳng ra
+// trung kế" (rack/port bên ODF/DDF thiết bị KHÔNG được tạo thật trong hệ
+// thống — xem architecture.md mục 7.2, vẫn luôn là text tự do — nên không thể
+// nhầm 2 trường hợp). Khi đã khớp: Ô2 tự điền tên tuyến cáp (KHÔNG cho sửa
+// tay, đảm bảo toàn vẹn dữ liệu), Ô3 tự suy 2 chiều Port<->Sợi qua
+// findPortsByFiberNumbers(). Vẫn lưu gộp lại ĐÚNG 1 chuỗi vào
+// circuits.device_position_next (KHÔNG đổi schema — xem combinePositionNext
+// trong lib/parsers/transit-text) giống hệt cách "Chuyển tiếp" bên trung kế
+// đã làm.
 //
 // Khảo sát thật 2026-07-27: 100% dữ liệu device_position_next TỪ TRƯỚC chỉ là
 // tọa độ ODF trơn (không có cấu trúc ghép) — nên khi KHÔNG khớp
@@ -146,14 +155,6 @@ function splitPositionNextForEdit(raw: string): { odf: string; device: string; t
     return { odf: split.odfPart ?? "", device: split.deviceName, trib: split.port };
   }
   return { odf: raw.trim(), device: "", trib: "" };
-}
-
-// "Thiết bị (tiếp theo)" đôi khi thật ra là mã ODF trung kế (thiết bị đấu
-// THẲNG ra trung kế, không qua thiết bị trung gian nào — xác nhận người dùng
-// 2026-07-27) — không phải tên thiết bị thật, nên KHÔNG hỏi tạo devices/ghi
-// thư viện device_position_map cho trường hợp này.
-function looksLikeOdfRackCode(text: string): boolean {
-  return /^ODF/i.test(text.trim());
 }
 
 interface EditState {
@@ -198,14 +199,41 @@ const EMPTY_CREATE_DRAFT: CreateDraft = {
   notes: "",
 };
 
+// Các trường DÙNG CHUNG giữa form "Thêm luồng mới" và "Sửa luồng" (yêu cầu
+// người dùng 2026-07-27: khung Sửa phải giống hệt khung Thêm, vì bản chất là
+// cùng các trường đó) — chỉ khác ở phần chọn/hiển thị Thiết bị (Thêm được
+// chọn Lĩnh vực+Thiết bị, Sửa chỉ hiện tên thiết bị tĩnh vì không đổi thiết
+// bị của luồng đã có ở đây). EditState/CreateDraft cùng đặt tên field giống
+// hệt nhau cho phần chung này nên Pick từ CreateDraft dùng chung được cho cả
+// 2 phía.
+type SharedCircuitFields = Pick<
+  CreateDraft,
+  | "name"
+  | "tribText"
+  | "positionOwn"
+  | "positionNextOdf"
+  | "positionNextDevice"
+  | "positionNextTrib"
+  | "interfaceType"
+  | "counterpartText"
+  | "notes"
+>;
+
+// Id gắn vào khung "Sửa luồng thiết bị" để cuộn tới khi bấm Sửa — khung này
+// nằm cố định ngay dưới khung "Thêm luồng mới" (đầu trang), có thể ở ngoài
+// tầm nhìn nếu người dùng đang cuộn sâu trong bảng khi bấm Sửa.
+const EDIT_BOX_ID = "dc-edit-box";
+
 export default function DeviceCircuitList({
   circuits,
   devices,
   devicePositionMap,
+  trunkPorts,
 }: {
   circuits: DeviceCircuitRow[];
   devices: DeviceRow[];
   devicePositionMap: DevicePositionMapRow[];
+  trunkPorts: TrunkPortRow[];
 }) {
   const router = useRouter();
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
@@ -227,6 +255,15 @@ export default function DeviceCircuitList({
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [conflictSearch, setConflictSearch] = useState("");
   const [conflictPageSize, setConflictPageSize] = useState(5);
+  // Tick "dùng để tự đặt tên luồng" cạnh Thiết bị/Thiết bị (tiếp theo)/Đối
+  // phương ở form "Thêm luồng mới" (yêu cầu người dùng 2026-07-27) — CHỈ áp
+  // dụng lúc Thêm mới, không áp dụng khi Sửa (Thiết bị đã cố định, đổi tên
+  // luồng theo ý người dùng thường không còn muốn tự sinh lại nữa).
+  const [nameTicks, setNameTicks] = useState<{ own: boolean; next: boolean; counterpart: boolean }>({
+    own: false,
+    next: false,
+    counterpart: false,
+  });
   const [conflictPage, setConflictPage] = useState(0);
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(EMPTY_CREATE_DRAFT);
@@ -298,20 +335,34 @@ export default function DeviceCircuitList({
   // Nếu đã gõ 1 "Vị trí ODF (thiết bị)" MỚI (chưa có trong thư viện của đúng
   // thiết bị đó) thì lưu thêm vào device_position_map — đúng yêu cầu "làm
   // thư viện" dần theo thời gian, không cần màn hình riêng để nhập trước.
+  //
+  // Đồng bộ khi ĐÃ có sẵn (thiết bị, ODF) này (yêu cầu người dùng 2026-07-27):
+  // trước đây chỉ kiểm tra tồn tại theo cặp (thiết bị, ODF) rồi bỏ qua hoàn
+  // toàn nếu đã có — nên khi người dùng gõ ODF trước (tự điền Trib theo thư
+  // viện), rồi ĐỔI TAY sang 1 Trib khác cho đúng thực tế, giá trị mới không
+  // bao giờ được ghi lại vào thư viện (thư viện giữ mãi Trib cũ/sai). Giờ nếu
+  // Trib vừa lưu KHÁC Trib đã có trong thư viện, cập nhật lại cho khớp.
   async function maybeGrowLibrary(deviceName: string | null, tribText: string, positionOwn: string) {
     const odf = positionOwn.trim();
     if (!deviceName || !odf) return;
     const nameKey = normalizeDeviceNameKey(deviceName);
     const odfKey = normalizeDevicePositionKey(odf);
-    const exists = devicePositionMap.some(
+    const existingEntry = devicePositionMap.find(
       (m) => normalizeDeviceNameKey(m.deviceName) === nameKey && normalizeDevicePositionKey(m.odfPosition ?? "") === odfKey
     );
-    if (exists) return;
-    await supabase.from("device_position_map").insert({
-      device_name: deviceName,
-      device_position: tribText.trim() || null,
-      odf_position: odf,
-    });
+    if (!existingEntry) {
+      await supabase.from("device_position_map").insert({
+        device_name: deviceName,
+        device_position: tribText.trim() || null,
+        odf_position: odf,
+      });
+      return;
+    }
+    const newTribKey = normalizeDevicePositionKey(tribText);
+    const existingTribKey = normalizeDevicePositionKey(existingEntry.devicePosition ?? "");
+    if (newTribKey && newTribKey !== existingTribKey) {
+      await supabase.from("device_position_map").update({ device_position: tribText.trim() }).eq("id", existingEntry.id);
+    }
   }
 
   const existingDeviceKeys = useMemo(() => new Set(devices.map((d) => normalizeDeviceNameKey(d.name))), [devices]);
@@ -349,11 +400,12 @@ export default function DeviceCircuitList({
   // Ô "Thiết bị (tiếp theo)" (Ô2 của Vị trí ODF tiếp theo, thêm 2026-07-27) —
   // tên thiết bị LOCAL (ADN1), KHÔNG có tiền tố trạm như ô Đối phương, nên
   // không cần parseTransitText ở đây — chỉ kiểm tra thẳng tên đã có trong
-  // devices chưa. Bỏ qua hoàn toàn nếu trông giống mã ODF trung kế (trường
-  // hợp thiết bị đấu thẳng ra trung kế, xem looksLikeOdfRackCode).
+  // devices chưa. Chỉ được gọi khi KHÔNG khớp rack trung kế nào (xem
+  // saveEdit/submitCreate gọi qua validatePositionNext().trunkMatch.matched)
+  // — chế độ cáp quang trung kế không bao giờ gọi tới hàm này.
   async function maybeCreateNextDevice(deviceName: string) {
     const trimmed = deviceName.trim();
-    if (!trimmed || looksLikeOdfRackCode(trimmed)) return;
+    if (!trimmed) return;
     const key = normalizeDeviceNameKey(trimmed);
     if (!key || existingDeviceKeys.has(key)) return;
     const fullName = /^adn1\./i.test(trimmed) ? trimmed : `ADN1.${trimmed}`;
@@ -371,6 +423,54 @@ export default function DeviceCircuitList({
     } catch (e) {
       setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  // Tính TRẠNG THÁI của "Vị trí ODF (tiếp theo)" (yêu cầu người dùng
+  // 2026-07-27) — gọi lại mỗi lần render (từ giá trị HIỆN TẠI của Ô1/Ô3), có
+  // 3 phần:
+  //   - trunkMatch: kết quả khớp rack/port trung kế thật của Ô1 (dùng để
+  //     quyết định chế độ Thiết bị/Cáp quang, và để renderCircuitFormFields
+  //     tự điền Ô2/Ô3).
+  //   - error: LỖI CHẶN LƯU — port/sợi gõ không tồn tại thật trong tuyến cáp
+  //     đã khớp ("báo là ko đúng để bắt nhập liệu cho đúng").
+  //   - warning: CẢNH BÁO không chặn — port đã khớp NHƯNG đang có luồng khác
+  //     dùng rồi (vẫn cho lưu, tự rà lại luồng cũ sau).
+  function validatePositionNext(odfText: string, tribText: string): { trunkMatch: TrunkPositionMatch; error: string | null; warning: string | null } {
+    const trunkMatch = matchTrunkPosition(odfText, trunkPorts);
+    if (!trunkMatch.matched) return { trunkMatch, error: null, warning: null };
+
+    if (trunkMatch.invalidPortNumbers && trunkMatch.invalidPortNumbers.length > 0) {
+      return {
+        trunkMatch,
+        error: `Port ${trunkMatch.invalidPortNumbers.join(",")} không tồn tại trong tuyến cáp "${trunkMatch.rackCode}".`,
+        warning: null,
+      };
+    }
+
+    // Ô3 (Sợi) hiện tại có thật sự khớp đúng với port đã suy ra ở Ô1 không —
+    // bắt các trường hợp người dùng gõ tay Sợi không có thật (onChange của Ô3
+    // chỉ ghi lại Ô1 khi tìm thấy khớp, nên gõ sai sẽ để lại Ô3 "mồ côi").
+    const tribTrimmed = tribText.trim();
+    if (tribTrimmed && trunkMatch.rackCode) {
+      const fiberNumbers = parseNumberList(tribTrimmed);
+      const foundByFiber = fiberNumbers ? findPortsByFiberNumbers(trunkMatch.rackCode, fiberNumbers, trunkPorts) : null;
+      if (!foundByFiber) {
+        return {
+          trunkMatch,
+          error: `Sợi "${tribTrimmed}" không tồn tại trong tuyến cáp "${trunkMatch.rackCode}".`,
+          warning: null,
+        };
+      }
+    }
+
+    const inUsePorts = (trunkMatch.resolvedPorts ?? []).filter((p) => p.inUse);
+    const warning =
+      inUsePorts.length > 0
+        ? `Port ${inUsePorts.map((p) => p.portNumber).join(",")} đang có luồng khác (${inUsePorts
+            .map((p) => p.circuitName ?? "?")
+            .join(", ")}) — vẫn thêm được, nên rà lại luồng cũ cho khớp sau nếu cần.`
+        : null;
+    return { trunkMatch, error: null, warning };
   }
 
   // Cuộn tới đúng dòng + tô sáng tạm thời khi hash là "#dc-<id>" — cả lúc
@@ -571,6 +671,9 @@ export default function DeviceCircuitList({
   }
 
   function openEdit(c: DeviceCircuitRow) {
+    // Chế độ Ô2 (Thiết bị/Cáp quang) KHÔNG cần suy luận/lưu riêng nữa — luôn
+    // tính lại từ positionNextOdf qua matchTrunkPosition() mỗi lần render
+    // (xem renderCircuitFormFields), đảm bảo nhất quán tuyệt đối với Ô1.
     const nextSplit = splitPositionNextForEdit(c.devicePositionNext ?? "");
     setEdit({
       id: c.id,
@@ -586,6 +689,9 @@ export default function DeviceCircuitList({
       notes: c.notes ?? "",
     });
     setError(null);
+    requestAnimationFrame(() => {
+      document.getElementById(EDIT_BOX_ID)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   }
 
   function cancelEdit() {
@@ -614,6 +720,14 @@ export default function DeviceCircuitList({
 
   async function saveEdit() {
     if (!edit) return;
+    // Port/Sợi (tiếp theo) gõ không có thật trong tuyến cáp đã khớp -> CHẶN
+    // lưu (yêu cầu người dùng 2026-07-27: "báo là ko đúng để bắt nhập liệu
+    // cho đúng").
+    const { trunkMatch, error: positionNextError } = validatePositionNext(edit.positionNextOdf, edit.positionNextTrib);
+    if (positionNextError) {
+      setError(positionNextError);
+      return;
+    }
     setBusy(true);
     setError(null);
     const { error: err } = await supabase
@@ -635,10 +749,13 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
     await maybeCreateCounterpartDevice(edit.counterpartText);
-    if (!looksLikeOdfRackCode(edit.positionNextDevice)) {
+    // Ô2 (tiếp theo) khớp rack trung kế thật (trunkMatch.matched) thì ghi tên
+    // tuyến cáp, không phải thiết bị — không có gì để tạo devices/ghi thư
+    // viện device_position_map.
+    if (!trunkMatch.matched) {
       await maybeGrowLibrary(edit.positionNextDevice || null, edit.positionNextTrib, edit.positionNextOdf);
+      await maybeCreateNextDevice(edit.positionNextDevice);
     }
-    await maybeCreateNextDevice(edit.positionNextDevice);
     setBusy(false);
     setEdit(null);
     router.refresh();
@@ -646,6 +763,7 @@ export default function DeviceCircuitList({
 
   function openCreate() {
     setCreateDraft(EMPTY_CREATE_DRAFT);
+    setNameTicks({ own: false, next: false, counterpart: false });
     setCreating(true);
     setError(null);
   }
@@ -653,6 +771,109 @@ export default function DeviceCircuitList({
   function cancelCreate() {
     setCreating(false);
     setError(null);
+  }
+
+  // Ghép "tên (port/trib)" cho 1 trong 3 mục có thể tick — Đối phương giữ
+  // nguyên KHÔNG thêm "(...)" vì bản thân ô đó thường đã có sẵn tọa độ trong
+  // text tự do rồi (yêu cầu người dùng 2026-07-27).
+  function nameTickPart(
+    key: "own" | "next" | "counterpart",
+    ownDeviceName: string | null,
+    ownTrib: string,
+    nextDeviceName: string,
+    nextTrib: string,
+    counterpartText: string
+  ): string {
+    if (key === "own") {
+      const trib = ownTrib.trim();
+      return trib ? `${ownDeviceName ?? ""} (${trib})` : ownDeviceName ?? "";
+    }
+    if (key === "next") {
+      const trib = nextTrib.trim();
+      return trib ? `${nextDeviceName.trim()} (${trib})` : nextDeviceName.trim();
+    }
+    return counterpartText.trim();
+  }
+
+  // Thứ tự cố định own -> next -> counterpart, đúng 3 ví dụ người dùng đưa
+  // (own+next, next+counterpart, own+counterpart) — chỉ áp dụng khi ĐÚNG 2
+  // mục đang tick, trả về null nếu khác 2 (chưa đủ dữ liệu để tự đặt tên).
+  function computeAutoName(
+    ticks: { own: boolean; next: boolean; counterpart: boolean },
+    interfaceType: string,
+    ownDeviceName: string | null,
+    ownTrib: string,
+    nextDeviceName: string,
+    nextTrib: string,
+    counterpartText: string
+  ): string | null {
+    const order: ("own" | "next" | "counterpart")[] = ["own", "next", "counterpart"];
+    const active = order.filter((k) => ticks[k]);
+    if (active.length !== 2) return null;
+    const [first, second] = active;
+    const prefix = interfaceType.trim() ? `${interfaceType.trim()} ` : "";
+    return `${prefix}${nameTickPart(first, ownDeviceName, ownTrib, nextDeviceName, nextTrib, counterpartText)} - ${nameTickPart(
+      second,
+      ownDeviceName,
+      ownTrib,
+      nextDeviceName,
+      nextTrib,
+      counterpartText
+    )}`;
+  }
+
+  // Bấm tick — tối đa 2 mục cùng lúc (yêu cầu người dùng 2026-07-27): bấm mục
+  // thứ 3 khi đã có 2 mục -> chặn + báo, giữ nguyên trạng thái tick cũ. Tick
+  // vừa đổi xong mà ĐỦ 2 mục thì tính tên ngay bằng dữ liệu hiện có trong
+  // createDraft (không cần đợi người dùng gõ thêm gì mới thấy tên xuất hiện).
+  function toggleNameTick(key: "own" | "next" | "counterpart") {
+    setNameTicks((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      const activeCount = Object.values(next).filter(Boolean).length;
+      if (activeCount > 2) {
+        alert("Chỉ được tick tối đa 2 mục để tự đặt tên luồng — bỏ tick 1 mục trước đã.");
+        return prev;
+      }
+      const auto = computeAutoName(
+        next,
+        createDraft.interfaceType,
+        createDeviceName,
+        createDraft.tribText,
+        createDraft.positionNextDevice,
+        createDraft.positionNextTrib,
+        createDraft.counterpartText
+      );
+      if (auto !== null) setCreateDraft((prevDraft) => ({ ...prevDraft, name: auto }));
+      return next;
+    });
+  }
+
+  // onChange DÙNG CHUNG cho các trường trong form Thêm mới — nếu đang tick
+  // ĐÚNG 2 mục, mỗi lần 1 trong các trường liên quan đổi (Giao tiếp/Trib/Vị
+  // trí ODF tiếp theo/Đối phương) thì tính lại tên luôn theo dữ liệu MỚI NHẤT
+  // (yêu cầu "tên luồng tự xuất hiện"). Nếu chính người dùng đang gõ tay vào
+  // ô Tên luồng (patch có "name") thì KHÔNG ghi đè — tôn trọng "có thể edit
+  // theo ý thích".
+  function handleCreateChange(patch: Partial<CreateDraft>) {
+    const merged = { ...createDraft, ...patch };
+    const activeCount = Object.values(nameTicks).filter(Boolean).length;
+    if (activeCount === 2 && !("name" in patch)) {
+      // Đổi Thiết bị (deviceId) thì createDeviceName (useMemo) CHƯA kịp cập
+      // nhật theo giá trị mới ở đúng lượt gọi này — tra thẳng tên mới từ
+      // devices thay vì dùng createDeviceName (đang là tên CŨ).
+      const deviceNameForCalc = "deviceId" in patch ? devices.find((d) => d.id === patch.deviceId)?.name ?? null : createDeviceName;
+      const auto = computeAutoName(
+        nameTicks,
+        merged.interfaceType,
+        deviceNameForCalc,
+        merged.tribText,
+        merged.positionNextDevice,
+        merged.positionNextTrib,
+        merged.counterpartText
+      );
+      if (auto !== null) merged.name = auto;
+    }
+    setCreateDraft(merged);
   }
 
   // Thiết bị đích của form "Thêm luồng mới" — chọn Lĩnh vực trước để thu hẹp
@@ -679,6 +900,11 @@ export default function DeviceCircuitList({
       setError("Chọn thiết bị trước khi thêm luồng.");
       return;
     }
+    const { trunkMatch, error: positionNextError } = validatePositionNext(createDraft.positionNextOdf, createDraft.positionNextTrib);
+    if (positionNextError) {
+      setError(positionNextError);
+      return;
+    }
     setBusy(true);
     setError(null);
     const { error: err } = await supabase.from("circuits").insert({
@@ -699,14 +925,220 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
     await maybeCreateCounterpartDevice(createDraft.counterpartText);
-    if (!looksLikeOdfRackCode(createDraft.positionNextDevice)) {
+    if (!trunkMatch.matched) {
       await maybeGrowLibrary(createDraft.positionNextDevice || null, createDraft.positionNextTrib, createDraft.positionNextOdf);
+      await maybeCreateNextDevice(createDraft.positionNextDevice);
     }
-    await maybeCreateNextDevice(createDraft.positionNextDevice);
     setBusy(false);
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);
+    setNameTicks({ own: false, next: false, counterpart: false });
     router.refresh();
+  }
+
+  // Khối field DÙNG CHUNG giữa khung "Thêm luồng mới" và "Sửa luồng thiết
+  // bị" (yêu cầu người dùng 2026-07-27: 2 khung phải giống hệt nhau, bản chất
+  // cùng 1 bộ trường) — riêng phần Lĩnh vực/Thiết bị KHÔNG nằm trong đây vì
+  // 2 bên khác nhau (Thêm: chọn được; Sửa: chỉ hiện tên tĩnh, xem chỗ gọi).
+  function renderCircuitFormFields(
+    values: SharedCircuitFields,
+    onChange: (patch: Partial<SharedCircuitFields>) => void,
+    deviceNameForLookup: string | null,
+    tribDatalistId: string,
+    tribNextDatalistId: string,
+    enableNameTicks: boolean
+  ) {
+    const { trunkMatch, error: positionNextError, warning: positionNextWarning } = validatePositionNext(
+      values.positionNextOdf,
+      values.positionNextTrib
+    );
+    return (
+      <>
+        <label className="text-xs text-slate-500">
+          Tên luồng
+          {/* textarea (không phải input) để kéo to/nhỏ được như ô Ghi chú —
+              tên luồng thực tế có thể rất dài (yêu cầu người dùng 2026-07-27:
+              ô nhỏ quá, phải cuộn ngang mới xem/sửa hết được). rows=1 để mặc
+              định thấp gần bằng ô input bên cạnh, kéo lớn khi cần. */}
+          <textarea
+            className="input mt-1 resize-y"
+            rows={1}
+            placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
+            value={values.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            autoFocus
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Trib
+          <input
+            className="input mt-1"
+            list={tribDatalistId}
+            placeholder="VD: S1-1, 1/0/27"
+            value={values.tribText}
+            onChange={(e) => {
+              const v = e.target.value;
+              const match = findLibraryMatchByTrib(deviceNameForLookup, v);
+              onChange({ tribText: v, positionOwn: match?.odfPosition ?? values.positionOwn });
+            }}
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Vị trí ODF (thiết bị)
+          <input
+            className="input mt-1"
+            list="dc-odf-position-options"
+            placeholder="VD: ODF 5/7 (37,38)"
+            value={values.positionOwn}
+            onChange={(e) => {
+              const v = e.target.value;
+              const match = findLibraryMatchByOdf(deviceNameForLookup, v);
+              onChange({ positionOwn: v, tribText: match?.devicePosition ?? values.tribText });
+            }}
+          />
+        </label>
+        <div className="text-xs text-slate-500">
+          Vị trí ODF (tiếp theo)
+          {/* 3 ô xếp chồng (yêu cầu người dùng 2026-07-27, tinh chỉnh lại sau
+              đó): Ô1 tọa độ ODF, Ô2 thiết bị local ADN1 HOẶC cáp quang trung
+              kế, Ô3 Trib/Sợi — TỰ NHẬN DIỆN chế độ qua matchTrunkPosition(Ô1)
+              (không còn chọn tay): khớp được 1 rack trung kế thật -> chắc
+              chắn là ca đấu thẳng ra trung kế (rack/port bên thiết bị KHÔNG
+              được tạo thật trong hệ thống, xem architecture.md mục 7.2), tự
+              điền Ô2 (tên tuyến cáp, KHÓA không cho sửa tay để đảm bảo toàn
+              vẹn dữ liệu) + suy 2 chiều Port(Ô1)<->Sợi(Ô3). Lưu gộp lại 1
+              chuỗi qua combinePositionNext(), hiển thị bảng tổng hợp vẫn 1
+              cột như cũ. */}
+          <input
+            className="input mt-1"
+            list="dc-odf-position-options"
+            placeholder="VD: ODF 3/14 (27,28)"
+            value={values.positionNextOdf}
+            onChange={(e) => {
+              const v = e.target.value;
+              const match = matchTrunkPosition(v, trunkPorts);
+              if (match.matched) {
+                const cleanPorts = !match.invalidPortNumbers || match.invalidPortNumbers.length === 0;
+                const fiberText =
+                  cleanPorts && match.resolvedPorts && match.resolvedPorts.length > 0
+                    ? match.resolvedPorts.map((p) => p.fiberNumber ?? p.portNumber).join(",")
+                    : values.positionNextTrib;
+                onChange({ positionNextOdf: v, positionNextDevice: match.cableRouteName ?? "", positionNextTrib: fiberText });
+              } else {
+                // Không khớp rack trung kế nào -> chế độ Thiết bị (Ô2 quay
+                // lại free-text, dùng findLibraryMatchByOdf như trước).
+                const libMatch = findLibraryMatchByOdf(values.positionNextDevice || null, v);
+                onChange({ positionNextOdf: v, positionNextTrib: libMatch?.devicePosition ?? values.positionNextTrib });
+              }
+            }}
+          />
+          {trunkMatch.matched ? (
+            <>
+              <div className="mt-1 text-[11px] text-slate-400">Cáp quang (tiếp theo)</div>
+              {/* Read-only (yêu cầu người dùng: khóa không cho sửa tay để đảm
+                  bảo toàn vẹn dữ liệu — lấy thẳng từ racks.cable_route_name). */}
+              <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">{trunkMatch.cableRouteName ?? "—"}</div>
+              <div className="mt-1 text-[11px] text-slate-400">Sợi quang (tiếp theo)</div>
+              <input
+                className="input mt-1"
+                placeholder="VD: 1,2"
+                value={values.positionNextTrib}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const fiberNumbers = trunkMatch.rackCode ? parseNumberList(v) : null;
+                  const foundPorts = fiberNumbers && trunkMatch.rackCode ? findPortsByFiberNumbers(trunkMatch.rackCode, fiberNumbers, trunkPorts) : null;
+                  if (foundPorts) {
+                    onChange({ positionNextTrib: v, positionNextOdf: `${trunkMatch.rackCode} (${foundPorts.map((p) => p.portNumber).join(",")})` });
+                  } else {
+                    onChange({ positionNextTrib: v });
+                  }
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                {/* Tick "dùng để tự đặt tên luồng" — CHỈ khi enableNameTicks
+                    (form Thêm mới) VÀ đang ở chế độ Thiết bị (yêu cầu người
+                    dùng 2026-07-27: không có tick cho Cáp quang/Sợi quang). */}
+                {enableNameTicks && (
+                  <input
+                    type="checkbox"
+                    checked={nameTicks.next}
+                    onChange={() => toggleNameTick("next")}
+                    title="Dùng thiết bị (tiếp theo) này để tự đặt tên luồng (tối đa 2 mục)"
+                  />
+                )}
+                Thiết bị (tiếp theo)
+              </div>
+              <input
+                className="input mt-1"
+                list="dc-local-device-options"
+                placeholder="VD: PE2"
+                value={values.positionNextDevice}
+                onChange={(e) => onChange({ positionNextDevice: e.target.value })}
+              />
+              <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
+              <input
+                className="input mt-1"
+                list={tribNextDatalistId}
+                placeholder="VD: S1-1, 1/0/27"
+                value={values.positionNextTrib}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const match = findLibraryMatchByTrib(values.positionNextDevice || null, v);
+                  onChange({ positionNextTrib: v, positionNextOdf: match?.odfPosition ?? values.positionNextOdf });
+                }}
+              />
+            </>
+          )}
+          {positionNextError && <p className="mt-1 text-[11px] font-medium text-red-600">{positionNextError}</p>}
+          {!positionNextError && positionNextWarning && <p className="mt-1 text-[11px] font-medium text-amber-600">{positionNextWarning}</p>}
+        </div>
+        <label className="text-xs text-slate-500">
+          Giao tiếp
+          <input
+            className="input mt-1"
+            list="dc-interface-options"
+            placeholder="VD: 100GE, 10GE"
+            value={values.interfaceType}
+            onChange={(e) => onChange({ interfaceType: e.target.value })}
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1">
+            {enableNameTicks && (
+              <input
+                type="checkbox"
+                checked={nameTicks.counterpart}
+                onChange={() => toggleNameTick("counterpart")}
+                title="Dùng Đối phương để tự đặt tên luồng (tối đa 2 mục)"
+              />
+            )}
+            Đối phương
+          </span>
+          {/* Cùng lý do textarea như Tên luồng — tên thiết bị đối phương kèm
+              tọa độ cũng thường dài. */}
+          <textarea
+            className="input mt-1 resize-y"
+            rows={1}
+            placeholder="VD: ADN1.PSS24X#3 BB1 (2-3-21)"
+            value={values.counterpartText}
+            onChange={(e) => onChange({ counterpartText: e.target.value })}
+          />
+        </label>
+        <label className="text-xs text-slate-500 sm:col-span-2 lg:col-span-4">
+          Ghi chú
+          <textarea
+            className="input mt-1 resize-y"
+            rows={2}
+            placeholder="Ghi chú thêm (nếu có)..."
+            value={values.notes}
+            onChange={(e) => onChange({ notes: e.target.value })}
+          />
+        </label>
+      </>
+    );
   }
 
   return (
@@ -755,7 +1187,17 @@ export default function DeviceCircuitList({
       <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50/40 p-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-primary-800">Thêm luồng thiết bị mới</p>
-          <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => (creating ? cancelCreate() : openCreate())}>
+          {/* Khóa nút Thêm khi đang Sửa 1 luồng khác (yêu cầu người dùng
+              2026-07-27): phải Lưu hoặc Hủy phần Sửa xong mới được Thêm mới,
+              không cho vừa Sửa vừa Thêm cùng lúc — tránh mất dở dữ liệu đang
+              sửa. */}
+          <button
+            type="button"
+            className="btn-secondary px-2 py-1 text-xs"
+            onClick={() => (creating ? cancelCreate() : openCreate())}
+            disabled={!creating && edit !== null}
+            title={!creating && edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước khi thêm mới" : undefined}
+          >
             {creating ? "Hủy" : "+ Thêm luồng mới"}
           </button>
         </div>
@@ -764,8 +1206,13 @@ export default function DeviceCircuitList({
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="text-xs text-slate-500">
                 Lĩnh vực
+                {/* w-auto (yêu cầu người dùng 2026-07-27): ô này trước đây
+                    kéo full-width dù nội dung chỉ vài chữ — thu lại theo đúng
+                    độ dài lĩnh vực dài nhất, padding 2 bên đã có sẵn từ
+                    .input (px-2.5). Cùng cách "input w-auto" đã dùng ở ô "Số
+                    dòng/trang" phía dưới. */}
                 <select
-                  className="input mt-1"
+                  className="input mt-1 w-auto"
                   value={createDraft.category}
                   onChange={(e) => setCreateDraft({ ...createDraft, category: e.target.value, deviceId: "" })}
                 >
@@ -778,128 +1225,30 @@ export default function DeviceCircuitList({
                 </select>
               </label>
               <label className="text-xs text-slate-500">
-                Thiết bị
+                <span className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={nameTicks.own}
+                    onChange={() => toggleNameTick("own")}
+                    title="Dùng thiết bị này để tự đặt tên luồng (tối đa 2 mục)"
+                  />
+                  Thiết bị
+                </span>
                 <SearchableSelect
                   items={createDeviceItems}
                   value={createDraft.deviceId}
-                  onChange={(v) => setCreateDraft({ ...createDraft, deviceId: v })}
+                  onChange={(v) => handleCreateChange({ deviceId: v })}
                   placeholder="-- Chọn thiết bị --"
                 />
               </label>
-              <label className="text-xs text-slate-500">
-                Tên luồng
-                {/* textarea (không phải input) để kéo to/nhỏ được như ô Ghi
-                    chú — tên luồng thực tế có thể rất dài (yêu cầu người
-                    dùng 2026-07-27: ô nhỏ quá, phải cuộn ngang mới xem/sửa
-                    hết được). rows=1 để mặc định thấp gần bằng ô input bên
-                    cạnh, kéo lớn khi cần. */}
-                <textarea
-                  className="input mt-1 resize-y"
-                  rows={1}
-                  placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
-                  value={createDraft.name}
-                  onChange={(e) => setCreateDraft({ ...createDraft, name: e.target.value })}
-                />
-              </label>
-              <label className="text-xs text-slate-500">
-                Trib
-                <input
-                  className="input mt-1"
-                  list="dc-trib-options-create"
-                  placeholder="VD: S1-1, 1/0/27"
-                  value={createDraft.tribText}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const match = findLibraryMatchByTrib(createDeviceName, v);
-                    setCreateDraft((prev) => ({ ...prev, tribText: v, positionOwn: match?.odfPosition ?? prev.positionOwn }));
-                  }}
-                />
-              </label>
-              <label className="text-xs text-slate-500">
-                Vị trí ODF (thiết bị)
-                <input
-                  className="input mt-1"
-                  list="dc-odf-position-options"
-                  placeholder="VD: ODF 5/7 (37,38)"
-                  value={createDraft.positionOwn}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const match = findLibraryMatchByOdf(createDeviceName, v);
-                    setCreateDraft((prev) => ({ ...prev, positionOwn: v, tribText: match?.devicePosition ?? prev.tribText }));
-                  }}
-                />
-              </label>
-              <div className="text-xs text-slate-500">
-                Vị trí ODF (tiếp theo)
-                {/* 3 ô xếp chồng (yêu cầu người dùng 2026-07-27): Ô1 tọa độ
-                    ODF, Ô2 thiết bị local ADN1 (hoặc mã ODF trung kế nếu đấu
-                    thẳng ra trung kế), Ô3 Trib/sợi — lưu gộp lại 1 chuỗi qua
-                    combinePositionNext(), hiển thị bảng tổng hợp vẫn 1 cột
-                    như cũ. */}
-                <input
-                  className="input mt-1"
-                  list="dc-odf-position-options"
-                  placeholder="VD: ODF 3/14 (27,28)"
-                  value={createDraft.positionNextOdf}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const match = findLibraryMatchByOdf(createDraft.positionNextDevice || null, v);
-                    setCreateDraft((prev) => ({ ...prev, positionNextOdf: v, positionNextTrib: match?.devicePosition ?? prev.positionNextTrib }));
-                  }}
-                />
-                <div className="mt-1 text-[11px] text-slate-400">Thiết bị (tiếp theo)</div>
-                <input
-                  className="input mt-1"
-                  list="dc-local-device-options"
-                  placeholder="VD: PE2, hoặc ODF7/4 nếu đấu thẳng trung kế"
-                  value={createDraft.positionNextDevice}
-                  onChange={(e) => setCreateDraft({ ...createDraft, positionNextDevice: e.target.value })}
-                />
-                <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
-                <input
-                  className="input mt-1"
-                  list="dc-trib-options-next-create"
-                  placeholder="VD: S1-1, 1/0/27"
-                  value={createDraft.positionNextTrib}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const match = findLibraryMatchByTrib(createDraft.positionNextDevice || null, v);
-                    setCreateDraft((prev) => ({ ...prev, positionNextTrib: v, positionNextOdf: match?.odfPosition ?? prev.positionNextOdf }));
-                  }}
-                />
-              </div>
-              <label className="text-xs text-slate-500">
-                Giao tiếp
-                <input
-                  className="input mt-1"
-                  list="dc-interface-options"
-                  placeholder="VD: 100GE, 10GE"
-                  value={createDraft.interfaceType}
-                  onChange={(e) => setCreateDraft({ ...createDraft, interfaceType: e.target.value })}
-                />
-              </label>
-              <label className="text-xs text-slate-500">
-                Đối phương
-                {/* Cùng lý do textarea như Tên luồng — tên thiết bị đối
-                    phương kèm tọa độ cũng thường dài. */}
-                <textarea
-                  className="input mt-1 resize-y"
-                  rows={1}
-                  placeholder="VD: ADN1.PSS24X#3 BB1 (2-3-21)"
-                  value={createDraft.counterpartText}
-                  onChange={(e) => setCreateDraft({ ...createDraft, counterpartText: e.target.value })}
-                />
-              </label>
-              <label className="text-xs text-slate-500 sm:col-span-2 lg:col-span-4">
-                Ghi chú
-                <textarea
-                  className="input mt-1 resize-y"
-                  rows={2}
-                  placeholder="Ghi chú thêm (nếu có)..."
-                  value={createDraft.notes}
-                  onChange={(e) => setCreateDraft({ ...createDraft, notes: e.target.value })}
-                />
-              </label>
+              {renderCircuitFormFields(
+                createDraft,
+                handleCreateChange,
+                createDeviceName,
+                "dc-trib-options-create",
+                "dc-trib-options-next-create",
+                true
+              )}
             </div>
             <div className="mt-3 flex gap-2">
               <button className="btn-primary" onClick={submitCreate} disabled={busy}>
@@ -912,6 +1261,42 @@ export default function DeviceCircuitList({
           </>
         )}
       </div>
+
+      {/* Khung Sửa — yêu cầu người dùng 2026-07-27: bấm "Sửa" ở 1 dòng không
+          còn mở form ngay trong dòng đó (bảng cũ) nữa, mà mở khung RIÊNG,
+          giống hệt khung "Thêm luồng mới" ở trên (cùng bộ trường), nằm ngay
+          dưới khung Thêm. Chỉ khác chỗ Thiết bị: hiện tên tĩnh (không đổi
+          thiết bị của luồng đã có ở đây — đổi ở trang Danh mục thiết bị). */}
+      {edit && (
+        <div id={EDIT_BOX_ID} className="mb-4 rounded-lg border border-primary-200 bg-primary-50/40 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-primary-800">Sửa luồng thiết bị</p>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs text-slate-500">
+              Thiết bị
+              <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">{edit.deviceName ?? "(chưa xác định)"}</div>
+              <div className="mt-1 text-[11px] text-slate-400">(sửa tên thiết bị ở Danh mục thiết bị)</div>
+            </label>
+            {renderCircuitFormFields(
+              edit,
+              (patch) => setEdit({ ...edit, ...patch }),
+              edit.deviceName,
+              "dc-trib-options-edit",
+              "dc-trib-options-next-edit",
+              false
+            )}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button className="btn-primary" onClick={saveEdit} disabled={busy}>
+              Lưu
+            </button>
+            <button className="btn-secondary" onClick={cancelEdit} disabled={busy}>
+              Hủy
+            </button>
+          </div>
+        </div>
+      )}
 
       {positionConflicts.length > 0 && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4">
@@ -1131,162 +1516,61 @@ export default function DeviceCircuitList({
                           : "hover:bg-primary-50/50"
                   }`}
                 >
-                  {editing ? (
-                    <>
-                      <td className="px-4 py-2">
-                        <textarea
-                          className="input min-w-[180px] resize-y"
-                          rows={1}
-                          placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
-                          value={edit.name}
-                          onChange={(e) => setEdit({ ...edit, name: e.target.value })}
-                          autoFocus
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          list="dc-trib-options-edit"
-                          placeholder="VD: S1-1, 1/0/27"
-                          value={edit.tribText}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const match = findLibraryMatchByTrib(edit.deviceName, v);
-                            setEdit({ ...edit, tribText: v, positionOwn: match?.odfPosition ?? edit.positionOwn });
-                          }}
-                        />
-                      </td>
-                      {showDeviceColumn && (
-                        <td className="px-4 py-2 text-slate-500 text-xs">
-                          {c.deviceName ?? "(chưa xác định)"}
-                          <div>(sửa tên thiết bị ở Danh mục thiết bị)</div>
-                        </td>
+                  <td className="px-4 py-2 text-slate-700">
+                    {displayName(c) || "—"}
+                    <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
+                  </td>
+                  <td className="px-4 py-2 text-slate-600">{c.tribText ?? "—"}</td>
+                  {showDeviceColumn && (
+                    <td className="px-4 py-2 text-slate-600">
+                      {c.deviceName ?? "(chưa xác định)"}
+                      {!c.deviceId && (
+                        <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
+                          (chưa chuẩn hóa)
+                        </span>
                       )}
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          list="dc-odf-position-options"
-                          placeholder="VD: ODF 5/7 (37,38)"
-                          value={edit.positionOwn}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const match = findLibraryMatchByOdf(edit.deviceName, v);
-                            setEdit({ ...edit, positionOwn: v, tribText: match?.devicePosition ?? edit.tribText });
-                          }}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          list="dc-odf-position-options"
-                          placeholder="VD: ODF 3/14 (27,28)"
-                          value={edit.positionNextOdf}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const match = findLibraryMatchByOdf(edit.positionNextDevice || null, v);
-                            setEdit({ ...edit, positionNextOdf: v, positionNextTrib: match?.devicePosition ?? edit.positionNextTrib });
-                          }}
-                        />
-                        <div className="mt-1 text-[11px] text-slate-400">Thiết bị (tiếp theo)</div>
-                        <input
-                          className="input mt-1"
-                          list="dc-local-device-options"
-                          placeholder="VD: PE2, hoặc ODF7/4 nếu đấu thẳng trung kế"
-                          value={edit.positionNextDevice}
-                          onChange={(e) => setEdit({ ...edit, positionNextDevice: e.target.value })}
-                        />
-                        <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
-                        <input
-                          className="input mt-1"
-                          list="dc-trib-options-next-edit"
-                          placeholder="VD: S1-1, 1/0/27"
-                          value={edit.positionNextTrib}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const match = findLibraryMatchByTrib(edit.positionNextDevice || null, v);
-                            setEdit({ ...edit, positionNextTrib: v, positionNextOdf: match?.odfPosition ?? edit.positionNextOdf });
-                          }}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          list="dc-interface-options"
-                          placeholder="VD: 100GE, 10GE"
-                          value={edit.interfaceType}
-                          onChange={(e) => setEdit({ ...edit, interfaceType: e.target.value })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <textarea
-                          className="input min-w-[160px] resize-y"
-                          rows={1}
-                          placeholder="VD: ADN1.PSS24X#3 BB1 (2-3-21)"
-                          value={edit.counterpartText}
-                          onChange={(e) => setEdit({ ...edit, counterpartText: e.target.value })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <textarea
-                          className="input min-w-[220px] resize-y"
-                          rows={5}
-                          value={edit.notes}
-                          onChange={(e) => setEdit({ ...edit, notes: e.target.value })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <div className="flex flex-col gap-1">
-                          <button className="btn-primary" onClick={saveEdit} disabled={busy}>
-                            Lưu
-                          </button>
-                          <button className="btn-secondary" onClick={cancelEdit} disabled={busy}>
-                            Hủy
-                          </button>
-                        </div>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-4 py-2 text-slate-700">{displayName(c) || "—"}</td>
-                      <td className="px-4 py-2 text-slate-600">{c.tribText ?? "—"}</td>
-                      {showDeviceColumn && (
-                        <td className="px-4 py-2 text-slate-600">
-                          {c.deviceName ?? "(chưa xác định)"}
-                          {!c.deviceId && (
-                            <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
-                              (chưa chuẩn hóa)
-                            </span>
-                          )}
-                        </td>
-                      )}
-                      <td className={`px-4 py-2 ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
-                        {c.devicePositionOwn ?? "—"}
-                        {ownConflict && (
-                          <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
-                            Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-slate-600">{c.devicePositionNext ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-600">{c.interfaceType ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-600">{c.counterpartText ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-500 max-w-xs">
-                        <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
-                          {c.notes ?? "—"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2">
-                        <div className="flex gap-2">
-                          <button className="text-primary-600 hover:underline" onClick={() => openEdit(c)} disabled={busy}>
-                            Sửa
-                          </button>
-                          <button className="text-red-600 hover:underline" onClick={() => deleteCircuit(c)} disabled={busy}>
-                            Xóa
-                          </button>
-                        </div>
-                      </td>
-                    </>
+                    </td>
                   )}
+                  <td className={`px-4 py-2 ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+                    {c.devicePositionOwn ?? "—"}
+                    {ownConflict && (
+                      <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
+                        Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-slate-600">{c.devicePositionNext ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600">{c.interfaceType ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600">{c.counterpartText ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-500 max-w-xs">
+                    <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
+                      {c.notes ?? "—"}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2">
+                    <div className="flex gap-2">
+                      {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC
+                          (yêu cầu người dùng 2026-07-27) — dòng đang được sửa
+                          thì hiện chữ báo trạng thái thay vì nút, vì form sửa
+                          nằm ở khung riêng phía trên, bấm lại "Sửa" ở đây
+                          không có ý nghĩa gì thêm. */}
+                      {editing ? (
+                        <span className="text-xs italic text-slate-400">Đang sửa ở trên</span>
+                      ) : (
+                        <button
+                          className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
+                          onClick={() => openEdit(c)}
+                          disabled={busy || creating || edit !== null}
+                          title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : undefined}
+                        >
+                          Sửa
+                        </button>
+                      )}
+                      <button className="text-red-600 hover:underline" onClick={() => deleteCircuit(c)} disabled={busy}>
+                        Xóa
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
