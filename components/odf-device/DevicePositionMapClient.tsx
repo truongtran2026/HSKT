@@ -1,14 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
+import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
+import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import SortableTh from "@/components/ui/SortableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
+import type { DeviceRow } from "@/lib/devices";
 
 type SortKey = "deviceName" | "devicePosition" | "odfPosition";
 
@@ -37,10 +41,10 @@ const EMPTY_DRAFT: Draft = { deviceName: "", devicePosition: "", odfPosition: ""
 
 export default function DevicePositionMapClient({
   rows,
-  deviceNameOptions,
+  devices,
 }: {
   rows: DevicePositionMapRow[];
-  deviceNameOptions: string[];
+  devices: DeviceRow[];
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
@@ -50,6 +54,25 @@ export default function DevicePositionMapClient({
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
+  // Mặc định MỞ SẴN (không thu gọn) — người dùng phản hồi 2026-07-27: bấm
+  // lọc "Chưa phân loại" ở khung Lĩnh vực chỉ lọc bảng bên dưới, không liên
+  // quan gì tới khung này, nên nếu thu gọn sẵn thì không biết chỗ nào để
+  // tick chọn/chuẩn hóa tên. Vẫn giữ nút Ẩn để gọn lại sau khi dùng xong.
+  const [standardizeOpen, setStandardizeOpen] = useState(true);
+  const [renameSelected, setRenameSelected] = useState<Set<string>>(new Set());
+  const [renameTarget, setRenameTarget] = useState("");
+  const [renameCategory, setRenameCategory] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const deviceNameOptions = useMemo(() => devices.map((d) => d.name), [devices]);
+
+  const realCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of devices) if (d.category) set.add(d.category);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [devices]);
 
   function setFilter(key: SortKey, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -61,16 +84,173 @@ export default function DevicePositionMapClient({
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
+  // Lĩnh vực của 1 dòng thư viện: tra theo tên thiết bị (chuẩn hóa, bỏ tiền
+  // tố "ADN1."/khoảng trắng thừa — xem lib/deviceNotes.ts) đối chiếu với bảng
+  // devices thật. device_position_map.device_name là text tự do nên không
+  // phải dòng nào cũng khớp được — dòng không khớp rơi vào "Chưa phân loại",
+  // đúng là chưa xác định được chứ không phải lỗi.
+  const categoryByDeviceKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of devices) map.set(normalizeDeviceNameKey(d.name), deviceCategoryLabel(d.category));
+    return map;
+  }, [devices]);
+
+  function rowCategory(r: DevicePositionMapRow): string {
+    return categoryByDeviceKey.get(normalizeDeviceNameKey(r.deviceName)) ?? UNCATEGORIZED_LABEL;
+  }
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) set.add(rowCategory(r));
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [rows, categoryByDeviceKey]);
+
+  const existingDeviceKeys = useMemo(() => new Set(devices.map((d) => normalizeDeviceNameKey(d.name))), [devices]);
+
+  // Nhóm các dòng có tên thiết bị KHÔNG khớp bảng devices thật (nguyên nhân
+  // chính khiến 1 dòng rơi vào "Chưa phân loại" — yêu cầu người dùng
+  // 2026-07-27: tên lấy từ ghi chú nên chưa đồng bộ với tên đã chuẩn hóa).
+  // Gộp theo khóa chuẩn hóa để 1 lần "Áp dụng" sửa được HÀNG LOẠT dòng cùng
+  // tên, thay vì phải sửa từng dòng trib/port riêng lẻ.
+  interface UnmatchedGroup {
+    key: string;
+    variants: { text: string; count: number }[];
+    rows: DevicePositionMapRow[];
+  }
+  const unmatchedGroups = useMemo(() => {
+    const map = new Map<string, UnmatchedGroup>();
+    for (const r of rows) {
+      const key = normalizeDeviceNameKey(r.deviceName);
+      if (existingDeviceKeys.has(key)) continue;
+      let g = map.get(key);
+      if (!g) {
+        g = { key, variants: [], rows: [] };
+        map.set(key, g);
+      }
+      g.rows.push(r);
+      const raw = r.deviceName.trim();
+      const v = g.variants.find((item) => item.text === raw);
+      if (v) v.count += 1;
+      else g.variants.push({ text: raw, count: 1 });
+    }
+    return [...map.values()].sort((a, b) => b.rows.length - a.rows.length);
+  }, [rows, existingDeviceKeys]);
+  const unmatchedRowCount = useMemo(() => unmatchedGroups.reduce((sum, g) => sum + g.rows.length, 0), [unmatchedGroups]);
+
+  // "Chưa phân loại" có 2 NGUYÊN NHÂN KHÁC NHAU, dễ nhầm (phát hiện thực tế
+  // 2026-07-27 — người dùng chuẩn hóa xong tên qua khung trên nhưng vẫn thấy
+  // dòng "Chưa phân loại", vì tên đã khớp đúng thiết bị rồi nhưng CHÍNH thiết
+  // bị đó lại chưa được gán lĩnh vực): (1) tên chưa khớp thiết bị nào — sửa ở
+  // khung "Chuẩn hóa tên thiết bị chưa khớp" bên trên; (2) tên ĐÃ khớp đúng 1
+  // thiết bị thật nhưng thiết bị đó chưa có lĩnh vực — phải sang trang "Danh
+  // mục thiết bị" (/devices) gán, sửa tên ở đây không giải quyết được.
+  const categorylessMatchedDevices = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of rows) {
+      const key = normalizeDeviceNameKey(r.deviceName);
+      if (existingDeviceKeys.has(key) && rowCategory(r) === UNCATEGORIZED_LABEL) set.add(key);
+    }
+    return set.size;
+  }, [rows, existingDeviceKeys, categoryByDeviceKey]);
+
+  function toggleRenameSelect(key: string) {
+    setRenameSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // "Áp dụng" dùng cho cả 2 tình huống người dùng nêu: (1) map về 1 thiết bị
+  // ĐÃ chuẩn hóa có sẵn — dùng đúng chữ viết chuẩn của thiết bị đó, tránh tạo
+  // thêm 1 biến thể tên khác; sửa kèm lĩnh vực nếu gõ khác lĩnh vực hiện tại.
+  // (2) gõ tên chưa từng có -> hỏi xác nhận tạo devices mới (cùng cơ chế với
+  // maybeCreateCounterpartDevice ở DeviceCircuitList.tsx) rồi mới đổi tên
+  // hàng loạt các dòng đã chọn về đúng tên đó.
+  async function applyRenameGroups() {
+    const target = renameTarget.trim();
+    if (!target) {
+      setRenameError("Nhập tên thiết bị chuẩn trước khi áp dụng.");
+      return;
+    }
+    if (renameSelected.size === 0) return;
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      const targetKey = normalizeDeviceNameKey(target);
+      const existingMatch = devices.find((d) => normalizeDeviceNameKey(d.name) === targetKey);
+      let finalName = target;
+      if (existingMatch) {
+        finalName = existingMatch.name;
+        const newCategory = renameCategory.trim();
+        if (newCategory && newCategory !== (existingMatch.category ?? "")) {
+          const { error: catErr } = await supabase.from("devices").update({ category: newCategory }).eq("id", existingMatch.id);
+          if (catErr) throw catErr;
+        }
+      } else {
+        if (!confirm(`Chưa có thiết bị "${target}" trong hệ thống.\n\nTạo mới thiết bị này?`)) {
+          setRenameBusy(false);
+          return;
+        }
+        const stationId = await getAdn1StationId();
+        const { error: insErr } = await supabase
+          .from("devices")
+          .insert({ station_id: stationId, name: target, category: renameCategory.trim() || null, source: "manual" });
+        if (insErr) throw insErr;
+      }
+
+      const groupsToApply = unmatchedGroups.filter((g) => renameSelected.has(g.key));
+      const ids = groupsToApply.flatMap((g) => g.rows.map((r) => r.id));
+      const chunkSize = 200;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const batch = ids.slice(i, i + chunkSize);
+        const { error: updErr } = await supabase.from("device_position_map").update({ device_name: finalName }).in("id", batch);
+        if (updErr) throw updErr;
+      }
+
+      setRenameSelected(new Set());
+      setRenameTarget("");
+      setRenameCategory("");
+      router.refresh();
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
+  // Cùng kiểu bấm nhanh + cộng dồn nhiều lĩnh vực như DeviceCircuitList (xem
+  // file đó để biết lý do không reset lựa chọn khác khi đổi lĩnh vực).
+  function toggleCategory(cat: string) {
+    setCategoryFilter((prev) => {
+      if (prev === null) return [cat];
+      if (prev.includes(cat)) {
+        const next = prev.filter((c) => c !== cat);
+        return next.length === 0 ? null : next;
+      }
+      return [...prev, cat];
+    });
+  }
+
+  function resetCategory() {
+    setCategoryFilter(null);
+  }
+
   const filtered = useMemo(() => {
-    const list = rows.filter(
+    let list = rows.filter(
       (r) =>
         matchesFilter(r.deviceName, filters.deviceName) &&
         matchesFilter(r.devicePosition, filters.devicePosition) &&
         matchesFilter(r.odfPosition, filters.odfPosition)
     );
+    if (categoryFilter !== null) {
+      const set = new Set(categoryFilter);
+      list = list.filter((r) => set.has(rowCategory(r)));
+    }
     const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
     return sortDir === "desc" ? arr.reverse() : arr;
-  }, [rows, filters, sortKey, sortDir]);
+  }, [rows, filters, categoryFilter, categoryByDeviceKey, sortKey, sortDir]);
 
   async function addRow() {
     if (!draft.deviceName.trim()) {
@@ -152,7 +332,7 @@ export default function DevicePositionMapClient({
           <input
             className="input w-auto max-w-[220px]"
             list="dpm-device-name-options"
-            placeholder="Tên thiết bị"
+            placeholder="VD: ADN1.OTS2 BB1"
             value={draft.deviceName}
             onChange={(e) => setDraft({ ...draft, deviceName: e.target.value })}
           />
@@ -163,14 +343,14 @@ export default function DevicePositionMapClient({
           </datalist>
           <input
             className="input w-auto max-w-[220px]"
-            placeholder="Vị trí thiết bị"
+            placeholder="VD: S1-1, 1/0/27"
             value={draft.devicePosition}
             onChange={(e) => setDraft({ ...draft, devicePosition: e.target.value })}
           />
           <input
             className="input w-auto max-w-[220px]"
             list="dpm-odf-position-options"
-            placeholder="Vị trí ODF/DDF"
+            placeholder="VD: ODF 5/7 (37,38)"
             value={draft.odfPosition}
             onChange={(e) => setDraft({ ...draft, odfPosition: e.target.value })}
           />
@@ -184,6 +364,125 @@ export default function DevicePositionMapClient({
           </button>
         </div>
       </div>
+
+      <div className="mb-4">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Lĩnh vực</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={resetCategory}
+            className={
+              "rounded-full border px-3 py-1.5 text-sm " +
+              (categoryFilter === null
+                ? "border-primary-600 bg-primary-600 text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
+            }
+          >
+            Tất cả
+          </button>
+          {categoryOptions.map((cat) => {
+            const active = categoryFilter === null || categoryFilter.includes(cat);
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => toggleCategory(cat)}
+                className={
+                  "rounded-full border px-3 py-1.5 text-sm " +
+                  (active ? "border-primary-600 bg-primary-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
+                }
+              >
+                {cat}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {unmatchedGroups.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-amber-800">
+              Chuẩn hóa tên thiết bị chưa khớp ({unmatchedGroups.length} tên khác nhau, {unmatchedRowCount} dòng đang
+              "Chưa phân loại")
+            </p>
+            <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setStandardizeOpen((v) => !v)}>
+              {standardizeOpen ? "Ẩn" : "Mở"}
+            </button>
+          </div>
+
+          {standardizeOpen && (
+            <>
+              {renameError && <p className="mt-2 text-sm text-red-600">Lỗi: {renameError}</p>}
+              <p className="mt-2 text-xs text-amber-700">
+                Tick chọn 1 hoặc nhiều tên bên dưới (có thể là nhiều biến thể khác nhau của CÙNG 1 thiết bị thật), gõ
+                tên chuẩn muốn gộp về rồi bấm Áp dụng — đổi tên hàng loạt cho toàn bộ dòng thuộc các tên đã tick,
+                không cần sửa từng dòng trib/port riêng.
+              </p>
+
+              {renameSelected.size > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary-200 bg-white p-3">
+                  <p className="text-sm font-medium text-primary-800">Đã chọn {renameSelected.size} tên — gộp về:</p>
+                  <input
+                    className="input w-auto max-w-[240px]"
+                    list="dpm-device-name-options"
+                    placeholder="Tên thiết bị chuẩn"
+                    value={renameTarget}
+                    onChange={(e) => setRenameTarget(e.target.value)}
+                  />
+                  <input
+                    className="input w-auto max-w-[200px]"
+                    list="dpm-category-options"
+                    placeholder="Lĩnh vực (nếu tạo thiết bị mới)"
+                    value={renameCategory}
+                    onChange={(e) => setRenameCategory(e.target.value)}
+                  />
+                  <datalist id="dpm-category-options">
+                    {realCategoryOptions.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                  <button className="btn-primary" onClick={applyRenameGroups} disabled={renameBusy}>
+                    {renameBusy ? "Đang lưu..." : "Áp dụng"}
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-3 max-h-96 space-y-1.5 overflow-y-auto">
+                {unmatchedGroups.map((g) => (
+                  <label
+                    key={g.key}
+                    className="flex items-start gap-2 rounded-md border border-slate-200 bg-white p-2 text-sm hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={renameSelected.has(g.key)}
+                      onChange={() => toggleRenameSelect(g.key)}
+                    />
+                    <span>
+                      <span className="text-slate-700">{g.variants.map((v) => `${v.text} (${v.count})`).join(", ")}</span>
+                      <span className="ml-2 text-xs text-slate-400">— {g.rows.length} dòng</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {categorylessMatchedDevices > 0 && (
+        <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-3 text-sm text-sky-800">
+          Còn <strong>{categorylessMatchedDevices} thiết bị</strong> tên đã khớp đúng (không phải lỗi tên) nhưng CHÍNH
+          thiết bị đó chưa được gán lĩnh vực — khung "Chuẩn hóa tên thiết bị" ở trên không xử lý được trường hợp này.
+          Sang trang{" "}
+          <Link href="/devices" className="font-medium underline hover:text-sky-900">
+            Danh mục thiết bị
+          </Link>{" "}
+          để tick chọn và gán lĩnh vực cho các thiết bị này.
+        </div>
+      )}
 
       <p className="text-sm text-slate-500 mb-2">
         {filtered.length}/{rows.length} dòng
