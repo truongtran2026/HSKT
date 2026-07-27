@@ -25,6 +25,12 @@ import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 // riêng cần tính "top" của hàng dưới theo chiều cao hàng trên, dễ lệch/che
 // nhau khi cuộn (đã gặp thực tế). Gộp 1 hàng thì chỉ cần sticky top-0 duy
 // nhất, không còn phép tính nào có thể sai.
+//
+// KHÔNG ép min-w/whitespace-nowrap cố định cho mọi cột (đã bỏ — phản hồi
+// người dùng 2026-07-27: bảng không chịu co theo khung hình trình duyệt).
+// Ép cứng 130px x8 cột = hơn 1000px sàn bất kể nội dung cột đó ngắn hay dài
+// (khác PortTable.tsx không ép gì, tự co theo nội dung thật) — bỏ đi để
+// bảng tự co khớp dữ liệu thật, chỉ tới ngưỡng đó mới cần cuộn ngang.
 function SortFilterTh<K extends string>({
   label,
   sortKey,
@@ -44,7 +50,7 @@ function SortFilterTh<K extends string>({
 }) {
   const active = activeKey === sortKey;
   return (
-    <th className="sticky top-0 z-10 min-w-[130px] whitespace-nowrap bg-primary-50 px-3 py-2 align-top">
+    <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top">
       <div
         className="mb-1 flex cursor-pointer select-none items-center gap-1 font-semibold hover:text-primary-900"
         onClick={() => onSort(sortKey)}
@@ -64,7 +70,7 @@ function SortFilterTh<K extends string>({
 // có nhiều ý nghĩa).
 function FilterOnlyTh({ label, filterValue, onFilterChange }: { label: string; filterValue: string; onFilterChange: (v: string) => void }) {
   return (
-    <th className="sticky top-0 z-10 min-w-[130px] whitespace-nowrap bg-primary-50 px-3 py-2 align-top">
+    <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top">
       <div className="mb-1 font-semibold">{label}</div>
       <FilterInput value={filterValue} onChange={onFilterChange} />
     </th>
