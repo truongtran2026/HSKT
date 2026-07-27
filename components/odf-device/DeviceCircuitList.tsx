@@ -13,7 +13,12 @@ import {
   normalizeDevicePositionKey,
 } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
-import { parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
+import {
+  parseTransitText,
+  isManagedStationCode,
+  splitOdfDeviceStructure,
+  combinePositionNext,
+} from "@/lib/parsers/transit-text";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
@@ -122,13 +127,44 @@ function compareByKey(key: SortKey, a: DeviceCircuitRow, b: DeviceCircuitRow): n
 
 const FILTER_KEYS: FilterKey[] = ["name", "trib", "device", "positionOwn", "positionNext", "interface", "counterpart", "notes"];
 
+// Ô "Vị trí ODF (tiếp theo)" tách 3 ô khi sửa/nhập (yêu cầu người dùng
+// 2026-07-27): Ô1 = tọa độ ODF, Ô2 = tên thiết bị "tiếp theo" (thuộc node
+// local ADN1 — có thể là tên thiết bị THẬT, hoặc mã ODF trung kế nếu thiết bị
+// đấu THẲNG ra trung kế không qua thiết bị trung gian), Ô3 = Trib/sợi "tiếp
+// theo". Vẫn lưu gộp lại ĐÚNG 1 chuỗi vào circuits.device_position_next
+// (KHÔNG đổi schema — xem combinePositionNext trong lib/parsers/transit-text)
+// giống hệt cách "Chuyển tiếp" bên trung kế đã làm.
+//
+// Khảo sát thật 2026-07-27: 100% dữ liệu device_position_next TỪ TRƯỚC chỉ là
+// tọa độ ODF trơn (không có cấu trúc ghép) — nên khi KHÔNG khớp
+// splitOdfDeviceStructure, coi toàn bộ text cũ là Ô1, để trống Ô2/Ô3, không
+// mất dữ liệu. Khác PortTable.tsx (ẩn/hiện 2 ô tùy có khớp cấu trúc hay
+// không) — ở đây LUÔN hiện đủ 3 ô vì đa số dữ liệu vốn chỉ có Ô1.
+function splitPositionNextForEdit(raw: string): { odf: string; device: string; trib: string } {
+  const split = splitOdfDeviceStructure(raw);
+  if (split.matched && split.deviceName && split.port) {
+    return { odf: split.odfPart ?? "", device: split.deviceName, trib: split.port };
+  }
+  return { odf: raw.trim(), device: "", trib: "" };
+}
+
+// "Thiết bị (tiếp theo)" đôi khi thật ra là mã ODF trung kế (thiết bị đấu
+// THẲNG ra trung kế, không qua thiết bị trung gian nào — xác nhận người dùng
+// 2026-07-27) — không phải tên thiết bị thật, nên KHÔNG hỏi tạo devices/ghi
+// thư viện device_position_map cho trường hợp này.
+function looksLikeOdfRackCode(text: string): boolean {
+  return /^ODF/i.test(text.trim());
+}
+
 interface EditState {
   id: string;
   deviceName: string | null;
   name: string;
   tribText: string;
   positionOwn: string;
-  positionNext: string;
+  positionNextOdf: string;
+  positionNextDevice: string;
+  positionNextTrib: string;
   interfaceType: string;
   counterpartText: string;
   notes: string;
@@ -140,7 +176,9 @@ interface CreateDraft {
   name: string;
   tribText: string;
   positionOwn: string;
-  positionNext: string;
+  positionNextOdf: string;
+  positionNextDevice: string;
+  positionNextTrib: string;
   interfaceType: string;
   counterpartText: string;
   notes: string;
@@ -152,7 +190,9 @@ const EMPTY_CREATE_DRAFT: CreateDraft = {
   name: "",
   tribText: "",
   positionOwn: "",
-  positionNext: "",
+  positionNextOdf: "",
+  positionNextDevice: "",
+  positionNextTrib: "",
   interfaceType: "",
   counterpartText: "",
   notes: "",
@@ -242,6 +282,11 @@ export default function DeviceCircuitList({
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [devicePositionMap, circuits]);
 
+  // Gợi ý "Thiết bị (tiếp theo)" (Ô2 của Vị trí ODF tiếp theo, 2026-07-27) —
+  // toàn bộ thiết bị local ADN1 đã biết (không cần đã có luồng nào), để gõ
+  // vài ký tự là ra ngay tên chuẩn đã có, đỡ gõ sai/lệch với tên đã lưu.
+  const localDeviceNameOptions = useMemo(() => devices.map((d) => d.name).sort((a, b) => a.localeCompare(b)), [devices]);
+
   // Gợi ý "Giao tiếp" — tuyển tập các giá trị đã dùng qua, không cần bảng
   // thư viện riêng vì bản thân circuits.interface_type đã là kho dữ liệu đó.
   const interfaceOptions = useMemo(() => {
@@ -293,6 +338,33 @@ export default function DeviceCircuitList({
         name: fullName,
         coordinate_text: parsed.coordinateText ?? null,
         full_label: `${fullName}(${parsed.coordinateText ?? ""})`,
+        source: "auto",
+      });
+      if (err) throw err;
+    } catch (e) {
+      setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Ô "Thiết bị (tiếp theo)" (Ô2 của Vị trí ODF tiếp theo, thêm 2026-07-27) —
+  // tên thiết bị LOCAL (ADN1), KHÔNG có tiền tố trạm như ô Đối phương, nên
+  // không cần parseTransitText ở đây — chỉ kiểm tra thẳng tên đã có trong
+  // devices chưa. Bỏ qua hoàn toàn nếu trông giống mã ODF trung kế (trường
+  // hợp thiết bị đấu thẳng ra trung kế, xem looksLikeOdfRackCode).
+  async function maybeCreateNextDevice(deviceName: string) {
+    const trimmed = deviceName.trim();
+    if (!trimmed || looksLikeOdfRackCode(trimmed)) return;
+    const key = normalizeDeviceNameKey(trimmed);
+    if (!key || existingDeviceKeys.has(key)) return;
+    const fullName = /^adn1\./i.test(trimmed) ? trimmed : `ADN1.${trimmed}`;
+    if (!confirm(`Chưa có thiết bị "${fullName}" trong hệ thống (nhận diện từ ô Thiết bị (tiếp theo)).\n\nTạo mới thiết bị này?`)) return;
+    try {
+      const stationId = await getAdn1StationId();
+      const { error: err } = await supabase.from("devices").insert({
+        station_id: stationId,
+        name: fullName,
+        coordinate_text: null,
+        full_label: fullName,
         source: "auto",
       });
       if (err) throw err;
@@ -499,13 +571,16 @@ export default function DeviceCircuitList({
   }
 
   function openEdit(c: DeviceCircuitRow) {
+    const nextSplit = splitPositionNextForEdit(c.devicePositionNext ?? "");
     setEdit({
       id: c.id,
       deviceName: c.deviceName,
       name: c.name,
       tribText: c.tribText ?? "",
       positionOwn: c.devicePositionOwn ?? "",
-      positionNext: c.devicePositionNext ?? "",
+      positionNextOdf: nextSplit.odf,
+      positionNextDevice: nextSplit.device,
+      positionNextTrib: nextSplit.trib,
       interfaceType: c.interfaceType ?? "",
       counterpartText: c.counterpartText ?? "",
       notes: c.notes ?? "",
@@ -547,7 +622,7 @@ export default function DeviceCircuitList({
         name: edit.name.trim() || "(chưa đặt tên)",
         trib_text: edit.tribText.trim() || null,
         device_position_own: edit.positionOwn.trim() || null,
-        device_position_next: edit.positionNext.trim() || null,
+        device_position_next: combinePositionNext(edit.positionNextOdf, edit.positionNextDevice, edit.positionNextTrib) || null,
         interface_type: edit.interfaceType.trim() || null,
         counterpart_text: edit.counterpartText.trim() || null,
         notes: edit.notes.trim() || null,
@@ -560,6 +635,10 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
     await maybeCreateCounterpartDevice(edit.counterpartText);
+    if (!looksLikeOdfRackCode(edit.positionNextDevice)) {
+      await maybeGrowLibrary(edit.positionNextDevice || null, edit.positionNextTrib, edit.positionNextOdf);
+    }
+    await maybeCreateNextDevice(edit.positionNextDevice);
     setBusy(false);
     setEdit(null);
     router.refresh();
@@ -606,7 +685,8 @@ export default function DeviceCircuitList({
       name: createDraft.name.trim() || "(chưa đặt tên)",
       trib_text: createDraft.tribText.trim() || null,
       device_position_own: createDraft.positionOwn.trim() || null,
-      device_position_next: createDraft.positionNext.trim() || null,
+      device_position_next:
+        combinePositionNext(createDraft.positionNextOdf, createDraft.positionNextDevice, createDraft.positionNextTrib) || null,
       interface_type: createDraft.interfaceType.trim() || null,
       counterpart_text: createDraft.counterpartText.trim() || null,
       notes: createDraft.notes.trim() || null,
@@ -619,6 +699,10 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
     await maybeCreateCounterpartDevice(createDraft.counterpartText);
+    if (!looksLikeOdfRackCode(createDraft.positionNextDevice)) {
+      await maybeGrowLibrary(createDraft.positionNextDevice || null, createDraft.positionNextTrib, createDraft.positionNextOdf);
+    }
+    await maybeCreateNextDevice(createDraft.positionNextDevice);
     setBusy(false);
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);
@@ -649,6 +733,21 @@ export default function DeviceCircuitList({
       </datalist>
       <datalist id="dc-trib-options-create">
         {tribOptionsForDevice(createDeviceName).map((v) => (
+          <option key={v} value={v} />
+        ))}
+      </datalist>
+      <datalist id="dc-local-device-options">
+        {localDeviceNameOptions.map((v) => (
+          <option key={v} value={v} />
+        ))}
+      </datalist>
+      <datalist id="dc-trib-options-next-edit">
+        {tribOptionsForDevice(edit?.positionNextDevice || null).map((v) => (
+          <option key={v} value={v} />
+        ))}
+      </datalist>
+      <datalist id="dc-trib-options-next-create">
+        {tribOptionsForDevice(createDraft.positionNextDevice || null).map((v) => (
           <option key={v} value={v} />
         ))}
       </datalist>
@@ -730,16 +829,45 @@ export default function DeviceCircuitList({
                   }}
                 />
               </label>
-              <label className="text-xs text-slate-500">
+              <div className="text-xs text-slate-500">
                 Vị trí ODF (tiếp theo)
+                {/* 3 ô xếp chồng (yêu cầu người dùng 2026-07-27): Ô1 tọa độ
+                    ODF, Ô2 thiết bị local ADN1 (hoặc mã ODF trung kế nếu đấu
+                    thẳng ra trung kế), Ô3 Trib/sợi — lưu gộp lại 1 chuỗi qua
+                    combinePositionNext(), hiển thị bảng tổng hợp vẫn 1 cột
+                    như cũ. */}
                 <input
                   className="input mt-1"
                   list="dc-odf-position-options"
                   placeholder="VD: ODF 3/14 (27,28)"
-                  value={createDraft.positionNext}
-                  onChange={(e) => setCreateDraft({ ...createDraft, positionNext: e.target.value })}
+                  value={createDraft.positionNextOdf}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const match = findLibraryMatchByOdf(createDraft.positionNextDevice || null, v);
+                    setCreateDraft((prev) => ({ ...prev, positionNextOdf: v, positionNextTrib: match?.devicePosition ?? prev.positionNextTrib }));
+                  }}
                 />
-              </label>
+                <div className="mt-1 text-[11px] text-slate-400">Thiết bị (tiếp theo)</div>
+                <input
+                  className="input mt-1"
+                  list="dc-local-device-options"
+                  placeholder="VD: PE2, hoặc ODF7/4 nếu đấu thẳng trung kế"
+                  value={createDraft.positionNextDevice}
+                  onChange={(e) => setCreateDraft({ ...createDraft, positionNextDevice: e.target.value })}
+                />
+                <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
+                <input
+                  className="input mt-1"
+                  list="dc-trib-options-next-create"
+                  placeholder="VD: S1-1, 1/0/27"
+                  value={createDraft.positionNextTrib}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const match = findLibraryMatchByTrib(createDraft.positionNextDevice || null, v);
+                    setCreateDraft((prev) => ({ ...prev, positionNextTrib: v, positionNextOdf: match?.odfPosition ?? prev.positionNextOdf }));
+                  }}
+                />
+              </div>
               <label className="text-xs text-slate-500">
                 Giao tiếp
                 <input
@@ -1052,8 +1180,32 @@ export default function DeviceCircuitList({
                           className="input"
                           list="dc-odf-position-options"
                           placeholder="VD: ODF 3/14 (27,28)"
-                          value={edit.positionNext}
-                          onChange={(e) => setEdit({ ...edit, positionNext: e.target.value })}
+                          value={edit.positionNextOdf}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const match = findLibraryMatchByOdf(edit.positionNextDevice || null, v);
+                            setEdit({ ...edit, positionNextOdf: v, positionNextTrib: match?.devicePosition ?? edit.positionNextTrib });
+                          }}
+                        />
+                        <div className="mt-1 text-[11px] text-slate-400">Thiết bị (tiếp theo)</div>
+                        <input
+                          className="input mt-1"
+                          list="dc-local-device-options"
+                          placeholder="VD: PE2, hoặc ODF7/4 nếu đấu thẳng trung kế"
+                          value={edit.positionNextDevice}
+                          onChange={(e) => setEdit({ ...edit, positionNextDevice: e.target.value })}
+                        />
+                        <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
+                        <input
+                          className="input mt-1"
+                          list="dc-trib-options-next-edit"
+                          placeholder="VD: S1-1, 1/0/27"
+                          value={edit.positionNextTrib}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const match = findLibraryMatchByTrib(edit.positionNextDevice || null, v);
+                            setEdit({ ...edit, positionNextTrib: v, positionNextOdf: match?.odfPosition ?? edit.positionNextOdf });
+                          }}
                         />
                       </td>
                       <td className="px-4 py-2">

@@ -13,7 +13,8 @@
     "cleanup-empty-device-ports": "tsx scripts/cleanup-empty-device-ports.ts",
     "migrate-notes-to-position-columns": "tsx scripts/migrate-notes-to-position-columns.ts",
     "dedupe-device-position-map": "tsx scripts/dedupe-device-position-map.ts",
-    "standardize-transit-links": "tsx scripts/standardize-transit-links.ts"
+    "standardize-transit-links": "tsx scripts/standardize-transit-links.ts",
+    "migrate-counterpart-to-position-next": "tsx scripts/migrate-counterpart-to-position-next.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
