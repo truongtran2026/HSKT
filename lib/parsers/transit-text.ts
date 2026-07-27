@@ -50,3 +50,38 @@ export function parseTransitText(raw: string): ParsedTransitTarget {
 export function isManagedStationCode(stationCode: string): boolean {
   return stationCode.trim().toUpperCase() === "ADN1";
 }
+
+// Tách "cấu trúc 2" của cột Chuyển tiếp (yêu cầu người dùng 2026-07-27):
+// "<tọa độ ODF> - <thiết bị>(<port>)", vd "ODF7/4/17,18 - ADN1.PE2 (et-13/0/0)".
+// Khảo sát thật 503 dòng transit_links: 297 dòng khớp mẫu này ("cấu trúc 1" —
+// chỉ có 1 trong 2 phần, hoặc thứ tự ngược lại, hoặc text tự do khác — CHƯA
+// xét ở đây, cứ để matched=false).
+//
+// Neo vào " - " có khoảng trắng 2 bên (KHÔNG khớp dấu "-" dính liền trong tên
+// như "S2-5" hay "ADN1_NPB-CGS...") NGAY TRƯỚC cụm cuối chuỗi dạng "tên(port)"
+// — dùng (.+) GREEDY ở phần đầu để luôn bắt đúng dấu " - " CUỐI CÙNG trước
+// cụm (port) kết thúc chuỗi, dù phần tọa độ ODF phía trước có dấu ngoặc/gạch
+// ngang riêng của nó (vd "ODF 11/3 (09,10) - ...").
+export interface OdfDeviceSplit {
+  raw: string;
+  matched: boolean;
+  odfPart?: string;
+  /** Ghép sẵn "device (port)" — đưa thẳng vào parseTransitText() để tách tiếp station/device/port. */
+  devicePortText?: string;
+}
+
+const ODF_DEVICE_SPLIT_PATTERN = /^(.+)\s-\s([^()]+?)\s*\(([^()]+)\)\s*$/;
+
+export function splitOdfDeviceStructure(raw: string): OdfDeviceSplit {
+  const trimmed = raw.trim();
+  const match = trimmed.match(ODF_DEVICE_SPLIT_PATTERN);
+  if (!match) return { raw, matched: false };
+
+  const [, odfPart, deviceName, port] = match;
+  return {
+    raw,
+    matched: true,
+    odfPart: odfPart.trim(),
+    devicePortText: `${deviceName.trim()} (${port.trim()})`,
+  };
+}

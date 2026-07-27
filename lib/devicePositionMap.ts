@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
+import { normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 
 // Tra cứu "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" — xem migration
 // 20260724000001_device_position_map.sql. Bảng độc lập, KHÔNG đụng
@@ -75,4 +75,48 @@ export async function syncDevicePositionMapNames(oldNames: string[], newName: st
     const { error } = await supabase.from("device_position_map").update({ device_name: newName }).in("id", batch);
     if (error) throw error;
   }
+}
+
+// Làm giàu thư viện theo chiều NGƯỢC với maybeGrowLibrary (DeviceCircuitList.tsx
+// — kiểm tồn tại theo cặp device+ODF, dùng khi người dùng gõ thẳng vị trí ODF
+// bên luồng thiết bị). Ở đây đã biết CHẮC device+trib(port) từ text "Chuyển
+// tiếp" bên trung kế (yêu cầu người dùng 2026-07-27), nên kiểm tồn tại theo
+// cặp device+TRIB: đã có thì tin thư viện, giữ nguyên (không đè); chưa có thì
+// thêm dòng mới. Không tự sửa ngược lại raw_text bên trung kế theo thư viện
+// trong đợt này, giữ đơn giản.
+export async function growDevicePositionMapByTrib(
+  deviceName: string,
+  devicePosition: string,
+  odfPosition: string
+): Promise<{ grown: boolean }> {
+  const nameKey = normalizeDeviceNameKey(deviceName);
+  const tribKey = normalizeDevicePositionKey(devicePosition);
+  if (!nameKey || !tribKey || !odfPosition.trim()) return { grown: false };
+
+  const pageSize = 1000;
+  let exists = false;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("device_position_map")
+      .select("device_name, device_position")
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as { device_name: string; device_position: string | null }[];
+    if (
+      page.some(
+        (r) => normalizeDeviceNameKey(r.device_name) === nameKey && normalizeDevicePositionKey(r.device_position ?? "") === tribKey
+      )
+    ) {
+      exists = true;
+    }
+    if (page.length < pageSize) break;
+  }
+  if (exists) return { grown: false };
+
+  const { error: insErr } = await supabase
+    .from("device_position_map")
+    .insert({ device_name: deviceName, device_position: devicePosition, odf_position: odfPosition.trim() });
+  if (insErr) throw insErr;
+  return { grown: true };
 }

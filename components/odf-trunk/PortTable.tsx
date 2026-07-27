@@ -6,7 +6,11 @@ import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
+import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
+import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
+import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import type { CircuitOptions } from "@/lib/circuitOptions";
+import type { DeviceRow } from "@/lib/devices";
 import SortableTh from "@/components/ui/SortableTh";
 import FilterInput from "@/components/ui/FilterInput";
 
@@ -222,7 +226,19 @@ function loadColWidths(): Record<ResizableCol, number> {
   }
 }
 
-export default function PortTable({ rackId, initialPorts, options }: { rackId: string; initialPorts: PortView[]; options: CircuitOptions }) {
+export default function PortTable({
+  rackId,
+  initialPorts,
+  options,
+  devices,
+  stationId,
+}: {
+  rackId: string;
+  initialPorts: PortView[];
+  options: CircuitOptions;
+  devices: DeviceRow[];
+  stationId: string;
+}) {
   const router = useRouter();
   const [ports] = useState(initialPorts);
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -375,6 +391,46 @@ export default function PortTable({ rackId, initialPorts, options }: { rackId: s
     setEdit({ ...edit, secondPortNumber: text, secondPortId: id, secondPortError: err });
   }
 
+  // "Chuyển tiếp" đôi khi ghi rõ "<tọa độ ODF> - <thiết bị>(<port>)" (yêu cầu
+  // người dùng 2026-07-27 — "cấu trúc 2", vd "ODF7/4/17,18 - ADN1.PE2
+  // (et-13/0/0)"). Sau khi lưu raw_text như cũ, tách thêm thiết bị+port ra để
+  // (a) hỏi tạo devices mới nếu ADN1 + chưa có (giống
+  // maybeCreateCounterpartDevice ở DeviceCircuitList.tsx), (b) làm giàu thư
+  // viện "Vị trí thiết bị" theo device+port đã biết chắc (xem
+  // growDevicePositionMapByTrib). Không chặn việc lưu Chuyển tiếp dù bước này
+  // thất bại hay bị từ chối — chỉ là bước phụ sau khi đã lưu xong.
+  async function maybeStandardizeTransitDevice(transitText: string) {
+    const split = splitOdfDeviceStructure(transitText);
+    if (!split.matched || !split.odfPart || !split.devicePortText) return;
+    const parsed = parseTransitText(split.devicePortText);
+    if (!parsed.matched || !parsed.stationCode || !parsed.deviceName || !parsed.coordinateText) return;
+    if (!isManagedStationCode(parsed.stationCode)) return;
+
+    const deviceName = parsed.deviceName.trim();
+    const port = parsed.coordinateText.trim();
+    const odf = split.odfPart.trim();
+    if (!deviceName || !port) return;
+
+    const key = normalizeDeviceNameKey(deviceName);
+    const existing = devices.find((d) => normalizeDeviceNameKey(d.name) === key);
+    const canonicalName = existing?.name ?? `ADN1.${deviceName}`;
+
+    try {
+      if (!existing) {
+        if (!confirm(`Chưa có thiết bị "${canonicalName}" trong hệ thống (nhận diện từ ô Chuyển tiếp).\n\nTạo mới thiết bị này?`)) {
+          return;
+        }
+        const { error: insErr } = await supabase.from("devices").insert({ station_id: stationId, name: canonicalName, source: "auto" });
+        if (insErr) throw insErr;
+      }
+      await growDevicePositionMapByTrib(canonicalName, port, odf);
+    } catch (e) {
+      setError(
+        `Đã lưu "Chuyển tiếp", nhưng chuẩn hóa thiết bị/thư viện thất bại: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
   async function saveEdit() {
     if (!edit) return;
     if (edit.mergeEnabled && edit.secondPortNumber.trim() && !edit.secondPortId) {
@@ -422,6 +478,7 @@ export default function PortTable({ rackId, initialPorts, options }: { rackId: s
             if (insErr) throw insErr;
           }
         }
+        if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly);
         setEdit(null);
         router.refresh();
         return;
@@ -523,6 +580,7 @@ export default function PortTable({ rackId, initialPorts, options }: { rackId: s
           if (insErr) throw insErr;
         }
       }
+      if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
 
       setEdit(null);
       router.refresh();
@@ -1061,6 +1119,18 @@ function EditRow({
   busy: boolean;
   colSpan: number;
 }) {
+  // Cấu trúc 2 (yêu cầu người dùng 2026-07-27): nếu "Chuyển tiếp" khớp mẫu
+  // "<ODF> - <thiết bị>(<port>)" lúc MỞ sửa, tách hiện 2 ô riêng cho dễ sửa.
+  // Chỉ tính 1 LẦN lúc EditRow mount (mount lại mỗi khi đổi dòng đang sửa nhờ
+  // key={ports...} ở nơi gọi <EditRow>) — không tính lại mỗi lần gõ, để 2 ô
+  // không tự nhiên biến mất giữa chừng nếu gõ dở làm chuỗi tạm thời không
+  // khớp mẫu nữa.
+  const [transitSplit] = useState(() => splitOdfDeviceStructure(edit.transitText).matched);
+  const [transitOdfPart, setTransitOdfPart] = useState(() => splitOdfDeviceStructure(edit.transitText).odfPart ?? "");
+  const [transitDevicePart, setTransitDevicePart] = useState(
+    () => splitOdfDeviceStructure(edit.transitText).devicePortText ?? ""
+  );
+
   return (
     <tr className="border-t border-primary-200 bg-primary-50/60">
       <td colSpan={colSpan} className="px-4 py-4">
@@ -1093,13 +1163,38 @@ function EditRow({
             </datalist>
           </Field>
           <Field label="Chuyển tiếp">
-            <input
-              className="input"
-              list="port-table-transit-options"
-              value={edit.transitText}
-              onChange={(e) => onChange({ ...edit, transitText: e.target.value })}
-              placeholder="Chọn hoặc gõ vị trí ODF mới..."
-            />
+            {transitSplit ? (
+              // Cấu trúc 2 — 2 ô riêng (ODF + thiết bị/port) cho dễ sửa, ghép
+              // lại thành 1 chuỗi transitText khi gõ (lưu/hiển thị không đổi).
+              <div className="flex flex-col gap-1">
+                <input
+                  className="input"
+                  placeholder="Vị trí ODF, vd: ODF7/4/17,18"
+                  value={transitOdfPart}
+                  onChange={(e) => {
+                    setTransitOdfPart(e.target.value);
+                    onChange({ ...edit, transitText: `${e.target.value} - ${transitDevicePart}` });
+                  }}
+                />
+                <input
+                  className="input"
+                  placeholder="Thiết bị (port), vd: ADN1.PE2 (et-13/0/0)"
+                  value={transitDevicePart}
+                  onChange={(e) => {
+                    setTransitDevicePart(e.target.value);
+                    onChange({ ...edit, transitText: `${transitOdfPart} - ${e.target.value}` });
+                  }}
+                />
+              </div>
+            ) : (
+              <input
+                className="input"
+                list="port-table-transit-options"
+                value={edit.transitText}
+                onChange={(e) => onChange({ ...edit, transitText: e.target.value })}
+                placeholder="Chọn hoặc gõ vị trí ODF mới..."
+              />
+            )}
             <datalist id="port-table-transit-options">
               {options.transitTexts.map((v) => (
                 <option key={v} value={v} />

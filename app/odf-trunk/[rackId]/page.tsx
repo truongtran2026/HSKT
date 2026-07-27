@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchCircuitOptions } from "@/lib/circuitOptions";
+import { fetchDevices } from "@/lib/devices";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
@@ -103,7 +104,7 @@ async function getRackAndPorts(rackId: string) {
 }
 
 export default async function RackDetailPage({ params }: { params: { rackId: string } }) {
-  const [data, options] = await Promise.all([getRackAndPorts(params.rackId), fetchCircuitOptions()]);
+  const [data, options, devices] = await Promise.all([getRackAndPorts(params.rackId), fetchCircuitOptions(), fetchDevices()]);
   if (!data) notFound();
   const { rack, ports } = data;
 
@@ -133,7 +134,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       />
 
       <div className="mt-6">
-        <PortTable rackId={rack.id} initialPorts={ports} options={options} />
+        <PortTable rackId={rack.id} initialPorts={ports} options={options} devices={devices} stationId={rack.station_id} />
       </div>
     </div>
   );

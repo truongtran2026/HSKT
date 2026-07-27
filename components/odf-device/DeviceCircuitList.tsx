@@ -16,6 +16,7 @@ import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/li
 import { parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
+import SearchableSelect from "@/components/ui/SearchableSelect";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -584,6 +585,14 @@ export default function DeviceCircuitList({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [devices, createDraft.category]);
 
+  // Danh sách cho SearchableSelect (yêu cầu người dùng 2026-07-27: <select>
+  // gốc bắt cuộn hết cả đống thiết bị mới thấy, cần ô lọc gõ tìm nhanh khi mở
+  // dropdown) — nhóm theo Lĩnh vực để dễ nhìn khi "Lĩnh vực" đang để "Tất cả".
+  const createDeviceItems = useMemo(
+    () => createDeviceOptions.map((d) => ({ value: d.id, label: d.name, group: deviceCategoryLabel(d.category) })),
+    [createDeviceOptions]
+  );
+
   const createDeviceName = devices.find((d) => d.id === createDraft.deviceId)?.name ?? null;
 
   async function submitCreate() {
@@ -671,18 +680,12 @@ export default function DeviceCircuitList({
               </label>
               <label className="text-xs text-slate-500">
                 Thiết bị
-                <select
-                  className="input mt-1"
+                <SearchableSelect
+                  items={createDeviceItems}
                   value={createDraft.deviceId}
-                  onChange={(e) => setCreateDraft({ ...createDraft, deviceId: e.target.value })}
-                >
-                  <option value="">-- Chọn thiết bị --</option>
-                  {createDeviceOptions.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setCreateDraft({ ...createDraft, deviceId: v })}
+                  placeholder="-- Chọn thiết bị --"
+                />
               </label>
               <label className="text-xs text-slate-500">
                 Tên luồng

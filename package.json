@@ -12,7 +12,8 @@
     "backfill-device-category": "tsx scripts/backfill-device-category.ts",
     "cleanup-empty-device-ports": "tsx scripts/cleanup-empty-device-ports.ts",
     "migrate-notes-to-position-columns": "tsx scripts/migrate-notes-to-position-columns.ts",
-    "dedupe-device-position-map": "tsx scripts/dedupe-device-position-map.ts"
+    "dedupe-device-position-map": "tsx scripts/dedupe-device-position-map.ts",
+    "standardize-transit-links": "tsx scripts/standardize-transit-links.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
