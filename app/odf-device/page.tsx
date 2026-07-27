@@ -19,8 +19,8 @@ export default async function OdfDevicePage() {
       <h1 className="text-2xl font-bold text-primary-800">Hồ sơ ODF Thiết bị</h1>
       <p className="text-slate-500 mt-1">Danh sách {circuits.length} luồng đấu nối tại thiết bị, xem/sửa/xóa ngay tại đây.</p>
       <p className="mt-2">
-        <Link href="/odf-device/chuan-hoa" className="text-sm text-primary-600 hover:underline">
-          → Chuẩn hóa tên thiết bị
+        <Link href="/devices" className="text-sm text-primary-600 hover:underline">
+          → Chuẩn hóa / đổi tên thiết bị
         </Link>
       </p>
       <div className="mt-6">

@@ -680,8 +680,15 @@ export default function DeviceCircuitList({
               </label>
               <label className="text-xs text-slate-500">
                 Tên luồng
-                <input
-                  className="input mt-1"
+                {/* textarea (không phải input) để kéo to/nhỏ được như ô Ghi
+                    chú — tên luồng thực tế có thể rất dài (yêu cầu người
+                    dùng 2026-07-27: ô nhỏ quá, phải cuộn ngang mới xem/sửa
+                    hết được). rows=1 để mặc định thấp gần bằng ô input bên
+                    cạnh, kéo lớn khi cần. */}
+                <textarea
+                  className="input mt-1 resize-y"
+                  rows={1}
+                  placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
                   value={createDraft.name}
                   onChange={(e) => setCreateDraft({ ...createDraft, name: e.target.value })}
                 />
@@ -691,6 +698,7 @@ export default function DeviceCircuitList({
                 <input
                   className="input mt-1"
                   list="dc-trib-options-create"
+                  placeholder="VD: S1-1, 1/0/27"
                   value={createDraft.tribText}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -704,6 +712,7 @@ export default function DeviceCircuitList({
                 <input
                   className="input mt-1"
                   list="dc-odf-position-options"
+                  placeholder="VD: ODF 5/7 (37,38)"
                   value={createDraft.positionOwn}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -717,6 +726,7 @@ export default function DeviceCircuitList({
                 <input
                   className="input mt-1"
                   list="dc-odf-position-options"
+                  placeholder="VD: ODF 3/14 (27,28)"
                   value={createDraft.positionNext}
                   onChange={(e) => setCreateDraft({ ...createDraft, positionNext: e.target.value })}
                 />
@@ -726,14 +736,19 @@ export default function DeviceCircuitList({
                 <input
                   className="input mt-1"
                   list="dc-interface-options"
+                  placeholder="VD: 100GE, 10GE"
                   value={createDraft.interfaceType}
                   onChange={(e) => setCreateDraft({ ...createDraft, interfaceType: e.target.value })}
                 />
               </label>
               <label className="text-xs text-slate-500">
                 Đối phương
-                <input
-                  className="input mt-1"
+                {/* Cùng lý do textarea như Tên luồng — tên thiết bị đối
+                    phương kèm tọa độ cũng thường dài. */}
+                <textarea
+                  className="input mt-1 resize-y"
+                  rows={1}
+                  placeholder="VD: ADN1.PSS24X#3 BB1 (2-3-21)"
                   value={createDraft.counterpartText}
                   onChange={(e) => setCreateDraft({ ...createDraft, counterpartText: e.target.value })}
                 />
@@ -741,8 +756,9 @@ export default function DeviceCircuitList({
               <label className="text-xs text-slate-500 sm:col-span-2 lg:col-span-4">
                 Ghi chú
                 <textarea
-                  className="input mt-1"
+                  className="input mt-1 resize-y"
                   rows={2}
+                  placeholder="Ghi chú thêm (nếu có)..."
                   value={createDraft.notes}
                   onChange={(e) => setCreateDraft({ ...createDraft, notes: e.target.value })}
                 />
@@ -842,7 +858,7 @@ export default function DeviceCircuitList({
             type="button"
             onClick={resetCategory}
             className={
-              "rounded-full border px-3 py-1 text-xs " +
+              "rounded-full border px-3 py-1.5 text-sm " +
               (categoryFilter === null
                 ? "border-primary-600 bg-primary-600 text-white"
                 : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
@@ -858,7 +874,7 @@ export default function DeviceCircuitList({
                 type="button"
                 onClick={() => toggleCategory(cat)}
                 className={
-                  "rounded-full border px-3 py-1 text-xs " +
+                  "rounded-full border px-3 py-1.5 text-sm " +
                   (active ? "border-primary-600 bg-primary-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
                 }
               >
@@ -981,12 +997,20 @@ export default function DeviceCircuitList({
                   {editing ? (
                     <>
                       <td className="px-4 py-2">
-                        <input className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus />
+                        <textarea
+                          className="input min-w-[180px] resize-y"
+                          rows={1}
+                          placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
+                          value={edit.name}
+                          onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                          autoFocus
+                        />
                       </td>
                       <td className="px-4 py-2">
                         <input
                           className="input"
                           list="dc-trib-options-edit"
+                          placeholder="VD: S1-1, 1/0/27"
                           value={edit.tribText}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -998,13 +1022,14 @@ export default function DeviceCircuitList({
                       {showDeviceColumn && (
                         <td className="px-4 py-2 text-slate-500 text-xs">
                           {c.deviceName ?? "(chưa xác định)"}
-                          <div>(sửa tên thiết bị ở Chuẩn hóa thiết bị)</div>
+                          <div>(sửa tên thiết bị ở Danh mục thiết bị)</div>
                         </td>
                       )}
                       <td className="px-4 py-2">
                         <input
                           className="input"
                           list="dc-odf-position-options"
+                          placeholder="VD: ODF 5/7 (37,38)"
                           value={edit.positionOwn}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -1017,6 +1042,7 @@ export default function DeviceCircuitList({
                         <input
                           className="input"
                           list="dc-odf-position-options"
+                          placeholder="VD: ODF 3/14 (27,28)"
                           value={edit.positionNext}
                           onChange={(e) => setEdit({ ...edit, positionNext: e.target.value })}
                         />
@@ -1025,20 +1051,23 @@ export default function DeviceCircuitList({
                         <input
                           className="input"
                           list="dc-interface-options"
+                          placeholder="VD: 100GE, 10GE"
                           value={edit.interfaceType}
                           onChange={(e) => setEdit({ ...edit, interfaceType: e.target.value })}
                         />
                       </td>
                       <td className="px-4 py-2">
-                        <input
-                          className="input"
+                        <textarea
+                          className="input min-w-[160px] resize-y"
+                          rows={1}
+                          placeholder="VD: ADN1.PSS24X#3 BB1 (2-3-21)"
                           value={edit.counterpartText}
                           onChange={(e) => setEdit({ ...edit, counterpartText: e.target.value })}
                         />
                       </td>
                       <td className="px-4 py-2">
                         <textarea
-                          className="input min-w-[220px]"
+                          className="input min-w-[220px] resize-y"
                           rows={5}
                           value={edit.notes}
                           onChange={(e) => setEdit({ ...edit, notes: e.target.value })}
@@ -1063,7 +1092,7 @@ export default function DeviceCircuitList({
                         <td className="px-4 py-2 text-slate-600">
                           {c.deviceName ?? "(chưa xác định)"}
                           {!c.deviceId && (
-                            <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa qua Sửa &gt; Chuẩn hóa thiết bị">
+                            <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
                               (chưa chuẩn hóa)
                             </span>
                           )}

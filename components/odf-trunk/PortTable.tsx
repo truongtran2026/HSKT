@@ -1066,7 +1066,17 @@ function EditRow({
       <td colSpan={colSpan} className="px-4 py-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Tên luồng">
-            <input className="input" value={edit.name} onChange={(e) => onChange({ ...edit, name: e.target.value })} autoFocus />
+            {/* textarea (không phải input) để kéo to/nhỏ được như ô Ghi chú
+                — tên luồng thực tế có thể rất dài (yêu cầu người dùng
+                2026-07-27: ô nhỏ quá, phải cuộn ngang mới xem/sửa hết được). */}
+            <textarea
+              className="input resize-y"
+              rows={1}
+              placeholder="VD: 100GE ADN1.P2 (1/0/3) - 2T9.P1(4/0/3)"
+              value={edit.name}
+              onChange={(e) => onChange({ ...edit, name: e.target.value })}
+              autoFocus
+            />
           </Field>
           <Field label="Giao tiếp">
             <input
@@ -1098,8 +1108,9 @@ function EditRow({
           </Field>
           <Field label="Đối phương">
             <textarea
-              className="input"
+              className="input resize-y"
               rows={2}
+              placeholder="VD: 2T9.PE1 (0/0/1)"
               value={edit.counterpartText}
               onChange={(e) => onChange({ ...edit, counterpartText: e.target.value })}
             />

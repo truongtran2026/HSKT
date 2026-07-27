@@ -17,7 +17,7 @@ export default async function DevicePositionMapPage() {
         luồng thiết bị chỉ cần chọn thiết bị + vị trí là tự điền đúng vị trí ODF/DDF, tránh gõ tay sai định dạng.
       </p>
       <div className="mt-6">
-        <DevicePositionMapClient rows={rows} deviceNameOptions={devices.map((d) => d.name)} />
+        <DevicePositionMapClient rows={rows} devices={devices} />
       </div>
     </div>
   );

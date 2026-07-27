@@ -5,15 +5,30 @@ export interface DeviceRow {
   name: string;
   source: "auto" | "manual";
   category: string | null;
+  updatedAt: string;
+}
+
+interface RawDeviceRow {
+  id: string;
+  name: string;
+  source: "auto" | "manual";
+  category: string | null;
+  updated_at: string;
 }
 
 export async function fetchDevices(): Promise<DeviceRow[]> {
   const { data, error } = await supabase
     .from("devices")
-    .select("id, name, source, category")
+    .select("id, name, source, category, updated_at")
     .order("name", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as DeviceRow[];
+  return ((data ?? []) as RawDeviceRow[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    source: r.source,
+    category: r.category,
+    updatedAt: r.updated_at,
+  }));
 }
 
 // Nhãn hiển thị khi thiết bị chưa có lĩnh vực (thiết bị chuẩn hóa từ trước
