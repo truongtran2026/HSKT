@@ -963,3 +963,213 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       gốc port 23 ODF1/1 như mục 21): bấm Lưu thấy ngay nút đổi "Đang cập
       nhật..." + bị khóa, nút "Sửa" ở DÒNG KHÁC cũng bị khóa theo, form tự
       đóng và hiện đúng dữ liệu mới khi refresh xong (không cần F5).
+
+23. **Bug: bấm vào 1 dòng trong khung cảnh báo "Chuyển tiếp chưa chuẩn form"
+    nhảy tới port bị SAI — dòng đầu tiên thấy được lại là port kế tiếp, không
+    phải port vừa bấm** (người dùng phát hiện 2026-07-28, vd bấm "ODF1/1 port
+    7" nhưng dòng đầu hiện ra lại là port 9) — người dùng ghi nhận đã gặp
+    đúng loại lỗi này 1 lần trước đây bên `DeviceCircuitList.tsx`.
+    - **Nguyên nhân**: `scrollIntoView({ block: "center" })` (dùng để nhảy
+      tới port qua hash `#port-<id>`, thêm ở mục 17) không biết gì về tiêu đề
+      cột STICKY mới thêm ở mục 19d — với port nằm gần đầu danh sách (không
+      đủ dòng phía trên để thật sự "căn giữa"), trình duyệt buộc phải cuộn
+      gần sát đỉnh khung, nhưng tiêu đề sticky lại NẰM ĐÈ LÊN (z-10, nền đặc)
+      che mất đúng dòng vừa cuộn tới — dòng ĐẦU TIÊN nhìn thấy được (không bị
+      che) trở thành dòng kế tiếp. `DeviceCircuitList.tsx` có cùng tổ hợp
+      (tiêu đề sticky + `scrollIntoView` nhảy dòng qua `rowAnchor()`) nên
+      cũng mắc lỗi này, dù trước đó có thể chỉ được để ý/né tránh chứ chưa
+      thật sự sửa tận gốc.
+    - **Cách sửa (áp dụng ĐÚNG 1 cách cho cả 2 file, để không tái diễn lần
+      3)**: thêm CSS `scroll-margin-top` (Tailwind `scroll-mt-24`, ước lượng
+      dư so với chiều cao tiêu đề sticky đo được ~86px) vào chính `<tr>` là
+      đích nhảy tới (`PortTable.tsx` dòng port, `DeviceCircuitList.tsx` dòng
+      circuit qua `rowAnchor()`). Đây là thuộc tính CSS chuẩn, được MỌI thao
+      tác cuộn-tới-phần-tử (kể cả cuộn gốc của trình duyệt, không chỉ lệnh
+      JS `scrollIntoView()` tự viết) tôn trọng — chắc chắn hơn tự tính offset
+      bằng JS, và tự động đúng dù sau này đổi chiều cao tiêu đề.
+    - **Quy tắc chung rút ra (ghi lại để không vấp lần nữa)**: **bất kỳ bảng
+      nào có tiêu đề cột `sticky` + tính năng nhảy-tới-dòng qua hash/anchor
+      đều PHẢI đặt `scroll-margin-top` (khớp chiều cao tiêu đề) lên chính
+      dòng đích** — thiếu bước này thì mọi dòng gần đầu danh sách đều có
+      nguy cơ bị tiêu đề che sau khi nhảy tới.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test Playwright thật với port 7
+      rack ODF1/1 (đúng port người dùng báo) ở nhiều kích thước cửa sổ khác
+      nhau (1400×900 tới 1280×400) — đo trực tiếp toạ độ dòng port 7 so với
+      mép dưới tiêu đề sticky sau khi nhảy hash, xác nhận không còn bị che ở
+      kích thước nào. Không tái hiện được chính xác trạng thái LỖI trong môi
+      trường test tự động (nghi do khác biệt cách trình duyệt/Next.js xử lý
+      cuộn theo hash so với gọi `scrollIntoView()` trực tiếp bằng script) —
+      nhưng `scroll-margin-top` là thuộc tính chuẩn bảo vệ được ở TẤT CẢ cơ
+      chế cuộn-tới-phần-tử, không riêng cơ chế đã tự viết, nên vẫn áp dụng.
+
+24. **Đợt yêu cầu lớn 2026-07-28 (sau khi mục 23 xong)** — 4 nhóm việc: (a)
+    luồng mới thêm lên đầu bảng + tô màu, (b) bố cục lại Sidebar (ghim/bỏ
+    ghim + đổi tên mục), (c) 2 bug nhỏ ở "Hồ sơ đấu nối", (d) tu sửa lớn "Hồ
+    sơ ODF Thiết bị" (số liệu Đang dùng sai + chưa có thêm/xóa Rack + bảng
+    port chưa đúng ý).
+
+    **(a) Luồng mới thêm hiện lên ĐẦU bảng + tô màu highlight lần đầu**
+    (`DeviceCircuitList.tsx`, "Hồ sơ đấu nối") — trước đây luồng mới thêm rơi
+    vào đúng vị trí theo sắp xếp/lọc hiện tại (thường ở cuối hoặc lẫn giữa
+    bảng), khó kiểm tra ngay. `submitCreate()` giờ `.select("id").single()`
+    lấy lại id vừa tạo, tái dùng NGUYÊN `highlightId` (cơ chế tô `bg-amber-100`
+    + tự tắt sau 5s đã có sẵn cho việc nhảy tới từ link `#dc-<id>`) — thêm 1
+    `justCreatedIdRef` để phân biệt 2 nguồn gốc của `highlightId` (vừa thêm
+    mới -> đẩy lên đầu bảng bất kể sort/filter; nhảy từ link ngoài -> chỉ tô
+    sáng, giữ nguyên vị trí theo sắp xếp). Chỉ áp dụng cho `DeviceCircuitList`
+    — `PortTable.tsx` (trung kế) không có form "thêm luồng rời" tương tự (chỉ
+    gán tên vào port đã có sẵn), không cần sửa.
+
+    **(b) Sidebar: ghim/bỏ ghim + sửa bug cuộn theo trang + đổi tên mục +
+    cỡ chữ tiêu đề nhóm** (`components/Sidebar.tsx`, viết lại toàn bộ) —
+    - **Bug cuộn theo trang** (có thật, không cần yêu cầu thêm để xác nhận):
+      `<aside>` trước chỉ có `min-h-screen`, không `sticky`/`fixed` — trang
+      không có khung cuộn riêng cho `<main>` (`app/layout.tsx` chỉ 1
+      `<div className="flex min-h-screen">` cuộn chung qua `<body>`), nên
+      sidebar trôi lên theo khi cuộn sâu. Sửa: `sticky top-0 h-screen` khi
+      đang ghim — vẫn là flex item chiếm chỗ bình thường (không cần `<main>`
+      tự bù lề), chỉ khác là "dính" lại trong khung nhìn khi cuộn.
+    - **Ghim/bỏ ghim** (yêu cầu người dùng: tăng bề rộng khung nhìn khi cần).
+      Nút "Ghim"/"Bỏ ghim" ở góc phải khung tiêu đề (chữ thường, KHÔNG dùng
+      icon/emoji — theo quy tắc chung của dự án). Khi bỏ ghim: `<aside>`
+      chuyển `fixed left-0 top-0` + `-translate-x-full` (ẩn hẳn, không chiếm
+      chỗ layout — `<main flex-1>` tự giãn full-width), cộng 1 dải mỏng
+      `fixed w-3` luôn có ở mép trái làm vùng hover để hiện lại (overlay đè
+      lên, `transition-transform duration-200`), `onMouseLeave` trên chính
+      `<aside>` để tự ẩn khi rê chuột ra khỏi. Trạng thái ghim lưu
+      `localStorage["sidebar-pinned"]`, đọc lại ở `useEffect` (mặc định
+      `pinned=true` lúc server-render vì `window` chưa có — có thể nháy 1
+      khung hình nếu trước đó đã bỏ ghim, chấp nhận được).
+    - **Đổi tên mục + cỡ chữ** (yêu cầu người dùng): "Dashboard ADN1" ->
+      "Dashboard"; "Sửa luồng thiết bị" -> "Hồ sơ đấu nối" (đổi luôn `<h1>` ở
+      `app/odf-device/sua-luong/page.tsx` cho khớp, KHÔNG đổi URL). Tiêu đề
+      nhóm (THỐNG KÊ/HỒ SƠ/CÀI ĐẶT) `text-xs` -> `text-sm` để dễ phân biệt
+      với danh sách mục bên dưới.
+
+    **(c) 2 bug ở "Hồ sơ đấu nối" (`DeviceCircuitList.tsx`)**
+    - **Bug: bấm quanh khung "Thêm luồng mới" bị tick nhầm ô "Thiết bị"/"Đối
+      phương"** — nguyên nhân: khối bọc quanh 2 ô này là `<label>` bọc CẢ
+      checkbox lẫn control lớn bên dưới (SearchableSelect/textarea) — HTML
+      quy định bấm BẤT KỲ đâu trong `<label>` có bọc 1 checkbox (kể cả không
+      trúng chính checkbox) đều toggle checkbox đó. Sửa: đổi `<label>` thành
+      `<div>` (không có hành vi ngầm này) cho CẢ 2 khối "Thiết bị" và "Đối
+      phương" — người dùng chỉ báo "Đối phương" nhưng "Thiết bị" bị lỗi y hệt
+      (đã tự phát hiện khi đọc code, sửa luôn cho nhất quán). "Thiết bị (tiếp
+      theo)" vốn đã dùng `<div>` từ đầu nên không bị lỗi này.
+    - **Bug: "chưa bấm Sửa thì không thấy tên ODF Trung kế"** — cột "Vị trí
+      ODF (tiếp theo)" trong bảng danh sách trước chỉ hiện đúng chữ đã lưu
+      (`c.devicePositionNext`); với dữ liệu CŨ (trước form 3 ô 2026-07-27,
+      chỉ lưu tọa độ ODF trơn, chưa có tên tuyến cáp gộp sẵn) thì tên tuyến
+      cáp trung kế chỉ được TÍNH SỐNG (qua `matchTrunkPosition()`) và hiện ra
+      bên trong form Sửa, không hiện ở bảng danh sách. Thêm hàm
+      `positionNextDisplay()` (đối chiếu sống, CHỈ áp dụng khi
+      `splitOdfDeviceStructure()` chưa khớp cấu trúc sẵn có — dòng đã lưu qua
+      form mới thì giữ nguyên, không tính lại) + 1 map `positionNextDisplayById`
+      tính 1 lần cho toàn bộ danh sách (tránh gọi `matchTrunkPosition()` lặp
+      lại mỗi lần render dòng).
+
+    **(d) "Hồ sơ ODF Thiết bị" — sửa số liệu sai + thêm/xóa Rack + đổi bảng
+    port**
+    - **Số liệu "Đang dùng" sai (luôn "0/48")** — nguyên nhân: `RackListTable`
+      tính từ `ports.status`, nhưng luồng thiết bị (`device_position_own/next`
+      dạng text tự do) KHÔNG BAO GIỜ cập nhật cột này (chỉ luồng trung kế thật
+      qua `port_circuit_links` mới cập nhật `ports.status`, xem
+      `lib/portStatus.ts` — cột này vốn được tài liệu hóa là "không đáng tin,
+      suy đoán lúc import"). Sửa: `lib/deviceRackPorts.ts` thêm
+      `fetchDeviceRackPortStatusCounts()` — quét TOÀN BỘ circuits 1 lần (dùng
+      chung với `fetchDeviceRackPortRefs()` qua 1 hàm nền
+      `fetchAllDeviceRackPortRefs()` mới), với MỖI port của MỌI rack thiết bị:
+      không ai tham chiếu -> Trống; có luồng tham chiếu (own/next) mà TÊN khớp
+      `isStandbyCircuitName()` ("DP..."/"dự phòng") -> Dự phòng; có luồng tham
+      chiếu (tên khác) -> Đang dùng — đúng nguyên tắc `derivePortStatus()` đã
+      dùng cho Search/Dashboard bên trung kế, áp lại cho thiết bị qua cơ chế
+      đối chiếu text.
+      **Nhân tiện đồng bộ luôn bên trung kế** (`app/odf-trunk/page.tsx`): trước
+      cũng dùng `ports.status` (ít sai hơn vì CÓ được cập nhật qua Sửa/Xóa/
+      Chuyển tuyến ở `PortTable.tsx`, nhưng vẫn không phải nguồn chuẩn theo
+      đúng comment `lib/portStatus.ts`) — đổi sang join
+      `port_circuit_links(circuits(name))` + `derivePortStatus()`, cùng 1
+      nguồn chuẩn duy nhất cho cả 2 domain. `RackListTable` (dùng chung 2
+      trang) đổi cột "Đang dùng" (1 cột "X/Y") thành 3 cột riêng: Đang dùng /
+      Dự phòng / Trống (Trống tính tại chỗ = portCount - inUse - standby,
+      không lưu field riêng).
+    - **Format mã rack có khoảng trắng** ("ODF1/15" -> "ODF 1/15") —
+      `lib/rackCode.ts` thêm `formatRackCodeDisplay()` (cùng quy tắc regex đã
+      dùng ở `formatCanonicalOdfPosition()`), áp dụng CHỈ lúc hiển thị ở
+      `RackListTable.tsx` + `RackHeader.tsx` — **KHÔNG sửa `racks.code` gốc
+      trong DB** (giữ đúng quyết định đã ghi ở mục 7: toàn bộ rack thật trong
+      DB không có khoảng cách).
+    - **Thêm rack mới** (`components/odf-device/AddDeviceRackForm.tsx`, mới)
+      — form nhỏ ở đầu trang `/odf-device`, LUÔN `domain='device'` (không
+      dùng chung cho trung kế — thêm rack trung kế rủi ro hơn nhiều, đụng dữ
+      liệu Excel gốc thật, ngoài phạm vi yêu cầu lần này, xem bài học domain ở
+      mục 12). Nhập mã rack + loại ODF + số port ban đầu -> tạo `racks` +
+      đúng N dòng `ports` (`fiber_number=null`, `status='unused'`, đúng quy
+      ước 112 rack nội bộ ở mục 8) -> chuyển thẳng sang trang chi tiết rack
+      vừa tạo.
+      **Sửa số port sau khi tạo**: KHÔNG cần thêm gì — `RackAdminPanel.tsx`
+      (đã có sẵn từ trước, KHÔNG phân biệt domain) đã cho tăng số port ngay ở
+      trang chi tiết, và `/odf-device` đọc `port_count` mới nhất mỗi lần vào
+      trang (route `force-dynamic`) nên tự đồng bộ, không cần code thêm.
+    - **Xóa rack** (`components/odf-device/DeleteRackButton.tsx`, mới) — CHỈ
+      hiện khi `rack.domain==='device'` (ở `app/odf-trunk/[rackId]/page.tsx`).
+      **Đã kiểm chứng thật trên DB trước khi làm** (script tạm, xóa sau khi
+      chạy): `port_circuit_links` và `transit_links` (qua `source_port_id`)
+      đều **0 dòng** trỏ tới port của rack `domain='device'` (toàn bộ 507
+      dòng `transit_links` đều trỏ rack `domain='trunk'`) — xác nhận xóa
+      `ports` rồi `racks` là đủ, không cần dọn bảng nào khác. *Lưu ý kỹ thuật
+      trong lúc khảo sát*: filter lồng nhiều cấp qua embed
+      (`.eq("source_port.racks.domain", ...)`) bị PostgREST **âm thầm bỏ qua**
+      nếu không ép `!inner` trên embed đó — 2 giá trị đối lập (`device`/
+      `trunk`) trả về CÙNG 1 số bằng tổng không lọc, phải đối chiếu chéo mới
+      phát hiện ra; thêm `!inner` vào embed thì filter mới áp dụng thật. Ghi
+      lại làm bài học chung cho các script Supabase sau này.
+    - **Bảng port trong trang chi tiết đổi từ "Port / Thiết bị này (own) / Đầu
+      xa (next)" sang "Port / Tên luồng / Ghi chú"** (`DeviceRackPortView.tsx`
+      viết lại, `lib/deviceRackPorts.ts` thêm field `portNumbers` vào
+      `DeviceRackCircuitRef`) — gộp own+next thành 1 danh sách "luồng đang
+      chiếm port này" (người dùng chỉ cần biết CÓ luồng gì, không cần phân
+      biệt own/next); Ghi chú hiện "Luồng sử dụng sợi a,b" (từ chính
+      `portNumbers` của luồng đó). **Gộp 2 port liền kề thành 1 dòng** khi
+      CHÍNH XÁC cùng 1 tập luồng chiếm cả 2 (so theo id, không rỗng) — cùng
+      tinh thần rowspan bên `PortTable.tsx` trung kế; không liền kề hoặc tập
+      luồng khác nhau (vd 1 luồng khác cũng chen vào 1 trong 2 port) thì LUÔN
+      tách dòng riêng, đúng nguyên tắc CLAUDE.md #2 (không giấu bớt thông
+      tin dù trông có vẻ giống nhau).
+
+    **Kiểm chứng**: `tsc --noEmit` sạch sau mỗi nhóm việc. Test Playwright
+    thật (cài tạm, gỡ sau khi xong) cho toàn bộ các mục trên: sidebar ghim/bỏ
+    ghim/hover-hiện lại/lưu trạng thái (xác nhận đúng cả 5 bước, kể cả sau
+    reload); 2 bug checkbox (xác nhận tick KHÔNG còn bị đổi khi bấm quanh
+    label); luồng mới thêm lên đầu bảng + `bg-amber-100`; cột "Vị trí ODF
+    (tiếp theo)" hiện tên tuyến cáp trong danh sách; mã rack hiện có khoảng
+    trắng + 3 cột Đang dùng/Dự phòng/Trống ra số thật (vd "ODF 3/13":
+    48 port, 28 đang dùng, 0 dự phòng, 20 trống — không còn "0/48"); thêm rack
+    test 4 port -> vào chi tiết thấy đúng bảng Port/Tên luồng/Ghi chú toàn
+    "trống" -> xóa rack test thành công, biến mất khỏi danh sách.
+
+    **Sự cố xảy ra khi test (đã xử lý, ghi lại minh bạch)**: script Playwright
+    test tính năng "xóa luồng test vừa thêm" đọc số dòng bảng NGAY sau khi
+    bấm "Thêm luồng" (chưa kịp đợi `router.refresh()` + chuỗi `await` tuần tự
+    trong `submitCreate()` — gồm cả 1 hộp thoại `confirm()` xác nhận tạo
+    thiết bị mới — chạy xong), tưởng lầm là luồng chưa được thêm, rồi bấm
+    "Xóa" ở dòng ĐẦU BẢNG lúc đó — nhưng đây là 1 luồng CÓ THẬT (thiết bị
+    "ADN1.ODF Y-Cable", Trib "2", Vị trí ODF "ODF 3/13 (41,42)"), không phải
+    dòng test — và hộp thoại `confirm()` xác nhận xóa bị script auto-accept
+    (chưa kiểm tra nội dung message trước khi bấm OK ở thời điểm đó). Phát
+    hiện ngay sau đó qua đối chiếu nội dung hộp thoại xóa không khớp dữ liệu
+    test đã nhập. **Đã khôi phục**: dựng lại đúng cấu trúc dựa theo 2 luồng
+    "anh em" còn nguyên của CÙNG thiết bị (Trib 4 và 17, cùng mẫu tên
+    `"(chưa đặt tên) ODF Y-Cable - <trib>"`) — khôi phục đủ
+    name/trib_text/device_position_own/device_id/notes ("Thiết bị: ODF
+    Y-Cable"), đã xác nhận độc lập qua truy vấn lại từ tiến trình mới. **1
+    chi tiết KHÔNG khôi phục được**: dòng "ID gốc: &lt;số&gt;" trong `notes`
+    (số thứ tự từ file Excel gốc lúc import — không suy ra được từ dữ liệu
+    còn lại trong DB; 2 luồng anh em có "ID gốc: 7024" và "7037", không theo
+    quy luật đoán được số của dòng đã mất) — người dùng có thể tự tra lại
+    trong file Excel gốc (`data/`) nếu cần đúng số này. **Rút kinh nghiệm**:
+    từ nay mọi test Playwright có thao tác xóa/hủy đều phải (1) kiểm tra
+    đúng nội dung hộp thoại `confirm()` khớp dữ liệu test trước khi accept
+    (không auto-accept mù), và (2) chờ/poll trạng thái thật (vd số dòng bảng
+    đổi) thay vì `sleep` cố định trước khi đọc kết quả một thao tác có chuỗi
+    `await` không cố định thời gian.

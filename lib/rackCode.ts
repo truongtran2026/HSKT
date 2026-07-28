@@ -15,3 +15,13 @@ export function compareRackCode(a: string, b: string): number {
   if (a2 !== b2) return a2 - b2;
   return a.localeCompare(b);
 }
+
+// Chèn khoảng trắng CHỈ lúc hiển thị ("ODF1/15" -> "ODF 1/15") — KHÔNG sửa
+// racks.code gốc trong DB (đã khảo sát + quyết định giữ nguyên không khoảng
+// cách cho toàn bộ rack thật, xem architecture.md mục 7 và formatCanonical
+// OdfPosition() trong lib/trunkPorts.ts dùng cùng quy tắc này cho chuỗi
+// "Chuyển tiếp"/"Vị trí ODF"). Dùng ở RackListTable/RackHeader để mã rack
+// hiện ra đúng chuẩn người dùng quen nhìn ("ODF 1/15") thay vì dính liền.
+export function formatRackCodeDisplay(code: string): string {
+  return code.replace(/^ODF(?!\s)/, "ODF ");
+}

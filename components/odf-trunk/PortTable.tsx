@@ -1070,7 +1070,16 @@ export default function PortTable({
                 <tr
                   key={port.id}
                   id={`port-${port.id}`}
-                  className={`border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
+                  // scroll-mt-24: bù chiều cao tiêu đề cột STICKY (~86px) khi
+                  // scrollIntoView() nhảy tới port này (link từ khung cảnh
+                  // báo "Chuyển tiếp chưa chuẩn form") — thiếu dòng này thì
+                  // port ở gần đầu danh sách (không đủ dòng phía trên để
+                  // scrollIntoView căn giữa) sẽ bị cuộn lên NGAY DƯỚI tiêu
+                  // đề, nhưng tiêu đề sticky lại NẰM ĐÈ LÊN che mất, khiến
+                  // dòng port ĐẦU TIÊN nhìn thấy được lại là port kế tiếp chứ
+                  // không phải port vừa bấm (người dùng phát hiện 2026-07-28,
+                  // đã từng gặp lỗi cùng loại bên DeviceCircuitList.tsx).
+                  className={`scroll-mt-24 border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
                 >
                   <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
                   <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>

@@ -11,8 +11,10 @@ export const dynamic = "force-dynamic";
 
 // Chuyển từ app/odf-device/page.tsx sang đây (yêu cầu người dùng 2026-07-28):
 // "/odf-device" giờ là danh sách rack (Hồ sơ ODF Thiết bị mới, xem
-// architecture.md) — trang PHẲNG (Thêm/Sửa/Xóa luồng) chuyển về đây, đổi tên
-// "Sửa luồng thiết bị" vì đây vẫn là nơi DUY NHẤT thao tác chi tiết luồng.
+// architecture.md) — trang PHẲNG (Thêm/Sửa/Xóa luồng) chuyển về đây. Đổi tên
+// hiển thị "Sửa luồng thiết bị" -> "Hồ sơ đấu nối" (yêu cầu người dùng
+// 2026-07-28, cùng đợt sửa Sidebar) — vẫn là nơi DUY NHẤT thao tác chi tiết
+// luồng, chỉ đổi tên cho rõ nghĩa hơn.
 export default async function SuaLuongThietBiPage() {
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — cần CẢ rack trung kế
   // lẫn ODF/DDF nội bộ (domain='device') để "Vị trí ODF (tiếp theo)" nhận
@@ -25,7 +27,7 @@ export default async function SuaLuongThietBiPage() {
   ]);
   return (
     <div>
-      <h1 className="text-2xl font-bold text-primary-800">Sửa luồng thiết bị</h1>
+      <h1 className="text-2xl font-bold text-primary-800">Hồ sơ đấu nối</h1>
       <p className="text-slate-500 mt-1">Danh sách {circuits.length} luồng đấu nối tại thiết bị, xem/sửa/xóa ngay tại đây.</p>
       <p className="mt-2">
         <Link href="/devices" className="text-sm text-primary-600 hover:underline">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
@@ -128,6 +128,26 @@ export { rowAnchor };
 function displayName(c: DeviceCircuitRow): string {
   if (isPlaceholderCircuitName(c.name) && !c.devicePositionNext) return "";
   return c.name;
+}
+
+// Hiện tên tuyến cáp trung kế NGAY trong bảng danh sách, không cần bấm Sửa
+// mới thấy (yêu cầu người dùng 2026-07-28: "chưa bấm sửa thì không có tên
+// ODF Trung kế đó còn bấm vào sửa thì nó mới hiện thị"). Dữ liệu CŨ (trước
+// form 3 ô 2026-07-27) chỉ lưu tọa độ ODF trơn trong device_position_next —
+// splitOdfDeviceStructure() không khớp được cấu trúc "ODF... - Tên (...)"
+// nên chưa có tên nào đính kèm để hiện. Chỉ trong trường hợp NÀY mới cần tự
+// tính thêm (đối chiếu sống qua matchTrunkPosition, y hệt cách form Sửa đang
+// làm) rồi nối thêm tên tuyến cáp vào cho dễ xem — dòng đã có cấu trúc sẵn
+// (đã lưu qua form mới) thì giữ nguyên chữ đã lưu, không tính lại (tránh
+// lệch nếu tên tuyến cáp đổi sau khi luồng này đã lưu).
+function positionNextDisplay(raw: string | null, trunkPorts: TrunkPortRow[]): string {
+  if (!raw) return "—";
+  if (splitOdfDeviceStructure(raw).matched) return raw;
+  const trunkMatch = matchTrunkPosition(raw, trunkPorts);
+  if (trunkMatch.matched && trunkMatch.rackDomain === "trunk" && trunkMatch.cableRouteName) {
+    return `${raw} - ${trunkMatch.cableRouteName}`;
+  }
+  return raw;
 }
 
 type SortKey = "name" | "trib" | "device" | "positionOwn" | "positionNext" | "interface" | "counterpart";
@@ -301,6 +321,10 @@ export default function DeviceCircuitList({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  // Phân biệt highlightId đến từ "vừa thêm mới" (đẩy lên đầu bảng) với
+  // highlightId đến từ link "#dc-<id>" ngoài trang (chỉ tô sáng, giữ nguyên
+  // vị trí theo sắp xếp) — xem filtered (useMemo) và submitCreate() bên dưới.
+  const justCreatedIdRef = useRef<string | null>(null);
   // Tick chọn nhiều dòng để xóa cùng lúc (yêu cầu người dùng 2026-07-28) —
   // tập id độc lập với bộ lọc/sắp xếp đang hiển thị, cùng cách
   // DeviceCategoryClient.tsx đã làm cho bảng thiết bị (đổi bộ lọc không mất
@@ -384,6 +408,17 @@ export default function DeviceCircuitList({
     for (const c of circuits) if (c.interfaceType) set.add(c.interfaceType);
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [circuits]);
+
+  // Map id -> chữ hiện ở cột "Vị trí ODF (tiếp theo)" trong bảng danh sách,
+  // xem positionNextDisplay() ở trên — tính 1 lần cho toàn bộ circuits (giống
+  // các map tra nhanh khác trong file này) thay vì tính lại mỗi lần render
+  // từng dòng (matchTrunkPosition quét qua trunkPorts, không rẻ nếu gọi lặp
+  // lại cho mỗi dòng đang hiện mỗi khi gõ lọc/đổi sắp xếp).
+  const positionNextDisplayById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of circuits) map.set(c.id, positionNextDisplay(c.devicePositionNext, trunkPorts));
+    return map;
+  }, [circuits, trunkPorts]);
 
   // Nếu đã gõ 1 "Vị trí ODF (thiết bị)" MỚI (chưa có trong thư viện của đúng
   // thiết bị đó) thì lưu thêm vào device_position_map — đúng yêu cầu "làm
@@ -666,8 +701,22 @@ export default function DeviceCircuitList({
     list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k), filters[k])));
 
     const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
-    return sortDir === "desc" ? arr.reverse() : arr;
-  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir]);
+    const sortedArr = sortDir === "desc" ? arr.reverse() : arr;
+
+    // Luồng vừa thêm mới (highlightId, xem submitCreate) luôn lên ĐẦU bảng,
+    // bất kể đang sắp xếp/lọc theo cột nào (yêu cầu người dùng 2026-07-28) —
+    // chỉ áp dụng đúng lượt vừa thêm, KHÔNG áp dụng cho highlightId đến từ
+    // link "#dc-<id>" ngoài trang (đã đứng đúng vị trí theo sắp xếp, không
+    // cần đẩy lên đầu, chỉ cần tô sáng).
+    if (highlightId && justCreatedIdRef.current === highlightId) {
+      const idx = sortedArr.findIndex((c) => c.id === highlightId);
+      if (idx > 0) {
+        const [item] = sortedArr.splice(idx, 1);
+        sortedArr.unshift(item);
+      }
+    }
+    return sortedArr;
+  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, highlightId]);
 
   // Chỉ ẩn cột "Thiết bị" khi đã lọc còn ĐÚNG 1 thiết bị cụ thể (dòng nào
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
@@ -1069,17 +1118,25 @@ export default function DeviceCircuitList({
     }
     setBusy(true);
     setError(null);
-    const { error: err } = await supabase.from("circuits").insert({
-      name: createDraft.name.trim() || "(chưa đặt tên)",
-      trib_text: createDraft.tribText.trim() || null,
-      device_position_own: createDraft.positionOwn.trim() || null,
-      device_position_next:
-        combinePositionNext(createDraft.positionNextOdf, createDraft.positionNextDevice, createDraft.positionNextTrib) || null,
-      interface_type: createDraft.interfaceType.trim() || null,
-      counterpart_text: createDraft.counterpartText.trim() || null,
-      notes: createDraft.notes.trim() || null,
-      device_id: createDraft.deviceId,
-    });
+    // .select("id").single() để lấy lại id vừa tạo — cần id này để đưa dòng
+    // mới lên đầu bảng + tô sáng tạm thời (yêu cầu người dùng 2026-07-28: dễ
+    // kiểm tra ngay luồng vừa thêm thay vì phải tự tìm nó rơi ở đâu đó theo
+    // sắp xếp/lọc hiện tại).
+    const { data: inserted, error: err } = await supabase
+      .from("circuits")
+      .insert({
+        name: createDraft.name.trim() || "(chưa đặt tên)",
+        trib_text: createDraft.tribText.trim() || null,
+        device_position_own: createDraft.positionOwn.trim() || null,
+        device_position_next:
+          combinePositionNext(createDraft.positionNextOdf, createDraft.positionNextDevice, createDraft.positionNextTrib) || null,
+        interface_type: createDraft.interfaceType.trim() || null,
+        counterpart_text: createDraft.counterpartText.trim() || null,
+        notes: createDraft.notes.trim() || null,
+        device_id: createDraft.deviceId,
+      })
+      .select("id")
+      .single();
     if (err) {
       setBusy(false);
       setError(err.message);
@@ -1095,6 +1152,16 @@ export default function DeviceCircuitList({
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);
     setNameTicks({ own: false, next: false, counterpart: false });
+    // Tái dùng CHÍNH CƠ CHẾ highlightId đã có sẵn cho "nhảy tới từ link ngoài"
+    // (xem useEffect applyHash phía trên) — cùng màu amber-100, cùng thời gian
+    // tự tắt 5s, và filtered (useMemo bên dưới) sẽ tự đẩy đúng id này lên đầu
+    // danh sách bất kể đang sắp xếp/lọc theo cột nào.
+    justCreatedIdRef.current = inserted.id;
+    setHighlightId(inserted.id);
+    setTimeout(() => {
+      setHighlightId(null);
+      justCreatedIdRef.current = null;
+    }, 5000);
     router.refresh();
   }
 
@@ -1301,7 +1368,11 @@ export default function DeviceCircuitList({
             onChange={(e) => onChange({ interfaceType: e.target.value })}
           />
         </label>
-        <label className="text-xs text-slate-500">
+        {/* div (KHÔNG phải label) — cùng lý do/cùng bug đã sửa ở khối "Thiết
+            bị" phía trên (yêu cầu người dùng 2026-07-28): bấm quanh ô Đối
+            phương (không trúng đúng textarea) từng bị tick nhầm vì <label>
+            bọc cả checkbox lẫn textarea bên dưới. */}
+        <div className="text-xs text-slate-500">
           <span className="inline-flex items-center gap-1">
             {enableNameTicks && (
               <input
@@ -1322,7 +1393,7 @@ export default function DeviceCircuitList({
             value={values.counterpartText}
             onChange={(e) => onChange({ counterpartText: e.target.value })}
           />
-        </label>
+        </div>
         <label className="text-xs text-slate-500 sm:col-span-2 lg:col-span-4">
           Ghi chú
           <textarea
@@ -1420,7 +1491,16 @@ export default function DeviceCircuitList({
                   ))}
                 </select>
               </label>
-              <label className="text-xs text-slate-500">
+              {/* div (KHÔNG phải label) — yêu cầu người dùng 2026-07-28: bấm
+                  bất kỳ đâu trong khung "Thêm luồng mới" (kể cả padding
+                  quanh SearchableSelect, không trúng đúng ô chọn) lại bị tick
+                  nhầm ô "Thiết bị". Nguyên nhân: <label> bọc CẢ checkbox lẫn
+                  SearchableSelect bên dưới nó — trình duyệt coi checkbox là
+                  control liên kết với label, nên bấm bất kỳ chỗ nào trong
+                  label (ngoài chính SearchableSelect) đều toggle checkbox đó.
+                  Đổi sang <div> (không có hành vi ngầm này) — cùng cách
+                  "Thiết bị (tiếp theo)" bên dưới đã làm đúng từ đầu. */}
+              <div className="text-xs text-slate-500">
                 <span className="inline-flex items-center gap-1">
                   <input
                     type="checkbox"
@@ -1436,7 +1516,7 @@ export default function DeviceCircuitList({
                   onChange={(v) => handleCreateChange({ deviceId: v })}
                   placeholder="-- Chọn thiết bị --"
                 />
-              </label>
+              </div>
               {renderCircuitFormFields(
                 createDraft,
                 handleCreateChange,
@@ -1781,7 +1861,14 @@ export default function DeviceCircuitList({
                 <tr
                   key={c.id}
                   id={rowAnchor(c.id)}
-                  className={`border-t border-slate-100 align-top ${
+                  // scroll-mt-24: bù chiều cao tiêu đề cột STICKY khi
+                  // scrollIntoView() nhảy tới dòng này — thiếu dòng này thì
+                  // dòng gần đầu danh sách (không đủ dòng phía trên để
+                  // scrollIntoView căn giữa) bị cuộn lên ngay dưới tiêu đề,
+                  // nhưng tiêu đề sticky lại đè lên che mất (cùng loại lỗi
+                  // vừa gặp lại bên PortTable.tsx 2026-07-28, xem
+                  // architecture.md).
+                  className={`scroll-mt-24 border-t border-slate-100 align-top ${
                     highlightId === c.id
                       ? "bg-amber-100"
                       : editing
@@ -1817,7 +1904,7 @@ export default function DeviceCircuitList({
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{c.devicePositionNext ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-500 max-w-xs">

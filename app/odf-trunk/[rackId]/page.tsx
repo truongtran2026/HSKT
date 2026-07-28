@@ -8,6 +8,7 @@ import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import DeviceRackPortView from "@/components/odf-device/DeviceRackPortView";
+import DeleteRackButton from "@/components/odf-device/DeleteRackButton";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
@@ -161,6 +162,11 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
         cableRouteName={rack.cable_route_name}
         portCount={rack.port_count}
       />
+      {/* Xóa rack (yêu cầu người dùng 2026-07-28) — CHỈ domain='device': xóa
+          rack trung kế rủi ro hơn nhiều (dữ liệu Excel gốc thật, có
+          port_circuit_links/transit_links thật gắn theo, ngoài phạm vi yêu
+          cầu lần này). */}
+      {rack.domain === "device" && <DeleteRackButton rackId={rack.id} rackCode={rack.code} />}
 
       <div className="mt-6">
         <TransitFormatWarning items={nonConformingTransit} />

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { compareRackCode } from "@/lib/rackCode";
+import { compareRackCode, formatRackCodeDisplay } from "@/lib/rackCode";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
@@ -17,14 +17,22 @@ export interface RackListItem {
   cableRouteName: string | null;
   odfType: "welded" | "distribution";
   portCount: number;
-  totalPorts: number;
   inUsePorts: number;
+  standbyPorts: number;
 }
 
-type SortKey = "code" | "route" | "odfType" | "portCount" | "inUse";
+type SortKey = "code" | "route" | "odfType" | "portCount" | "inUse" | "standby" | "empty";
 
 function odfTypeLabel(t: RackListItem["odfType"]): string {
   return t === "welded" ? "Hàn nối" : "Phân phối";
+}
+
+// Trống = tổng port - đang dùng - dự phòng — tính lại mỗi lần cần thay vì lưu
+// riêng 1 field, để không bao giờ lệch tổng dù inUsePorts/standbyPorts đến từ
+// nguồn nào (trung kế: port_circuit_links thật; thiết bị: đối chiếu text qua
+// lib/deviceRackPorts.ts — xem 2 nơi gọi RackListTable).
+function emptyPortsOf(r: RackListItem): number {
+  return r.portCount - r.inUsePorts - r.standbyPorts;
 }
 
 function compareByKey(key: SortKey, a: RackListItem, b: RackListItem): number {
@@ -39,13 +47,17 @@ function compareByKey(key: SortKey, a: RackListItem, b: RackListItem): number {
       return compareValues(a.portCount, b.portCount);
     case "inUse":
       return compareValues(a.inUsePorts, b.inUsePorts);
+    case "standby":
+      return compareValues(a.standbyPorts, b.standbyPorts);
+    case "empty":
+      return compareValues(emptyPortsOf(a), emptyPortsOf(b));
   }
 }
 
 function cellText(r: RackListItem, key: SortKey): string | number | null {
   switch (key) {
     case "code":
-      return r.code;
+      return formatRackCodeDisplay(r.code);
     case "route":
       return r.cableRouteName;
     case "odfType":
@@ -54,10 +66,14 @@ function cellText(r: RackListItem, key: SortKey): string | number | null {
       return r.portCount;
     case "inUse":
       return r.inUsePorts;
+    case "standby":
+      return r.standbyPorts;
+    case "empty":
+      return emptyPortsOf(r);
   }
 }
 
-const FILTER_KEYS: SortKey[] = ["code", "route", "odfType", "portCount", "inUse"];
+const FILTER_KEYS: SortKey[] = ["code", "route", "odfType", "portCount", "inUse", "standby", "empty"];
 
 // Chỉ "Tuyến cáp" cần kéo dãn (có thể dài, vd "96FO#1 ADN1 - 2T9") — các cột
 // còn lại giá trị ngắn/cố định (yêu cầu người dùng 2026-07-27: "các bảng dữ
@@ -74,6 +90,8 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
     odfType: "",
     portCount: "",
     inUse: "",
+    standby: "",
+    empty: "",
   });
 
   function setFilter(key: SortKey, value: string) {
@@ -100,7 +118,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
           <button
             type="button"
             className="text-xs text-primary-600 hover:underline"
-            onClick={() => setFilters({ code: "", route: "", odfType: "", portCount: "", inUse: "" })}
+            onClick={() => setFilters({ code: "", route: "", odfType: "", portCount: "", inUse: "", standby: "", empty: "" })}
           >
             Xóa bộ lọc
           </button>
@@ -113,8 +131,10 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
             <col style={{ width: 120 }} />
             <col style={{ width: colWidths.route }} />
             <col style={{ width: 110 }} />
-            <col style={{ width: 100 }} />
-            <col style={{ width: 110 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 90 }} />
           </colgroup>
           <thead className="bg-primary-50 text-primary-800">
             <tr>
@@ -137,14 +157,13 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
                 onSort={toggleSort}
                 align="right"
               />
-              <SortableTh
-                label="Đang dùng"
-                sortKey="inUse"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                align="right"
-              />
+              {/* Tách "Đang dùng" (1 cột X/Y trước đây) thành 3 cột riêng Đang
+                  dùng/Dự phòng/Trống (yêu cầu người dùng 2026-07-28) — xem
+                  cách 2 trang gọi component này tính lại đúng theo dữ liệu
+                  luồng thật (không còn ports.status, xem architecture.md). */}
+              <SortableTh label="Đang dùng" sortKey="inUse" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+              <SortableTh label="Dự phòng" sortKey="standby" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+              <SortableTh label="Trống" sortKey="empty" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
             </tr>
             <tr className="bg-white">
               <th className="px-2 py-1">
@@ -162,6 +181,12 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
               <th className="px-2 py-1">
                 <FilterInput value={filters.inUse} onChange={(v) => setFilter("inUse", v)} align="right" />
               </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.standby} onChange={(v) => setFilter("standby", v)} align="right" />
+              </th>
+              <th className="px-2 py-1">
+                <FilterInput value={filters.empty} onChange={(v) => setFilter("empty", v)} align="right" />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -169,20 +194,20 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
               <tr key={rack.id} className="border-t border-slate-100 hover:bg-primary-50/50">
                 <td className="px-4 py-2">
                   <Link href={`/odf-trunk/${rack.id}`} className="font-medium text-primary-700 hover:underline">
-                    {rack.code}
+                    {formatRackCodeDisplay(rack.code)}
                   </Link>
                 </td>
                 <td className="px-4 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>
                 <td className="px-4 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>
                 <td className="px-4 py-2 text-right text-slate-600">{rack.portCount}</td>
-                <td className="px-4 py-2 text-right text-slate-600">
-                  {rack.inUsePorts}/{rack.totalPorts}
-                </td>
+                <td className="px-4 py-2 text-right text-slate-600">{rack.inUsePorts}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{rack.standbyPorts}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy rack nào khớp bộ lọc.
                 </td>
               </tr>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { formatRackCodeDisplay } from "@/lib/rackCode";
 
 export interface RackHeaderData {
   id: string;
@@ -34,7 +35,7 @@ export default function RackHeader({ rack }: { rack: RackHeaderData }) {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-primary-800">{rack.code}</h1>
+      <h1 className="text-2xl font-bold text-primary-800">{formatRackCodeDisplay(rack.code)}</h1>
 
       {editing ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">

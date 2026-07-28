@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { fetchAllOdfPorts } from "@/lib/trunkPorts";
+import { fetchDeviceRackPortStatusCounts } from "@/lib/deviceRackPorts";
+import { getAdn1StationId } from "@/lib/devices";
 import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackListTable";
+import AddDeviceRackForm from "@/components/odf-device/AddDeviceRackForm";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
@@ -12,24 +16,38 @@ interface RawRack {
   cable_route_name: string | null;
   odf_type: "welded" | "distribution";
   port_count: number;
-  ports: { status: string }[];
 }
 
 async function getRacks(): Promise<RackListItem[]> {
   const { data, error } = await supabase
     .from("racks")
-    .select("id, code, cable_route_name, odf_type, port_count, ports(status)")
+    .select("id, code, cable_route_name, odf_type, port_count")
     .eq("domain", "device");
   if (error) throw error;
-  return ((data ?? []) as unknown as RawRack[]).map((r) => ({
-    id: r.id,
-    code: r.code,
-    cableRouteName: r.cable_route_name,
-    odfType: r.odf_type,
-    portCount: r.port_count,
-    totalPorts: r.ports.length,
-    inUsePorts: r.ports.filter((p) => p.status === "in_use").length,
-  }));
+  const racks = (data ?? []) as RawRack[];
+
+  // Đang dùng/Dự phòng/Trống tính từ CHÍNH dữ liệu luồng thật (yêu cầu người
+  // dùng 2026-07-28: số liệu cũ đọc ports.status luôn hiện sai "0/48" vì luồng
+  // thiết bị không hề đụng tới bảng ports thật — xem lib/deviceRackPorts.ts +
+  // architecture.md).
+  const trunkPorts = await fetchAllOdfPorts();
+  const counts = await fetchDeviceRackPortStatusCounts(
+    racks.map((r) => ({ id: r.id, code: r.code, portCount: r.port_count })),
+    trunkPorts
+  );
+
+  return racks.map((r) => {
+    const c = counts.get(r.id) ?? { inUse: 0, standby: 0, empty: r.port_count };
+    return {
+      id: r.id,
+      code: r.code,
+      cableRouteName: r.cable_route_name,
+      odfType: r.odf_type,
+      portCount: r.port_count,
+      inUsePorts: c.inUse,
+      standbyPorts: c.standby,
+    };
+  });
 }
 
 // Nội dung này trước ở app/odf-device/odf-ddf-noi-bo/page.tsx — chuyển về
@@ -39,7 +57,7 @@ async function getRacks(): Promise<RackListItem[]> {
 // architecture.md). Bấm vào 1 rack dùng lại NGUYÊN trang
 // "/odf-trunk/[rackId]" (đã domain-aware sẵn).
 export default async function OdfDevicePage() {
-  const racks = await getRacks();
+  const [racks, stationId] = await Promise.all([getRacks(), getAdn1StationId()]);
 
   return (
     <div>
@@ -57,6 +75,16 @@ export default async function OdfDevicePage() {
           → Thư viện vị trí gợi ý (device → ODF/DDF)
         </Link>
       </p>
+
+      {/* Thêm rack mới (yêu cầu người dùng 2026-07-28: "Chưa có phần thêm/
+          sửa/xóa Rack") — CHỈ domain='device', đặt ở đây (trang danh sách)
+          vì rack mới chưa có trang chi tiết để "sửa" từ đó. Sửa số port
+          (RackAdminPanel) + xóa rack (DeleteRackButton) vẫn ở trang chi tiết
+          từng rack, xem app/odf-trunk/[rackId]/page.tsx. */}
+      <div className="mt-6">
+        <AddDeviceRackForm stationId={stationId} />
+      </div>
+
       {/* Cột "Tuyến cáp" trong bảng dưới sẽ luôn trống với loại rack này —
           không có ý nghĩa ngoài domain=trunk (đúng theo comment cột
           racks.cable_route_name trong schema), không phải thiếu dữ liệu. */}
