@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
@@ -283,11 +283,47 @@ export default function PortTable({
   trunkPorts: TrunkPortRow[];
 }) {
   const router = useRouter();
-  const [ports] = useState(initialPorts);
+  // KHÔNG dùng useState(initialPorts) — router.refresh() (gọi sau mỗi lần
+  // Lưu/Xóa) cố ý GIỮ NGUYÊN state cũ của Client Component (hành vi chính
+  // thức của Next.js, không phải bug của Next), nên nếu chụp initialPorts
+  // vào useState 1 lần lúc mount thì dữ liệu hiển thị sẽ mãi mãi cũ dù server
+  // đã có dữ liệu mới — phải F5 cứng (mất hết state React) mới thấy đúng.
+  // Không có setter nào dùng tới "ports" (chỉ đọc), nên gán thẳng biến
+  // thường là đủ và luôn tự động lấy props mới nhất mỗi lần render lại.
+  const ports = initialPorts;
   const [edit, setEdit] = useState<EditState | null>(null);
   const [move, setMove] = useState<MoveState | null>(null);
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
-  const [busy, setBusy] = useState(false);
+  // "saving" chỉ phủ đúng lúc đang ghi Supabase; "isRefreshing" phủ thêm lúc
+  // router.refresh() đang tải lại dữ liệu (mất ~2-3s vì phải tải lại port cả
+  // trạm — xem architecture.md mục 21). Gộp 2 cái thành "busy" DÙNG CHUNG cho
+  // mọi nút bấm như trước (không đổi tên ở nơi dùng) — người dùng phát hiện
+  // 2026-07-28: bấm Lưu xong bảng chưa cập nhật ngay mà không có dấu hiệu gì
+  // đang chờ, tưởng lưu thất bại rồi tự bấm F5 cứng. Giữ busy=true xuyên suốt
+  // + đổi nhãn nút thành "Đang cập nhật..." để người dùng biết vẫn đang chạy.
+  const [saving, setSaving] = useState(false);
+  const [isRefreshing, startRefreshTransition] = useTransition();
+  const busy = saving || isRefreshing;
+  const pendingAfterRefreshRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!isRefreshing) {
+      pendingAfterRefreshRef.current();
+      pendingAfterRefreshRef.current = () => {};
+    }
+    // Chỉ cần chạy lại khi isRefreshing đổi giá trị — effect này chỉ đóng vai
+    // trò "báo khi refresh xong", không phụ thuộc gì khác.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRefreshing]);
+  // Gọi THAY router.refresh() trực tiếp ở mọi nơi trong file: giữ busy=true
+  // (qua isRefreshing) và hoãn việc đóng form Sửa/Chuyển tuyến (afterRefresh)
+  // tới khi dữ liệu mới THẬT SỰ đã áp dụng xong, thay vì đóng form ngay rồi
+  // hiện dữ liệu cũ trong lúc chờ.
+  function refreshAndThen(afterRefresh: () => void = () => {}) {
+    pendingAfterRefreshRef.current = afterRefresh;
+    startRefreshTransition(() => {
+      router.refresh();
+    });
+  }
   const [error, setError] = useState<string | null>(null);
   // Nhảy tới + tô sáng tạm 1 port cụ thể qua hash "#port-<id>" (yêu cầu người
   // dùng 2026-07-28: link từ khung cảnh báo "Chuyển tiếp chưa đúng chuẩn
@@ -488,7 +524,7 @@ export default function PortTable({
       setError(edit.secondPortError ?? "Port ghép cùng không hợp lệ.");
       return;
     }
-    setBusy(true);
+    setSaving(true);
     setError(null);
     try {
       const isNew = edit.circuitId === null;
@@ -530,8 +566,7 @@ export default function PortTable({
           }
         }
         if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly);
-        setEdit(null);
-        router.refresh();
+        refreshAndThen(() => setEdit(null));
         return;
       }
 
@@ -633,12 +668,11 @@ export default function PortTable({
       }
       if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
 
-      setEdit(null);
-      router.refresh();
+      refreshAndThen(() => setEdit(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
@@ -661,7 +695,7 @@ export default function PortTable({
     ) {
       return;
     }
-    setBusy(true);
+    setSaving(true);
     setError(null);
     try {
       const portIds = linkedPorts.map((p) => p.id);
@@ -675,11 +709,11 @@ export default function PortTable({
         const { error: transitErr } = await supabase.from("transit_links").delete().in("id", transitLinkIds);
         if (transitErr) throw transitErr;
       }
-      router.refresh();
+      refreshAndThen();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
@@ -808,7 +842,7 @@ export default function PortTable({
       setError(move.secondTargetPortError ?? "Port đích ghép cùng không hợp lệ.");
       return;
     }
-    setBusy(true);
+    setSaving(true);
     setError(null);
     try {
       const destPortIds =
@@ -853,12 +887,11 @@ export default function PortTable({
         }
       }
 
-      setMove(null);
-      router.refresh();
+      refreshAndThen(() => setMove(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
@@ -1158,6 +1191,26 @@ function EditRow({
     () => splitOdfDeviceStructure(edit.transitText).devicePortText ?? ""
   );
 
+  // Gợi ý chuẩn hóa "Vị trí ODF" NGAY khi đang gõ (yêu cầu người dùng
+  // 2026-07-28: bấm áp dụng cho nhanh, đỡ phải gõ lại) — cùng phép tính
+  // matchTrunkPosition/formatCanonicalOdfPosition đã dùng ở onBlur bên dưới,
+  // chỉ khác là hiện SẴN thành gợi ý bấm được thay vì phải rời khỏi ô mới
+  // thấy. null nếu đã đúng chuẩn hoặc chưa khớp được rack/port thật nào (khi
+  // đó không có gì chắc chắn để gợi ý).
+  const odfSuggestion = useMemo(() => {
+    const trimmed = transitOdfPart.trim();
+    if (!trimmed) return null;
+    const trunkMatch = matchTrunkPosition(trimmed, trunkPorts);
+    const canonical = formatCanonicalOdfPosition(trunkMatch);
+    return canonical && canonical !== trimmed ? canonical : null;
+  }, [transitOdfPart, trunkPorts]);
+
+  function applyOdfSuggestion() {
+    if (!odfSuggestion) return;
+    setTransitOdfPart(odfSuggestion);
+    onChange({ ...edit, transitText: `${odfSuggestion} - ${transitDevicePart}` });
+  }
+
   return (
     <tr className="border-t border-primary-200 bg-primary-50/60">
       <td colSpan={colSpan} className="px-4 py-4">
@@ -1215,6 +1268,16 @@ function EditRow({
                     }
                   }}
                 />
+                {odfSuggestion && (
+                  <button
+                    type="button"
+                    className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
+                    onClick={applyOdfSuggestion}
+                    title="Bấm để thay bằng đúng chuẩn form"
+                  >
+                    💡 Gợi ý: {odfSuggestion} — bấm để áp dụng
+                  </button>
+                )}
                 <input
                   className="input"
                   placeholder="Thiết bị (port), vd: ADN1.PE2 (et-13/0/0)"
@@ -1312,7 +1375,7 @@ function EditRow({
 
         <div className="mt-4 flex gap-2">
           <button className="btn-primary" onClick={onSave} disabled={busy}>
-            Lưu
+            {busy ? "Đang cập nhật..." : "Lưu"}
           </button>
           <button className="btn-secondary" onClick={onCancel} disabled={busy}>
             Hủy
@@ -1404,7 +1467,7 @@ function MoveRow({
 
         <div className="mt-4 flex gap-2">
           <button className="btn-primary" onClick={onConfirm} disabled={busy || !move.targetPortId}>
-            Xác nhận chuyển
+            {busy ? "Đang cập nhật..." : "Xác nhận chuyển"}
           </button>
           <button className="btn-secondary" onClick={onCancel} disabled={busy}>
             Hủy

@@ -876,3 +876,90 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       từ trước đó trong phiên đã "chết" — trả 404 dù process còn sống, khả
       năng do đúng lỗi cache `.next`/OneDrive đã biết) sau khi test xong, để
       tránh 2 dev server cùng ghi `.next` một lúc (rủi ro tái diễn lỗi cache).
+
+20. **Gợi ý chuẩn hóa "Vị trí ODF" ngay trong form Sửa** (yêu cầu người dùng
+    2026-07-28, tiếp mục 19b: chấp nhận 452 dòng cảnh báo là đúng, nhưng khi
+    sửa từng dòng thì muốn có gợi ý bấm-là-xong thay vì gõ tay) —
+    `PortTable.tsx` (`EditRow`): khi ô "Vị trí ODF" (2 ô cấu trúc 2) đang gõ
+    không khớp đúng chuẩn `formatCanonicalOdfPosition()`, hiện ngay 1 nút nhỏ
+    "💡 Gợi ý: ODF x/y (a,b) — bấm để áp dụng" ngay dưới ô, bấm vào là điền
+    thẳng giá trị chuẩn (tính bằng `useMemo` trên CHÍNH `matchTrunkPosition`/
+    `formatCanonicalOdfPosition` đã dùng ở `onBlur` cũ — chỉ khác là hiện SẴN
+    thay vì phải rời khỏi ô mới thấy). Chỉ áp dụng cho trường hợp đã tách được
+    2 ô (cấu trúc 2 khớp) — trường hợp 1 ô thô (không tách được) KHÔNG có gợi
+    ý vì không đủ căn cứ để biết phần nào là vị trí ODF, tránh đoán khi mơ hồ
+    (cùng triết lý mục 17/19b).
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test bằng Playwright thật (cài
+      tạm/gỡ lại `npm install --no-save playwright` như mục 19): mở Sửa port
+      23 rack ODF1/1 (`raw_text` "ODF2/10/33,34 - ..."), nút gợi ý hiện đúng
+      "ODF 2/10 (33,34)", bấm vào thì ô "Vị trí ODF" nhận đúng giá trị đó
+      (không lưu xuống DB, chỉ test UI).
+    - **Còn thiếu, CHƯA làm (chờ xác nhận trước khi đổi schema)**: nút
+      "Acknowledge" (xác nhận đã xem, bỏ qua) cho từng dòng trong khung cảnh
+      báo `TransitFormatWarning`, bật/tắt lại được — cần lưu trạng thái này
+      xuống DB (không thể chỉ giữ ở state trình duyệt vì phải còn lại sau khi
+      tải lại trang/đổi máy) → cần thêm 1 cột mới vào `transit_links`, tức là
+      ĐỔI SCHEMA — theo đúng nguyên tắc ở đầu file (không tự ý đổi schema
+      không hỏi trước), đã dừng lại hỏi ý kiến người dùng thay vì tự thêm.
+
+21. **Bug: bấm Lưu ở `PortTable.tsx` xong bảng không cập nhật ngay, phải
+    Ctrl+Shift+R mới thấy đúng** (người dùng phát hiện 2026-07-28 khi test
+    tính năng gợi ý ở mục 20) — nguyên nhân GỐC: `const [ports] = useState
+    (initialPorts)` chỉ chụp `initialPorts` MỘT LẦN lúc mount; `router.
+    refresh()` (gọi sau mỗi Lưu/Xóa/Chuyển tuyến) theo ĐÚNG thiết kế của
+    Next.js App Router sẽ giữ nguyên state cũ của Client Component (không tự
+    reset useState) — nên dù server đã có dữ liệu mới, biến `ports` (không hề
+    có setter nào dùng tới, chỉ đọc) không bao giờ tự cập nhật, chỉ full page
+    reload (F5 cứng, xóa sạch cây React) mới thấy đúng. Đã sửa: bỏ hẳn
+    `useState`, dùng thẳng `const ports = initialPorts;` (props mới tới đâu,
+    biến này phản ánh đúng tới đó). Đã rà toàn bộ `components/` xác nhận đây
+    là chỗ DUY NHẤT trong app có kiểu `useState(initialXxx)` không dùng
+    setter — các bảng khác (`DeviceCircuitList.tsx`...) không mắc lỗi này.
+    - **Phát hiện thêm khi đo bằng Playwright (KHÔNG phải bug, nhưng là
+      nguyên nhân trực tiếp khiến người dùng tưởng phải F5 mới được)**: sau
+      khi sửa lỗi trên, dữ liệu vẫn mất **~2.7 giây** mới hiện đúng (đã đo
+      bằng `page.waitForFunction`, không phải đoán) — vì `router.refresh()`
+      chạy lại TOÀN BỘ Server Component `RackDetailPage`, trong đó
+      `fetchAllOdfPorts()` phải phân trang tải lại ~7000+ port CẢ TRẠM (không
+      chỉ rack đang xem) qua nhiều lượt gọi Supabase, cộng thêm
+      `fetchNonConformingTransitLinks()`/`fetchCircuitOptions()`/
+      `fetchDevices()`. Trong lúc chờ, `saveEdit()` đã tắt `busy`/đóng form
+      Sửa ngay (không đợi `router.refresh()` xong), nên người dùng thấy dòng
+      vừa sửa "trông như cũ" mà không có dấu hiệu gì đang tải — dễ hiểu nhầm
+      là lưu thất bại rồi tự bấm F5 cứng (lúc đó save đã xong thật dưới DB từ
+      lâu, F5 chỉ tình cờ trùng thời điểm dữ liệu mới đã sẵn sàng). Đã thêm
+      chỉ báo "Đang cập nhật..." cho phần này — xem mục 22.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test bằng Playwright thật nhắm
+      ĐÚNG 1 dòng port qua `#port-<id>` (tránh nhầm dòng do khung cảnh báo
+      phân trang thay đổi nội dung sau mỗi lần lưu — bài học rút ra giữa
+      chừng khi 2 lần test đầu dùng chọn theo TEXT bị sai dòng/sai kết luận):
+      sửa port 23 rack ODF1/1 (dữ liệu thật, đã trả lại đúng giá trị gốc
+      "ODF2/10/33,34 - VNPT.DATA.SW.ZTE01 (1/1)" ngay sau mỗi lần test bằng
+      script riêng, không để lại thay đổi thật nào) — xác nhận dữ liệu mới
+      hiện đúng sau ~2.7s, KHÔNG cần reload trang.
+
+22. **Chỉ báo "Đang cập nhật..." trong lúc chờ `router.refresh()`** (yêu cầu
+    người dùng 2026-07-28, tiếp mục 21) — `PortTable.tsx`:
+    - Đổi tên state `busy` → `saving` (chỉ phủ đúng lúc đang ghi Supabase),
+      thêm `useTransition()` lấy `isRefreshing` (đúng API React để biết
+      `router.refresh()` đã áp dụng xong dữ liệu mới hay chưa — bọc lệnh gọi
+      trong `startTransition()`). `busy` (tên biến giữ nguyên, mọi
+      `disabled={busy}` ở nơi khác trong file không cần sửa) giờ suy ra từ
+      `saving || isRefreshing`.
+    - Thêm hàm `refreshAndThen(afterRefresh?)` DÙNG THAY cho việc gọi thẳng
+      `router.refresh()` ở cả 3 chỗ (`saveEdit()` 2 nhánh, `deleteGroup()`,
+      `confirmMove()`): giữ `pendingAfterRefreshRef`, chỉ chạy `afterRefresh`
+      (vd `() => setEdit(null)`) SAU KHI `isRefreshing` chuyển về `false` (1
+      `useEffect` theo dõi) — thay vì đóng form NGAY rồi hiện dữ liệu cũ suốt
+      quãng chờ như trước (mục 21). `deleteGroup()` không có form gì để đóng
+      nên gọi `refreshAndThen()` không tham số — vẫn được lợi giữ `busy=true`
+      (khóa mọi nút Sửa/Xóa/Copy/Chuyển tuyến TOÀN BẢNG) suốt quãng chờ, tránh
+      thao tác chồng chéo trong lúc dữ liệu `ports` sắp đổi.
+    - Nút "Lưu" (`EditRow`) và "Xác nhận chuyển" (`MoveRow`) đổi nhãn thành
+      "Đang cập nhật..." khi `busy` — dùng chung 1 chữ cho cả 2 giai đoạn (ghi
+      DB + chờ refresh), không tách "Đang lưu.../Đang cập nhật..." riêng cho
+      đơn giản, đúng yêu cầu.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test Playwright thật (sửa+trả lại
+      gốc port 23 ODF1/1 như mục 21): bấm Lưu thấy ngay nút đổi "Đang cập
+      nhật..." + bị khóa, nút "Sửa" ở DÒNG KHÁC cũng bị khóa theo, form tự
+      đóng và hiện đúng dữ liệu mới khi refresh xong (không cần F5).
