@@ -301,6 +301,11 @@ export default function DeviceCircuitList({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  // Tick chọn nhiều dòng để xóa cùng lúc (yêu cầu người dùng 2026-07-28) —
+  // tập id độc lập với bộ lọc/sắp xếp đang hiển thị, cùng cách
+  // DeviceCategoryClient.tsx đã làm cho bảng thiết bị (đổi bộ lọc không mất
+  // tick đã chọn).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [conflictSearch, setConflictSearch] = useState("");
   const [conflictPageSize, setConflictPageSize] = useState(5);
   // Tick "dùng để tự đặt tên luồng" cạnh Thiết bị/Thiết bị (tiếp theo)/Đối
@@ -668,7 +673,7 @@ export default function DeviceCircuitList({
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
   // vẫn cần cột này để phân biệt các dòng.
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
-  const columnCount = showDeviceColumn ? 9 : 8;
+  const columnCount = (showDeviceColumn ? 9 : 8) + 1; // +1 cho cột tick chọn
 
   // Kiểm tra "1 vị trí ODF/DDF (thiết bị) không được gán cho 2 thiết bị khác
   // nhau" — CHỈ so sánh cột "Vị trí ODF (thiết bị)" (nơi CHÍNH thiết bị này
@@ -796,6 +801,61 @@ export default function DeviceCircuitList({
       return;
     }
     if (edit?.id === c.id) setEdit(null);
+    router.refresh();
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of filtered) next.add(c.id);
+      return next;
+    });
+  }
+
+  function clearVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of filtered) next.delete(c.id);
+      return next;
+    });
+  }
+
+  function clearAllSelected() {
+    setSelected(new Set());
+  }
+
+  // Xóa nhiều luồng thiết bị cùng lúc (yêu cầu người dùng 2026-07-28: "tick
+  // chọn rồi bấm xóa") — cùng lý do an toàn như deleteCircuit() ở trên (luồng
+  // thiết bị không gắn port_circuit_links nào), chỉ khác là xóa theo lô id đã
+  // tick thay vì đúng 1 dòng.
+  async function deleteSelectedCircuits() {
+    if (selected.size === 0) return;
+    if (!confirm(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.`)) return;
+    setBusy(true);
+    setError(null);
+    const ids = [...selected];
+    const chunkSize = 200;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const batch = ids.slice(i, i + chunkSize);
+      const { error: err } = await supabase.from("circuits").delete().in("id", batch);
+      if (err) {
+        setBusy(false);
+        setError(err.message);
+        return;
+      }
+    }
+    setBusy(false);
+    if (edit && selected.has(edit.id)) setEdit(null);
+    setSelected(new Set());
     router.refresh();
   }
 
@@ -1548,9 +1608,9 @@ export default function DeviceCircuitList({
         <GroupedMultiSelect items={scopedDeviceItems} selected={deviceNames} onChange={setDeviceNames} buttonLabel="Thiết bị" />
       </div>
 
-      <div className="flex items-center gap-3 mb-2">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
         <p className="text-sm text-slate-500">
-          {filtered.length}/{circuits.length} luồng
+          {filtered.length}/{circuits.length} luồng · đã chọn {selected.size}
         </p>
         {Object.values(filters).some((v) => v) && (
           <button
@@ -1572,6 +1632,27 @@ export default function DeviceCircuitList({
             Xóa bộ lọc
           </button>
         )}
+        <button type="button" className="text-xs text-primary-600 hover:underline" onClick={selectAllVisible}>
+          Chọn tất cả đang hiện
+        </button>
+        <button type="button" className="text-xs text-primary-600 hover:underline" onClick={clearVisible}>
+          Bỏ chọn đang hiện
+        </button>
+        {selected.size > 0 && (
+          <>
+            <button type="button" className="text-xs text-slate-500 hover:underline" onClick={clearAllSelected}>
+              Bỏ chọn tất cả ({selected.size})
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              onClick={deleteSelectedCircuits}
+              disabled={busy}
+            >
+              {busy ? "Đang xóa..." : `Xóa ${selected.size} luồng đã chọn`}
+            </button>
+          </>
+        )}
       </div>
 
       {/* max-h + overflow-auto (thay vì chỉ overflow-x-auto) là bắt buộc để
@@ -1584,6 +1665,7 @@ export default function DeviceCircuitList({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
+            <col style={{ width: 32 }} />
             <col style={{ width: colWidths.name }} />
             <col style={{ width: 110 }} />
             {showDeviceColumn && <col style={{ width: colWidths.device }} />}
@@ -1596,6 +1678,14 @@ export default function DeviceCircuitList({
           </colgroup>
           <thead className="text-primary-800">
             <tr>
+              <th className="sticky top-0 z-10 bg-primary-50 px-2 py-2 align-top">
+                <input
+                  type="checkbox"
+                  checked={filtered.length > 0 && filtered.every((c) => selected.has(c.id))}
+                  onChange={(e) => (e.target.checked ? selectAllVisible() : clearVisible())}
+                  title="Chọn/bỏ chọn tất cả đang hiện"
+                />
+              </th>
               <SortFilterTh
                 label="Tên luồng"
                 sortKey="name"
@@ -1701,6 +1791,9 @@ export default function DeviceCircuitList({
                           : "hover:bg-primary-50/50"
                   }`}
                 >
+                  <td className="px-2 py-2 align-top">
+                    <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} />
+                  </td>
                   <td className="px-4 py-2 text-slate-700 break-words">
                     {displayName(c) || "—"}
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>

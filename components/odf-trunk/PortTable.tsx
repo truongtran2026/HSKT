@@ -577,7 +577,19 @@ export default function PortTable({
     const circuit = group.ports[0].circuit;
     if (!circuit) return;
     const linkedPorts = linkedPortsFor(ports, circuit.id);
-    if (!confirm(`Xóa luồng "${circuit.name}"? Sẽ giải phóng port ${linkedPorts.map((p) => p.portNumber).join(", ")} về trạng thái trống.`)) {
+    // "Chuyển tiếp" (transit_links, khóa theo source_port_id) là dữ liệu
+    // RIÊNG của từng port, không tự động mất khi xóa circuit/port_circuit_links
+    // (2 bảng khác nhau) — phải xóa TAY (người dùng phát hiện 2026-07-28: xóa
+    // luồng xong port về trống nhưng "Chuyển tiếp" cũ vẫn còn, sai vì port đó
+    // giờ không còn luồng nào để "chuyển tiếp" đi đâu nữa). Cùng cách
+    // saveEdit() đã làm khi tách 1 port ra khỏi cặp (removedPortIds).
+    const transitLinkIds = linkedPorts.map((p) => p.transitLinkId).filter((id): id is string => !!id);
+    const transitNote = transitLinkIds.length > 0 ? " và dữ liệu Chuyển tiếp của các port đó" : "";
+    if (
+      !confirm(
+        `Xóa luồng "${circuit.name}"? Sẽ giải phóng port ${linkedPorts.map((p) => p.portNumber).join(", ")} về trạng thái trống${transitNote}.`
+      )
+    ) {
       return;
     }
     setBusy(true);
@@ -590,6 +602,10 @@ export default function PortTable({
       if (circuitErr) throw circuitErr;
       const { error: statusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", portIds);
       if (statusErr) throw statusErr;
+      if (transitLinkIds.length > 0) {
+        const { error: transitErr } = await supabase.from("transit_links").delete().in("id", transitLinkIds);
+        if (transitErr) throw transitErr;
+      }
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -756,6 +772,16 @@ export default function PortTable({
         if (delErr) throw delErr;
         const { error: srcStatusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", move.sourcePortIds);
         if (srcStatusErr) throw srcStatusErr;
+        // Cùng lý do đã sửa ở deleteGroup(): "Chuyển tiếp" của port NGUỒN
+        // cũng phải xóa theo khi port đó thật sự được giải phóng, không tự
+        // mất theo circuit/port_circuit_links.
+        const sourceTransitLinkIds = move.sourcePortIds
+          .map((id) => ports.find((p) => p.id === id)?.transitLinkId)
+          .filter((id): id is string => !!id);
+        if (sourceTransitLinkIds.length > 0) {
+          const { error: transitErr } = await supabase.from("transit_links").delete().in("id", sourceTransitLinkIds);
+          if (transitErr) throw transitErr;
+        }
       }
 
       setMove(null);

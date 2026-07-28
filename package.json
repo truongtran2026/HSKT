@@ -18,7 +18,9 @@
     "import-internal-odf-racks": "tsx scripts/import-internal-odf-racks.ts",
     "normalize-odf-positions": "tsx scripts/normalize-odf-positions.ts",
     "fix-100g-label": "tsx scripts/fix-100g-label.ts",
-    "add-missing-rack-odf1-15": "tsx scripts/add-missing-rack-odf1-15.ts"
+    "add-missing-rack-odf1-15": "tsx scripts/add-missing-rack-odf1-15.ts",
+    "audit-device-trunk-sync": "tsx scripts/audit-device-trunk-sync.ts",
+    "sync-missing-trunk-circuits": "tsx scripts/sync-missing-trunk-circuits.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

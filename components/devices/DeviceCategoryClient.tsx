@@ -8,7 +8,7 @@ import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
-import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
+import { syncDevicePositionMapNames, deleteDevicePositionMapForNames } from "@/lib/devicePositionMap";
 import { formatLastUpdated } from "@/lib/format";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
@@ -277,6 +277,69 @@ export default function DeviceCategoryClient({
     }
   }
 
+  // Số luồng sẽ bị xóa kèm theo nếu xóa hẳn các thiết bị đang tick — tính
+  // trước để báo rõ trong hộp thoại xác nhận (yêu cầu người dùng 2026-07-28:
+  // "xóa luôn một thiết bị", tránh xóa nhầm hàng loạt luồng mà không biết).
+  const selectedCircuitCount = useMemo(
+    () => circuits.filter((c) => c.deviceId && selected.has(c.deviceId)).length,
+    [circuits, selected]
+  );
+
+  // Xóa HẲN 1 hoặc nhiều thiết bị đã tick (yêu cầu người dùng 2026-07-28,
+  // khác "gộp" ở applyBulkRename — ở đây không có thiết bị đích nào giữ lại,
+  // toàn bộ luồng đang gán cho các thiết bị này bị xóa theo luôn, vì luồng
+  // thiết bị không có ý nghĩa khi không còn thiết bị sở hữu). Đồng bộ dọn
+  // luôn thư viện "Vị trí thiết bị" (device_position_map, xem
+  // deleteDevicePositionMapForNames) để không sót gợi ý cho thiết bị đã xóa —
+  // đúng yêu cầu "chú ý đồng bộ dữ liệu với các Hồ sơ khác cho chuẩn". Không
+  // đụng racks/transit_links vì đã kiểm tra thực tế: không rack/transit_link
+  // nào đang tham chiếu devices qua device_id/target_device_id (2 cột đó luôn
+  // null với dữ liệu ADN1 hiện có).
+  async function deleteSelectedDevices() {
+    if (selected.size === 0) return;
+    const deviceLabel = selected.size === 1 ? "thiết bị này" : `${selected.size} thiết bị đã chọn`;
+    const circuitWarning =
+      selectedCircuitCount > 0 ? ` Toàn bộ ${selectedCircuitCount} luồng đang gán cho ${deviceLabel} sẽ bị xóa theo.` : "";
+    if (!confirm(`Xóa vĩnh viễn ${deviceLabel}?${circuitWarning} Không thể hoàn tác.`)) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const ids = [...selected];
+      const names = selectedDevices.map((d) => d.name);
+      const chunkSize = 200;
+
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const batch = ids.slice(i, i + chunkSize);
+        const { error: circErr } = await supabase.from("circuits").delete().in("device_id", batch);
+        if (circErr) throw circErr;
+      }
+
+      try {
+        await deleteDevicePositionMapForNames(names);
+      } catch (syncErr) {
+        setError(
+          `Đã xóa thiết bị xong, nhưng dọn thư viện "Vị trí thiết bị" thất bại: ${
+            syncErr instanceof Error ? syncErr.message : String(syncErr)
+          }`
+        );
+      }
+
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const batch = ids.slice(i, i + chunkSize);
+        const { error: devErr } = await supabase.from("devices").delete().in("id", batch);
+        if (devErr) throw devErr;
+      }
+
+      setSelected(new Set());
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Giải quyết 1 nhóm luồng CHƯA có thiết bị: map vào thiết bị đã có (theo
   // đúng tên gõ) hoặc tạo thiết bị mới — luôn đồng bộ luôn thư viện "Vị trí
   // thiết bị" theo mọi biến thể tên gốc của nhóm.
@@ -486,6 +549,24 @@ export default function DeviceCategoryClient({
               thiết bị không còn dùng — không thể hoàn tác.
             </p>
           )}
+          <div className="flex flex-wrap items-center gap-2 border-t border-primary-200 pt-2">
+            <p className="w-full text-sm font-medium text-red-700 sm:w-auto">
+              Xóa vĩnh viễn {selected.size === 1 ? "thiết bị này" : `${selected.size} thiết bị đã chọn`}
+              {selectedCircuitCount > 0 ? ` (kèm ${selectedCircuitCount} luồng)` : ""}:
+            </p>
+            <button
+              type="button"
+              className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              onClick={deleteSelectedDevices}
+              disabled={busy}
+            >
+              {busy ? "Đang xóa..." : "Xóa"}
+            </button>
+          </div>
+          <p className="text-xs text-red-600">
+            Xóa thiết bị sẽ xóa luôn mọi luồng đang gán cho thiết bị đó và dọn thư viện &quot;Vị trí thiết bị&quot;
+            liên quan — không thể hoàn tác.
+          </p>
         </div>
       )}
 

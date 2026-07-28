@@ -77,6 +77,38 @@ export async function syncDevicePositionMapNames(oldNames: string[], newName: st
   }
 }
 
+// Dọn device_position_map khi 1/nhiều thiết bị bị XÓA HẲN (yêu cầu người dùng
+// 2026-07-28, trang "Danh mục thiết bị") — device_position_map không có FK
+// thật tới devices (khớp bằng tên, xem đầu file), nên xóa thiết bị không tự
+// động dọn thư viện: nếu không gọi hàm này, thư viện sẽ còn sót gợi ý (tên
+// thiết bị + vị trí ODF) cho 1 thiết bị không còn tồn tại nữa.
+export async function deleteDevicePositionMapForNames(names: string[]): Promise<void> {
+  const keys = new Set(names.map((n) => normalizeDeviceNameKey(n)).filter((k) => k));
+  if (keys.size === 0) return;
+
+  const pageSize = 1000;
+  const matchingIds: string[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("device_position_map")
+      .select("id, device_name")
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as { id: string; device_name: string }[];
+    for (const r of page) if (keys.has(normalizeDeviceNameKey(r.device_name))) matchingIds.push(r.id);
+    if (page.length < pageSize) break;
+  }
+  if (matchingIds.length === 0) return;
+
+  const chunkSize = 200;
+  for (let i = 0; i < matchingIds.length; i += chunkSize) {
+    const batch = matchingIds.slice(i, i + chunkSize);
+    const { error } = await supabase.from("device_position_map").delete().in("id", batch);
+    if (error) throw error;
+  }
+}
+
 // Làm giàu thư viện theo chiều NGƯỢC với maybeGrowLibrary (DeviceCircuitList.tsx
 // — kiểm tồn tại theo cặp device+ODF, dùng khi người dùng gõ thẳng vị trí ODF
 // bên luồng thiết bị). Ở đây đã biết CHẮC device+trib(port) từ text "Chuyển

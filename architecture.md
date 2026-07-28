@@ -551,3 +551,207 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       với người dùng luồng "TSSE3B (ETMOD-25-3)" sai (thiết bị đã tắt nguồn)
       và xóa `device_position_own` của đúng dòng đó (còn 1 dòng khác cùng tên
       nhưng own khác, không đụng tới).
+
+14. **Xóa hàng loạt: xóa hẳn 1 thiết bị + tick chọn nhiều luồng để xóa cùng
+    lúc** (yêu cầu người dùng 2026-07-28: "bổ sung thêm chức năng xóa luôn
+    một thiết bị và xóa nhiều luồng cùng lúc (tick chọn rồi bấm xóa)", kèm yêu
+    cầu đồng bộ dữ liệu giữa các Hồ sơ liên quan).
+    - **Khảo sát trước khi làm**: kiểm tra thật trên DB (không đoán) xem những
+      bảng nào tham chiếu tới `devices(id)` để biết cần dọn gì khi xóa 1 thiết
+      bị — `racks.device_id IS NOT NULL`: 0 dòng; `transit_links.target_device_id
+      IS NOT NULL`: 0 dòng (dù `transit_links` có 503 dòng, toàn bộ đều
+      `target_type='text_only'`, đúng như mục 8 đã ghi) — 2 cột này AN TOÀN,
+      không cần xử lý gì thêm khi xóa devices. Ngược lại `circuits.device_id`
+      có 1647 dòng đang tham chiếu — đây là quan hệ DUY NHẤT cần xử lý thật.
+    - **`/odf-device/sua-luong` (`DeviceCircuitList.tsx`) — tick chọn nhiều
+      luồng để xóa cùng lúc**: thêm cột checkbox đầu bảng (giống hệt cơ chế
+      tick đã có sẵn ở `DeviceCategoryClient.tsx` — tập `selected: Set<string>`
+      độc lập với bộ lọc/sắp xếp đang hiển thị, không bị xóa khi đổi bộ lọc),
+      nút "Chọn tất cả đang hiện"/"Bỏ chọn đang hiện"/"Bỏ chọn tất cả (N)", và
+      nút xóa hàng loạt "Xóa N luồng đã chọn" (nền đỏ, chỉ hiện khi có tick).
+      `deleteSelectedCircuits()` xóa theo lô 200 id/lần qua
+      `circuits.delete().in("id", batch)` — an toàn vì luồng thiết bị KHÔNG
+      bao giờ có `port_circuit_links` (cùng lý do `deleteCircuit()` đơn dòng
+      đã dùng từ trước), không cần dọn gì khác ngoài chính bảng `circuits`.
+    - **`/devices` (`DeviceCategoryClient.tsx`) — xóa hẳn 1/nhiều thiết bị**:
+      tái dùng NGUYÊN cơ chế tick chọn đã có sẵn (trước đây chỉ dùng cho
+      gán/đổi lĩnh vực và đổi tên/gộp) — thêm 1 nút "Xóa" (nền đỏ) trong khung
+      thao tác hàng loạt hiện có, hiện rõ số luồng sẽ bị xóa kèm theo
+      (`selectedCircuitCount`, tính từ prop `circuits` đã có sẵn) ngay trong
+      hộp thoại xác nhận, để không xóa nhầm hàng loạt luồng mà không biết
+      trước. **Khác "gộp" (`applyBulkRename`)**: gộp giữ lại 1 thiết bị đích
+      và chuyển luồng sang đó; xóa thì KHÔNG giữ gì lại — toàn bộ luồng đang
+      gán cho (các) thiết bị bị tick cũng bị xóa theo, vì 1 luồng thiết bị
+      không có ý nghĩa khi không còn thiết bị sở hữu.
+      `deleteSelectedDevices()` làm theo lô 200 id/lần, đúng thứ tự: (1) xóa
+      `circuits` theo `device_id in (...)`, (2) dọn `device_position_map` theo
+      tên thiết bị (xem dưới), (3) xóa `devices` theo `id in (...)` — thứ tự
+      này bắt buộc vì `circuits.device_id`/để rỗng thư viện trước, xóa
+      `devices` sau cùng mới không vướng gì.
+    - **`lib/devicePositionMap.ts` — thêm `deleteDevicePositionMapForNames(names)`**:
+      dọn các dòng thư viện "Vị trí thiết bị" khớp tên (các biến thể chuẩn hóa
+      qua `normalizeDeviceNameKey`) của (các) thiết bị VỪA bị xóa hẳn — đây
+      chính là phần "đồng bộ dữ liệu với Hồ sơ khác" người dùng yêu cầu:
+      `device_position_map` không có FK thật tới `devices` (khớp bằng tên,
+      xem đầu file mục 8.2), nên xóa thiết bị không tự dọn thư viện nếu không
+      gọi hàm này — nếu bỏ qua, thư viện sẽ còn sót gợi ý (tên thiết bị + vị
+      trí ODF) cho 1 thiết bị không còn tồn tại. Cùng cấu trúc
+      fetch-toàn-bộ-rồi-lọc-theo-key-chuẩn-hóa như `syncDevicePositionMapNames()`
+      đã có (chỉ khác là xóa hẳn thay vì đổi tên), đặt cạnh nhau trong cùng
+      file cho dễ đối chiếu.
+    - **Không đụng `/odf-trunk/[rackId]` (`DeviceRackPortView.tsx`)**: view
+      rack/port của "Hồ sơ ODF Thiết bị" (mục 13) tính lại HOÀN TOÀN từ
+      `circuits.device_position_own/next` mỗi lần render (đối chiếu text, xem
+      `lib/deviceRackPorts.ts`) — không lưu trạng thái riêng, nên xóa luồng ở
+      trên tự động biến mất khỏi view này ngay lần render sau, không cần đồng
+      bộ gì thêm.
+    - **Kiểm chứng**: `tsc --noEmit` sạch; 2 trang `/odf-device/sua-luong` và
+      `/devices` vẫn trả 200 sau khi sửa (kiểm tra qua curl vì môi trường lần
+      này không có sẵn công cụ điều khiển trình duyệt/Playwright — không click
+      tay qua UI được, đã nói rõ với người dùng). Bù lại, đã chạy 1 script
+      kiểm chứng tạm (`scripts/_tmp-verify-delete.ts`, xóa ngay sau khi chạy
+      xong) gọi THẲNG các hàm/thao tác Supabase thật y hệt 2 hàm mới sẽ chạy
+      khi bấm nút (kể cả `deleteDevicePositionMapForNames()` thật, không phải
+      bản sao) trên 1 thiết bị test + 2 luồng gắn kèm + 1 dòng thư viện test +
+      3 luồng standalone test (tự tạo, tự xóa, tự dọn nếu lỗi giữa chừng) —
+      toàn bộ các bước PASS: xóa thiết bị kéo theo đúng 2 luồng + 1 dòng thư
+      viện liên quan, xóa 3 luồng standalone theo lô đúng cả 3.
+
+15. **Phát hiện: dữ liệu "Vị trí ODF (tiếp theo)" bên luồng thiết bị có thể
+    trỏ tới 1 port trung kế THẬT mà không hề có `port_circuit_links` thật ở
+    đó** (người dùng phát hiện 2026-07-28 qua luồng "10GE AĐN1.P2 (17/0/3) -
+    DNG.MPE.06 (1/2/1)": Ô "Vị trí ODF (tiếp theo)" ghi "ODF 1/5 (07,08)",
+    rack `ODF1/5` là rack trung kế THẬT (`cable_route_name`="48FO#2 ADN1 -
+    2T9"), nhưng port 7/8 ở đó vẫn `status='unused'`, không có
+    `port_circuit_links` nào — Hồ sơ ODF Trung kế hiện "— trống —" dù bên
+    "Sửa luồng thiết bị" đã ghi rõ đang dùng).
+    - **Nguyên nhân gốc (không phải bug mới, là khoảng trống kiến trúc có từ
+      đầu)**: `matchTrunkPosition()` (mục 8/9) chỉ dùng để VALIDATE (port có
+      tồn tại không, có đang bị luồng khác chiếm không) khi gõ Ô "Vị trí ODF
+      (tiếp theo)" — nó KHÔNG BAO GIỜ tạo `port_circuit_links` thật cho port
+      trung kế đó. Vì vậy 1 luồng thiết bị có thể hợp lệ ghi "đấu ra trung kế
+      tại port X" (Ô1 khớp đúng rack/port thật, không báo lỗi) nhưng phía Hồ
+      sơ ODF Trung kế vẫn không biết gì về việc này trừ khi có người NHẬP
+      RIÊNG 1 luồng trung kế thật (qua `/odf-trunk/[rackId]`, `PortTable.tsx`)
+      cho đúng port đó — 2 "hồ sơ" ghi nhận độc lập, không tự đồng bộ.
+    - **Đã kiểm tra bằng chứng trước khi kết luận**: `PortTable.tsx` dòng
+      hiện "— trống —" dựa vào có/không có `circuit` suy từ join
+      `port_circuit_links` (KHÔNG dựa vào cột `ports.status`) — nên chỉ tự
+      sửa `ports.status` (không tạo `port_circuit_links` thật) sẽ KHÔNG thay
+      đổi gì hiển thị, đã loại phương án này trước khi đề xuất hướng sửa.
+    - **`scripts/audit-device-trunk-sync.ts`** (mới, chỉ đọc/không sửa gì,
+      `npm run audit-device-trunk-sync`) — quét TOÀN BỘ luồng thiết bị (2224+
+      luồng), đối chiếu cả `device_position_own` lẫn phần ODF của
+      `device_position_next` (tách qua `splitOdfDeviceStructure`, tránh lại
+      đúng lỗi "696 port mâu thuẫn" đã tự sửa ở mục 13) qua `matchTrunkPosition()`
+      thật — với MỖI port khớp được 1 rack trung kế thật, kiểm tra
+      `resolvedPorts[].inUse` (đúng field UI dùng để hiện cảnh báo "port đang
+      có luồng khác") để tìm port nào TRỐNG dù văn bản nói đã dùng.
+      **Kỹ thuật mới** (tốt hơn 2 script trước `normalize-odf-positions.ts`/
+      `fix-100g-label.ts` phải chép nguyên văn thuật toán vì `lib/trunkPorts.ts`
+      `import "@/lib/supabase"` đọc `process.env` ngay lúc import, không tương
+      thích thứ tự chạy qua `tsx`): gọi `loadEnv()` xong rồi mới
+      `await import("../lib/trunkPorts")` **ĐỘNG** (dynamic import không bị
+      hoist như import tĩnh) — nhờ vậy dùng THẲNG được hàm live thật, không
+      cần chép lại thuật toán, không cần cờ/biến môi trường phụ nào khi gọi
+      `npm run`, có thể áp dụng lại cho các script sau này cần tình huống
+      tương tự.
+    - **Kết quả rà soát (2026-07-28)**: 0 trường hợp port/sợi gõ sai (không có
+      lỗi chính tả kiểu số port không tồn tại thật). **64 lượt "chưa đồng bộ"
+      thật**: luồng thiết bị khớp đúng 1 rack/port trung kế thật nhưng port đó
+      đang trống trên Hồ sơ ODF Trung kế — đây là phạm vi ĐÚNG với báo cáo của
+      người dùng (chỉ tính rack `domain='trunk'`, KHÔNG tính ~2600 lượt khớp
+      rack ODF/DDF nội bộ `domain='device'` — phần đó là giới hạn ĐÃ biết/đã
+      xác nhận từ mục 8, không phải lỗi mới, vì các rack nội bộ đó là panel
+      dùng chung nhiều thiết bị, chưa từng có ý định nối `port_circuit_links`
+      thật cho từng luồng).
+    - **Báo cáo trực quan**: dựng 1 trang HTML tạm (bảng 64 dòng, lọc/sắp xếp
+      theo tên luồng/thiết bị/rack/trường own-next, đánh dấu ★ đúng luồng
+      người dùng báo cáo ban đầu) để người dùng rà trước khi quyết định hướng
+      sửa — không lưu trong repo (chỉ là báo cáo 1 lần, không phải tài liệu
+      sống).
+    - **Đã hỏi & người dùng chọn hướng sửa**: "Tự động tạo luồng trung kế cho
+      cả 64" — tạo thật `circuits`+`port_circuit_links` phía trung kế cho từng
+      trường hợp, đúng pattern "2 dòng circuit mirror nhau cho 1 liên kết vật
+      lý" đã có sẵn trong dữ liệu (không đụng luồng thiết bị gốc).
+    - **`scripts/sync-missing-trunk-circuits.ts`** (mới, DRY RUN/`--commit`,
+      `npm run sync-missing-trunk-circuits`) — với mỗi trường hợp: tạo 1
+      `circuits` MỚI (copy `name`/`interface_type`/`counterpart_text` từ luồng
+      thiết bị gốc, `notes` ghi rõ "tự tạo từ luồng thiết bị ... + id gốc" để
+      truy vết sau này), `port_circuit_links` (2 port -> `tx`/`rx`, 1 port ->
+      `single`, đúng quy ước `PortTable.tsx` đã dùng), cập nhật
+      `ports.status='in_use'`. Rà soát lại SỐNG (không dùng lại ảnh chụp audit
+      cũ) ngay trước khi ghi từng dòng, để tự phát hiện + bỏ qua đúng các cặp
+      "luồng mirror cùng trỏ 1 port" (xử lý xong 1 luồng thì luồng kia tự
+      nhiên "hết trống", không tạo trùng) thay vì tạo lặp.
+    - **Bug tự phát hiện lúc chạy `--commit` thật (2026-07-28, đã sửa ngay)**:
+      bước rà soát sống dùng sai kiểu dữ liệu — `port_circuit_links` có ràng
+      buộc `unique(port_id)` nên PostgREST trả về quan hệ này dạng **1 OBJECT
+      đơn (hoặc null), KHÔNG PHẢI mảng**; code ban đầu coi nhầm là mảng rồi
+      lọc `.length > 0` (`undefined > 0` luôn `false`) nên bước rà soát sống
+      KHÔNG BAO GIỜ phát hiện được xung đột thật. Hậu quả thực tế: 4/64 lượt cố
+      ghi trùng port bị chính **ràng buộc `unique` thật của Postgres** chặn lại
+      ở bước insert (đúng vai trò lưới an toàn cuối cùng) — code đã tự động
+      xóa lại `circuits` vừa tạo khi insert `port_circuit_links` lỗi, xác nhận
+      lại bằng truy vấn trực tiếp: **0 dòng `circuits` mồ côi** (không link nào)
+      bị bỏ sót. Đã sửa lại đúng kiểu (dùng chung cách `firstOf()` xử lý cả 2
+      dạng như `lib/trunkPorts.ts`), chạy lại xác nhận bước rà soát sống hoạt
+      động đúng (hiện "[BỎ QUA]" thay vì cố ghi rồi lỗi).
+    - **Kết quả cuối (2026-07-28)**: từ 64 trường hợp — **60 luồng trung kế
+      mới tạo thành công**; **3 trường hợp là cặp mirror trùng port** (2 luồng
+      thiết bị khác nhau cùng mô tả đúng 1 cặp port trung kế — vd
+      "10GE AĐN1.PE#2 (11/3/0)..." có cả 2 dòng own/next đều trỏ "ODF2/10
+      (21,22)") nên chỉ cần 1 luồng trung kế thật, dòng còn lại tự nhận diện
+      "đã đủ" và không tạo trùng; **1 trường hợp xung đột THẬT cần rà tay**:
+      "100GE AĐN1.BNG#1 (7/0/0) - Đài Phát.VNPT ĐNG" ghi dùng "ODF 6/5
+      (61,68)" nhưng port 61 tại đó đã có SẴN 1 luồng trung kế khác từ trước
+      ("ADN1.PE2(5/3/1) - SW.MEDIA(40LL)") — có thể 1 trong 2 ghi sai port,
+      chưa rõ bên nào đúng, KHÔNG tự đoán, để người dùng đối chiếu hồ sơ giấy
+      rồi sửa tay. Chạy lại `scripts/audit-device-trunk-sync.ts` xác nhận số
+      "chưa đồng bộ" giảm đúng từ 64 xuống còn 1 (trường hợp trên).
+    - **Kiểm chứng**: `tsc --noEmit` sạch; curl lại `/odf-trunk`, `/odf-device`,
+      `/odf-device/sua-luong`, `/dashboard`, `/search` đều 200 sau khi ghi dữ
+      liệu.
+
+16. **Bug: xóa luồng ở Hồ sơ ODF Trung kế không xóa "Chuyển tiếp" của port**
+    (người dùng phát hiện 2026-07-28, `PortTable.tsx`) — `deleteGroup()` (nút
+    "Xóa" 1 luồng) chỉ xóa `port_circuit_links` + `circuits` + đưa
+    `ports.status` về `unused`, KHÔNG đụng gì tới `transit_links` (bảng RIÊNG,
+    khóa theo `source_port_id` — xem mục 3.6). Vì vậy sau khi xóa, port về
+    trạng thái trống nhưng cột "Chuyển tiếp" vẫn hiện text cũ — sai vì port đó
+    không còn luồng nào để "chuyển tiếp" đi đâu nữa. `saveEdit()` đã làm ĐÚNG
+    việc này ở nhánh tách 1 port ra khỏi cặp (`removedPortIds`, có từ trước) —
+    chỉ riêng `deleteGroup()` (xóa hẳn cả luồng) bị sót.
+    - **Đã tìm thêm 1 chỗ lỗi giống hệt khi rà theo cùng logic**: nhánh
+      "Chuyển tuyến" (`confirmMove()`) — khi chọn "Xóa dữ liệu ở port nguồn"
+      sau khi chuyển luồng sang port mới, cũng chỉ xóa `port_circuit_links` +
+      đưa port nguồn về `unused`, không xóa `transit_links` của port nguồn.
+      Cùng nguyên nhân, cùng cách sửa — sửa cả 2 chỗ trong 1 lượt cho nhất
+      quán thay vì chỉ sửa đúng chỗ người dùng báo.
+    - **Cách sửa**: cả 2 nơi đều lấy `transitLinkId` có sẵn trên `PortView`
+      (đã tải kèm dữ liệu port từ đầu, không cần query thêm) của các port
+      SẮP được giải phóng, xóa các dòng `transit_links` đó cùng lúc sau khi
+      xóa `port_circuit_links`/cập nhật `status`. `deleteGroup()` còn cập nhật
+      lại câu hỏi xác nhận, thêm rõ "...và dữ liệu Chuyển tiếp của các port
+      đó" khi có transit_links sẽ bị xóa kèm, để người dùng biết trước hậu quả
+      đầy đủ trước khi bấm Xóa.
+    - **Dữ liệu cũ đã bị ảnh hưởng do bug này (trước khi sửa) — đã xóa**: rà
+      soát ban đầu thấy **2 dòng `transit_links`** đang nằm trên port
+      `status=unused` (rack `ODF6/5` port 61 và 72) trong tổng 503 dòng
+      `transit_links`. Lúc đầu định KHÔNG tự xóa (lý do ban đầu: 1 port trống
+      vẫn được phép có "Chuyển tiếp" nhập trực tiếp có chủ đích — nhánh
+      `isNew && !hasCircuitData` trong `saveEdit()` — không có cách nào phân
+      biệt chắc chắn "rác do bug" và "nhập tay có chủ đích" chỉ từ trạng thái
+      hiện tại). **Người dùng chỉnh lại đúng**: `ODF6/5` là rack `odf_type=
+      'welded'` (hàn nối) — loại này KHÔNG có chuyện thiết bị đấu cáp trực
+      tiếp ra rồi khai "Chuyển tiếp" trước khi tạo luồng (đó là tình huống chỉ
+      hợp lý với rack `distribution`); 1 port trống trên rack hàn nối không có
+      lý do chính đáng nào để mang "Chuyển tiếp", nên 2 dòng này CHẮC CHẮN là
+      rác từ bug trên → đã xóa thẳng. **Bài học**: khi cân nhắc dữ liệu "có
+      thể là rác" nhưng không chắc, phải xét thêm ràng buộc VẬT LÝ/nghiệp vụ
+      cụ thể (ở đây là loại rack) trước khi kết luận "không đủ căn cứ để xóa"
+      — người dùng nắm rõ hiện trạng thiết bị thật hơn suy luận trừu tượng từ
+      dữ liệu. Không mở rộng thành rule tự động "rack hàn nối thì chặn nhập
+      Chuyển tiếp khi port trống" trong đợt này (thay đổi hành vi UI, chưa được
+      yêu cầu) — chỉ xóa đúng 2 dòng rác cụ thể đã xác nhận.
+    - **Kiểm chứng**: `tsc --noEmit` sạch.
