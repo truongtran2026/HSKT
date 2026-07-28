@@ -5,10 +5,12 @@ import { fetchCircuitOptions } from "@/lib/circuitOptions";
 import { fetchDevices } from "@/lib/devices";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
+import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import DeviceRackPortView from "@/components/odf-device/DeviceRackPortView";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
+import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ, đặc biệt quan trọng ở đây vì trang này còn hiển thị dữ liệu vừa
@@ -129,6 +131,11 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   const backHref = rack.domain === "device" ? "/odf-device" : "/odf-trunk";
   const backLabel = rack.domain === "device" ? "← Hồ sơ ODF Thiết bị" : "← Danh sách rack";
   const devicePortRefs = rack.domain === "device" ? await fetchDeviceRackPortRefs(rack.code, trunkPorts) : null;
+  // Lọc xuống đúng rack đang xem (yêu cầu người dùng 2026-07-28: khung cảnh
+  // báo "Chuyển tiếp chưa chuẩn form" cũng phải hiện ở trang chi tiết, không
+  // chỉ ở danh sách rack) — rack domain='device' luôn ra mảng rỗng (transit_
+  // links chỉ ghi cho rack trung kế), TransitFormatWarning tự ẩn khi rỗng.
+  const nonConformingTransit = (await fetchNonConformingTransitLinks(trunkPorts)).filter((item) => item.rackId === rack.id);
 
   return (
     <div>
@@ -156,6 +163,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       />
 
       <div className="mt-6">
+        <TransitFormatWarning items={nonConformingTransit} />
         {devicePortRefs ? (
           <DeviceRackPortView portCount={rack.port_count} portRefs={devicePortRefs} />
         ) : (

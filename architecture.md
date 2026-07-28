@@ -755,3 +755,124 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       Chuyển tiếp khi port trống" trong đợt này (thay đổi hành vi UI, chưa được
       yêu cầu) — chỉ xóa đúng 2 dòng rác cụ thể đã xác nhận.
     - **Kiểm chứng**: `tsc --noEmit` sạch.
+
+17. **Danh sách "Chuyển tiếp chưa đúng chuẩn form" ở `/odf-trunk`** (yêu cầu
+    người dùng 2026-07-28: "cột chuyển tiếp vẫn chưa được chuẩn form ODF x/y
+    (a,b) - ADN1.thiết bị (port)... thông báo... như kiểu trùng port ấy").
+    - **`lib/transitLinks.ts`** (mới) — `fetchNonConformingTransitLinks()`
+      quét TOÀN BỘ `transit_links` (chỉ tính port thuộc rack `domain='trunk'`
+      — ODF/DDF nội bộ không dùng bảng này), dùng lại `splitOdfDeviceStructure()`
+      thật (đã có, `lib/parsers/transit-text.ts`) để lọc ra dòng KHÔNG khớp
+      "cấu trúc 2" đã ban hành. **CHỈ liệt kê, KHÔNG tự sửa** — cùng triết lý
+      `positionConflicts` ở `DeviceCircuitList.tsx`: rất nhiều cách "không khớp
+      cấu trúc 2" vẫn có thể là dữ liệu ĐÚNG (đi thẳng ra trạm khác không qua
+      thiết bị ADN1 nào, hoặc mới chỉ có tọa độ ODF chưa rõ thiết bị đích) —
+      chỉ người dùng đủ bối cảnh thực tế để phân biệt.
+    - **Bug PostgREST gặp khi viết hàm này**: `transit_links` có 2 FK khác
+      nhau cùng trỏ tới `ports` (`source_port_id` và `target_port_id`) — embed
+      trơn `ports(...)` bị lỗi `PGRST201` ("more than one relationship was
+      found") vì PostgREST không tự biết dùng FK nào. Phải chỉ đích danh tên
+      ràng buộc: `ports:ports!transit_links_source_port_id_fkey(...)`.
+    - **`components/odf-trunk/TransitFormatWarning.tsx`** (mới) — khung cảnh
+      báo màu vàng (khác màu đỏ của `positionConflicts` — đây là "cần rà lại",
+      không hẳn là lỗi/xung đột chắc chắn), có tìm + phân trang, đặt ở
+      `/odf-trunk` (trang danh sách rack — nơi tổng hợp toàn trạm, vì ODF
+      trung kế không có 1 trang "toàn bộ luồng" như bên thiết bị). Mỗi dòng
+      là link `/odf-trunk/<rackId>#port-<portId>`.
+    - **`PortTable.tsx`** — thêm cơ chế nhảy tới + tô sáng tạm 1 port qua hash
+      `#port-<id>` (id gắn trên `<tr>` mỗi port, `useEffect` đọc
+      `window.location.hash` lúc mount + khi đổi hash) — cùng cơ chế
+      `rowAnchor`/`highlightId` đã có ở `DeviceCircuitList.tsx`, áp dụng cho
+      ĐÚNG 1 port thay vì cả nhóm/luồng.
+    - **Kết quả rà soát (2026-07-28)**: 223/503 dòng `transit_links` chưa khớp
+      "cấu trúc 2" — số liệu SỐNG (đổi so với mốc "297/503 khớp" ghi ở
+      `lib/parsers/transit-text.ts` từ 2026-07-27, do dữ liệu đã thay đổi qua
+      các lần sửa/thêm luồng từ đó tới nay), không phải sai số/lỗi đếm.
+    - **Sự cố ngoài ý muốn khi kiểm thử**: `.next` cache hỏng lần nữa (cùng
+      loại lỗi `EBUSY: resource busy or locked` đã gặp trước đó trong phiên
+      này, do OneDrive đồng bộ đè lên thư mục cache trong lúc dev server đang
+      ghi) — xử lý lại đúng quy trình đã lập: dừng tiến trình node, xóa
+      `.next`, khởi động lại.
+    - **Kiểm chứng**: `tsc --noEmit` sạch; kiểm tra trực tiếp qua hàm thật
+      (không phải bản chép) xác nhận đúng 223 dòng; curl toàn bộ route chính
+      (`/`, `/odf-trunk`, `/odf-trunk/<rackId>`, `/odf-device`,
+      `/odf-device/sua-luong`, `/odf-device/vi-tri-thiet-bi`, `/dashboard`,
+      `/search`, `/devices`, `/import-export`, `/settings`) đều 200; đếm
+      `id="port-..."` trên 1 trang rack cụ thể khớp đúng số port thật của
+      rack đó (96), xác nhận mọi dòng port đều có anchor.
+
+18. **Danh sách cột liên kết giữa các bảng (tổng hợp cho người dùng rà lại,
+    2026-07-28)** — xem bảng đầy đủ trong hội thoại; tóm tắt: FK THẬT (Postgres
+    ép buộc, không lệch được) gồm `racks.station_id/parent_rack_id/device_id`,
+    `ports.rack_id`, `port_circuit_links.port_id/circuit_id`,
+    `circuits.counterpart_port_id/response_plan_port_id/device_id`,
+    `transit_links.source_port_id/target_port_id/target_device_id`,
+    `devices.station_id`. Liên kết TEXT (khớp lúc chạy qua chuẩn hóa tên/vị
+    trí, KHÔNG có ràng buộc DB, dễ lệch âm thầm — đây chính là nguồn gốc của
+    cả mục 15/16/17 phía trên) gồm `device_position_map.device_name` ↔
+    `devices.name`, `circuits.device_position_own/next` ↔ `racks.code`+
+    `ports.port_number` (qua `matchTrunkPosition()`), `transit_links.raw_text`
+    (khi `target_type='text_only'`, hiện 100% dòng), `circuits.counterpart_text`/
+    `response_plan_text`/`execution_station_text` (tự do, không đối chiếu gì).
+
+19. **Theo dõi mục 17 — người dùng tự test UI thật, phát hiện thêm 3 việc
+    (2026-07-28, cùng ngày)**:
+    - **(a) Form "Sửa luồng" lúc 1 ô lúc 2 ô cho "Chuyển tiếp" — xác nhận
+      KHÔNG phải bug**: `EditRow` trong `PortTable.tsx` chạy
+      `splitOdfDeviceStructure()` một lần lúc mở form — khớp "cấu trúc 2" thì
+      tách hiện 2 ô riêng (Vị trí ODF / Thiết bị+port), không khớp thì rơi về
+      1 ô thô. Test lại bằng dữ liệu thật rack ODF1/1: port 17 (raw_text
+      `"ODF 2/11 (15,16) - 48FO#2 ADN1 - VNPT DATA"`) không khớp vì chuỗi
+      không kết thúc bằng "(port)" — đây là dạng "đi tiếp ra tuyến cáp/trạm
+      khác, không qua thiết bị ADN1" hợp lệ, đúng 1 trong các dòng đã bị mục
+      17 phát hiện, không phải lỗi riêng.
+    - **(b) Mở rộng `fetchNonConformingTransitLinks()` bắt thêm lỗi định dạng
+      BÊN TRONG phần ODF** — lỗ hổng người dùng phát hiện qua dữ liệu thật:
+      port 23 rack ODF1/1 có `raw_text = "ODF2/10/33,34 - VNPT.DATA.SW.ZTE01
+      (1/1)"` — khớp cấu trúc NGOÀI (có " - " và "(port)" cuối) nên KHÔNG bị
+      mục 17 phát hiện, dù phần `"ODF2/10/33,34"` rõ ràng sai chuẩn "ODF x/y
+      (a,b)" (thiếu khoảng trắng, dùng thêm dấu "/" thay vì ngoặc). Nguyên
+      nhân: `splitOdfDeviceStructure()` chỉ validate cấu trúc 3 phần ngoài,
+      không đệ quy kiểm tra định dạng phần ODF tách được. Đã sửa
+      `lib/transitLinks.ts`: sau khi tách được `odfPart`, chạy tiếp qua
+      `matchTrunkPosition()` + `formatCanonicalOdfPosition()` (đúng cơ chế
+      `PortTable.tsx` đã dùng để tự chuẩn hóa lúc rời ô "Vị trí ODF") — nếu
+      khớp CHẮC CHẮN 1 rack/port trung kế thật và bản chuẩn hóa khác chữ đang
+      lưu thì cũng liệt vào danh sách. Không báo khi không khớp được rack nào
+      (tránh đoán/báo nhầm). Hàm đổi chữ ký, nhận thêm `trunkPorts:
+      TrunkPortRow[]` (gọi nơi dùng phải tự fetch `fetchAllOdfPorts()` trước).
+      **Kết quả**: số dòng "chưa chuẩn form" tăng từ 223 lên **452/503** — phần
+      lớn dữ liệu lịch sử hóa ra dùng kiểu cũ "ODF x/y/a,b" (nối thêm dấu "/"
+      thay vì ngoặc, không đệm số 0) thay vì chuẩn "ODF x/y (a,b)" đã ban hành
+      2026-07-27 — số tăng mạnh vì áp dụng đúng chuẩn đó nghiêm ngặt hơn lên
+      dữ liệu vốn phần lớn nhập TRƯỚC khi chuẩn này tồn tại, không phải lỗi
+      đếm.
+    - **(c) Khung cảnh báo hiện thêm ở trang chi tiết rack**: `TransitFormat
+      Warning` giờ cũng render ở `/odf-trunk/[rackId]/page.tsx`, lọc xuống
+      đúng rack đang xem (`.filter(item => item.rackId === rack.id)`) — tái
+      dùng nguyên `fetchNonConformingTransitLinks()` (không tạo query lọc
+      riêng, dữ liệu chỉ ~503 dòng nên lọc ở tầng ứng dụng là đủ). Rack
+      `domain='device'` tự động ra mảng rỗng (transit_links chỉ ghi cho rack
+      trung kế) — component tự ẩn khi rỗng, không cần nhánh điều kiện riêng.
+    - **(d) Sticky header cho `PortTable.tsx`** — trước đó bảng port có 2 hàng
+      `<thead>` riêng (tiêu đề+sắp xếp, rồi hàng lọc) — ĐÚNG cấu trúc từng gây
+      lỗi chữ đè nhau khi cuộn ở `DeviceCircuitList.tsx` (hàng lọc phải tự
+      tính "top" theo chiều cao hàng trên, dễ lệch). Đã gộp lại thành 1 hàng
+      duy nhất (component `Th` cục bộ mới trong `PortTable.tsx`, không sửa
+      `SortableTh`/`ResizableTh` dùng chung để tránh ảnh hưởng `RackListTable.
+      tsx`/nơi khác — theo đúng tinh thần cục bộ mà `DeviceCircuitList.tsx` đã
+      chọn, `ColumnResizeHandle` vốn đã ghi chú thiết kế sẵn cho ca này), mỗi
+      `<th>` tự `sticky top-0 z-10 bg-primary-50`; bọc bảng trong
+      `max-h-[70vh] overflow-auto` (bắt buộc — chỉ `overflow-x-auto` thì
+      khung không tự cuộn, sticky vô tác dụng, cùng lý do đã ghi ở
+      `DeviceCircuitList.tsx`).
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test bằng Playwright thật (cài tạm
+      `npm install --no-save playwright`, gỡ lại sau khi xong — không phải
+      dependency thật của dự án): xác nhận điều hướng list→chi tiết rack hoạt
+      động, khung cảnh báo chi tiết rack lọc đúng (19 dòng riêng ODF1/1, không
+      phải 452 toàn trạm), cuộn khung port 800px thì `<th>` đầu bảng cách mép
+      trên khung cuộn đúng 1px (sticky hoạt động đúng), chụp ảnh xác nhận
+      không có hiện tượng chữ đè. Dừng lại 2 tiến trình `next dev` (1 cái cũ
+      từ trước đó trong phiên đã "chết" — trả 404 dù process còn sống, khả
+      năng do đúng lỗi cache `.next`/OneDrive đã biết) sau khi test xong, để
+      tránh 2 dev server cùng ghi `.next` một lúc (rủi ro tái diễn lỗi cache).

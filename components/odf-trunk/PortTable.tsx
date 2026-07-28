@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
-import { useSort } from "@/lib/useSort";
+import { useSort, type SortDir } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
@@ -13,8 +13,7 @@ import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } fro
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import type { CircuitOptions } from "@/lib/circuitOptions";
 import type { DeviceRow } from "@/lib/devices";
-import SortableTh from "@/components/ui/SortableTh";
-import ResizableTh from "@/components/ui/ResizableTh";
+import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import FilterInput from "@/components/ui/FilterInput";
 
 export interface PortView {
@@ -218,6 +217,56 @@ function resolveMoveTargetPort(
 type ResizableCol = "name" | "transit" | "responsePlan";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, transit: 200, responsePlan: 220 };
 
+// Tiêu đề cột GỘP nhãn+sắp xếp+lọc vào ĐÚNG 1 <th> sticky — yêu cầu người
+// dùng 2026-07-28: rack dài tới cả trăm port, cuộn xuống phải giữ được tiêu
+// đề cột. Bắt buộc gộp 1 hàng duy nhất (không tách hàng lọc riêng bên dưới
+// như trước): 2 hàng sticky riêng từng gây lỗi chữ đè nhau khi cuộn ở
+// DeviceCircuitList.tsx (hàng dưới phải tự tính "top" theo chiều cao hàng
+// trên, dễ lệch nếu nội dung xuống dòng) — đã fix ở đó bằng đúng cách gộp 1
+// hàng này, áp dụng lại y hệt ở đây thay vì SortableTh/ResizableTh cũ.
+function Th<K extends string>({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  width,
+  onResize,
+  filterValue,
+  onFilterChange,
+}: {
+  label: string;
+  sortKey?: K;
+  activeKey?: K;
+  dir?: SortDir;
+  onSort?: (key: K) => void;
+  width?: number;
+  onResize?: (width: number) => void;
+  filterValue: string;
+  onFilterChange: (v: string) => void;
+}) {
+  const sortable = sortKey !== undefined && !!onSort;
+  const active = sortable && activeKey === sortKey;
+  return (
+    <th className="sticky top-0 z-10 relative bg-primary-50 px-3 py-2 text-left align-top">
+      <div
+        className={`mb-1 flex items-center gap-1 font-semibold ${sortable ? "cursor-pointer select-none hover:text-primary-900" : ""}`}
+        onClick={sortable ? () => onSort!(sortKey!) : undefined}
+        title={sortable ? "Bấm để sắp xếp" : undefined}
+      >
+        {label}
+        {sortable && (
+          <span className={`text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
+            {active ? (dir === "asc" ? "▲" : "▼") : "⇅"}
+          </span>
+        )}
+      </div>
+      <FilterInput value={filterValue} onChange={onFilterChange} />
+      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
+    </th>
+  );
+}
+
 export default function PortTable({
   rackId,
   initialPorts,
@@ -240,6 +289,26 @@ export default function PortTable({
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Nhảy tới + tô sáng tạm 1 port cụ thể qua hash "#port-<id>" (yêu cầu người
+  // dùng 2026-07-28: link từ khung cảnh báo "Chuyển tiếp chưa đúng chuẩn
+  // form" ở trang danh sách rack) — cùng cơ chế rowAnchor/highlightId đã có ở
+  // DeviceCircuitList.tsx, áp dụng cho ĐÚNG 1 port (không phải cả nhóm/luồng).
+  const [highlightPortId, setHighlightPortId] = useState<string | null>(null);
+  useEffect(() => {
+    function applyHash() {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#port-")) return;
+      const id = hash.slice("#port-".length);
+      setHighlightPortId(id);
+      requestAnimationFrame(() => {
+        document.getElementById(`port-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+      setTimeout(() => setHighlightPortId(null), 5000);
+    }
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("odf-trunk-col-widths", DEFAULT_COL_WIDTHS);
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
@@ -829,7 +898,11 @@ export default function PortTable({
           </button>
         </div>
       )}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      {/* max-h + overflow-auto (không chỉ overflow-x-auto) là bắt buộc để
+          sticky hoạt động — cùng lý do đã ghi ở DeviceCircuitList.tsx: nếu
+          không giới hạn chiều cao, khung này không bao giờ tự cuộn (trang
+          cuộn thay), khiến sticky vô tác dụng. */}
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-sm table-fixed">
           <colgroup>
             <col style={{ width: 56 }} />
@@ -843,68 +916,44 @@ export default function PortTable({
             <col style={{ width: 170 }} />
             <col style={{ width: 200 }} />
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <SortableTh label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <SortableTh label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <ResizableTh
+              <Th label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
+              <Th label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
+              <Th
                 label="Tên luồng"
+                sortKey="name"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={toggleSort}
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
+                filterValue={filters.name}
+                onFilterChange={(v) => setFilter("name", v)}
               />
-              <SortableTh label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <ResizableTh
+              <Th label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
+              <Th
                 label="Chuyển tiếp"
                 width={colWidths.transit}
                 onResize={(w) => resizeCol("transit", w)}
+                filterValue={filters.transit}
+                onFilterChange={(v) => setFilter("transit", v)}
               />
-              <SortableTh label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <ResizableTh
+              <Th label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
+              <Th
                 label="PA ứng cứu"
+                sortKey="responsePlan"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={toggleSort}
                 width={colWidths.responsePlan}
                 onResize={(w) => resizeCol("responsePlan", w)}
-                sortKey="responsePlan"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
+                filterValue={filters.responsePlan}
+                onFilterChange={(v) => setFilter("responsePlan", v)}
               />
-              <SortableTh label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <SortableTh label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} className="px-3 py-2" />
-              <th className="px-3 py-2 text-left font-semibold">Thao tác</th>
-            </tr>
-            <tr className="bg-white">
-              <th className="px-2 py-1">
-                <FilterInput value={filters.port} onChange={(v) => setFilter("port", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.fiber} onChange={(v) => setFilter("fiber", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.name} onChange={(v) => setFilter("name", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.interface} onChange={(v) => setFilter("interface", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.transit} onChange={(v) => setFilter("transit", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.counterpart} onChange={(v) => setFilter("counterpart", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.responsePlan} onChange={(v) => setFilter("responsePlan", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.station} onChange={(v) => setFilter("station", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.notes} onChange={(v) => setFilter("notes", v)} />
-              </th>
-              <th className="px-2 py-1" />
+              <Th label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
+              <Th label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -987,7 +1036,8 @@ export default function PortTable({
               return group.ports.map((port, idx) => (
                 <tr
                   key={port.id}
-                  className={`border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""}`}
+                  id={`port-${port.id}`}
+                  className={`border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
                 >
                   <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
                   <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>
