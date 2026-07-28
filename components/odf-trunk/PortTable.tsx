@@ -9,9 +9,12 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
+import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
+import { useColumnWidths } from "@/lib/useColumnWidths";
 import type { CircuitOptions } from "@/lib/circuitOptions";
 import type { DeviceRow } from "@/lib/devices";
 import SortableTh from "@/components/ui/SortableTh";
+import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 
 export interface PortView {
@@ -214,17 +217,6 @@ function resolveMoveTargetPort(
 // lần vào trang (áp dụng chung cho mọi rack, không riêng từng rack).
 type ResizableCol = "name" | "transit" | "responsePlan";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, transit: 200, responsePlan: 220 };
-const COL_WIDTHS_STORAGE_KEY = "odf-trunk-col-widths";
-
-function loadColWidths(): Record<ResizableCol, number> {
-  if (typeof window === "undefined") return DEFAULT_COL_WIDTHS;
-  try {
-    const saved = window.localStorage.getItem(COL_WIDTHS_STORAGE_KEY);
-    return saved ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(saved) } : DEFAULT_COL_WIDTHS;
-  } catch {
-    return DEFAULT_COL_WIDTHS;
-  }
-}
 
 export default function PortTable({
   rackId,
@@ -232,12 +224,14 @@ export default function PortTable({
   options,
   devices,
   stationId,
+  trunkPorts,
 }: {
   rackId: string;
   initialPorts: PortView[];
   options: CircuitOptions;
   devices: DeviceRow[];
   stationId: string;
+  trunkPorts: TrunkPortRow[];
 }) {
   const router = useRouter();
   const [ports] = useState(initialPorts);
@@ -246,7 +240,7 @@ export default function PortTable({
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [colWidths, setColWidths] = useState<Record<ResizableCol, number>>(loadColWidths);
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("odf-trunk-col-widths", DEFAULT_COL_WIDTHS);
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     port: "",
@@ -262,18 +256,6 @@ export default function PortTable({
 
   function setFilter(key: FilterKey, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function resizeCol(key: ResizableCol, width: number) {
-    setColWidths((prev) => {
-      const next = { ...prev, [key]: Math.max(120, Math.min(600, width)) };
-      try {
-        window.localStorage.setItem(COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* bỏ qua nếu localStorage không dùng được */
-      }
-      return next;
-    });
   }
 
   const groups = buildGroups(ports);
@@ -892,6 +874,7 @@ export default function PortTable({
                     key={key}
                     edit={edit!}
                     options={options}
+                    trunkPorts={trunkPorts}
                     onChange={setEdit}
                     onToggleMerge={toggleMerge}
                     onSecondPortNumberChange={changeSecondPortNumber}
@@ -1041,66 +1024,10 @@ export default function PortTable({
   );
 }
 
-function ResizableTh({
-  label,
-  width,
-  onResize,
-  sortKey,
-  activeSortKey,
-  sortDir,
-  onSort,
-}: {
-  label: string;
-  width: number;
-  onResize: (width: number) => void;
-  sortKey?: SortKey;
-  activeSortKey?: SortKey;
-  sortDir?: "asc" | "desc";
-  onSort?: (key: SortKey) => void;
-}) {
-  function handleMouseDown(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startWidth = width;
-    function onMouseMove(ev: MouseEvent) {
-      onResize(startWidth + (ev.clientX - startX));
-    }
-    function onMouseUp() {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    }
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-  }
-
-  const sortable = sortKey && onSort;
-  const active = sortable && activeSortKey === sortKey;
-
-  return (
-    <th
-      className={`relative px-3 py-2 text-left font-semibold select-none ${sortable ? "cursor-pointer hover:bg-primary-100" : ""}`}
-      onClick={sortable ? () => onSort!(sortKey!) : undefined}
-      title={sortable ? "Bấm để sắp xếp" : undefined}
-    >
-      {label}
-      {sortable && (
-        <span className={`ml-1 text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
-          {active ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
-        </span>
-      )}
-      <span
-        onMouseDown={handleMouseDown}
-        title="Kéo để đổi độ rộng cột"
-        className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary-300 active:bg-primary-400"
-      />
-    </th>
-  );
-}
-
 function EditRow({
   edit,
   options,
+  trunkPorts,
   onChange,
   onToggleMerge,
   onSecondPortNumberChange,
@@ -1111,6 +1038,7 @@ function EditRow({
 }: {
   edit: EditState;
   options: CircuitOptions;
+  trunkPorts: TrunkPortRow[];
   onChange: (e: EditState) => void;
   onToggleMerge: (checked: boolean) => void;
   onSecondPortNumberChange: (text: string) => void;
@@ -1174,6 +1102,18 @@ function EditRow({
                   onChange={(e) => {
                     setTransitOdfPart(e.target.value);
                     onChange({ ...edit, transitText: `${e.target.value} - ${transitDevicePart}` });
+                  }}
+                  onBlur={() => {
+                    // Chuẩn hóa lại "ODF x/y (a,b)" (yêu cầu người dùng
+                    // 2026-07-27) — cùng cơ chế đã dùng cho ô "Vị trí ODF
+                    // (tiếp theo)" bên luồng thiết bị, xem
+                    // formatCanonicalOdfPosition() trong lib/trunkPorts.ts.
+                    const trunkMatch = matchTrunkPosition(transitOdfPart, trunkPorts);
+                    const canonical = formatCanonicalOdfPosition(trunkMatch);
+                    if (canonical && canonical !== transitOdfPart) {
+                      setTransitOdfPart(canonical);
+                      onChange({ ...edit, transitText: `${canonical} - ${transitDevicePart}` });
+                    }
                   }}
                 />
                 <input

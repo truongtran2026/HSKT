@@ -20,10 +20,19 @@ import {
   splitOdfDeviceStructure,
   combinePositionNext,
 } from "@/lib/parsers/transit-text";
-import { matchTrunkPosition, findPortsByFiberNumbers, parseNumberList, type TrunkPortRow, type TrunkPositionMatch } from "@/lib/trunkPorts";
+import {
+  matchTrunkPosition,
+  findPortsByFiberNumbers,
+  parseNumberList,
+  formatCanonicalOdfPosition,
+  type TrunkPortRow,
+  type TrunkPositionMatch,
+} from "@/lib/trunkPorts";
+import { useColumnWidths } from "@/lib/useColumnWidths";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -39,6 +48,10 @@ import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 // Ép cứng 130px x8 cột = hơn 1000px sàn bất kể nội dung cột đó ngắn hay dài
 // (khác PortTable.tsx không ép gì, tự co theo nội dung thật) — bỏ đi để
 // bảng tự co khớp dữ liệu thật, chỉ tới ngưỡng đó mới cần cuộn ngang.
+// width/onResize để trống (undefined) thì cột không kéo dãn được, giữ đúng
+// hành vi cũ (yêu cầu người dùng 2026-07-27: "các bảng dữ liệu đều" phải kéo
+// dãn được — thêm tùy chọn ở ĐÂY thay vì dùng ResizableTh dùng chung vì header
+// này gộp chung sắp xếp + lọc trong 1 <th>, cấu trúc khác ResizableTh).
 function SortFilterTh<K extends string>({
   label,
   sortKey,
@@ -47,6 +60,8 @@ function SortFilterTh<K extends string>({
   onSort,
   filterValue,
   onFilterChange,
+  width,
+  onResize,
 }: {
   label: string;
   sortKey: K;
@@ -55,6 +70,8 @@ function SortFilterTh<K extends string>({
   onSort: (key: K) => void;
   filterValue: string;
   onFilterChange: (v: string) => void;
+  width?: number;
+  onResize?: (width: number) => void;
 }) {
   const active = activeKey === sortKey;
   return (
@@ -70,17 +87,31 @@ function SortFilterTh<K extends string>({
         </span>
       </div>
       <FilterInput value={filterValue} onChange={onFilterChange} />
+      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
     </th>
   );
 }
 
 // Cột có lọc nhưng KHÔNG sắp xếp được (vd Ghi chú — text dài, sắp xếp không
 // có nhiều ý nghĩa).
-function FilterOnlyTh({ label, filterValue, onFilterChange }: { label: string; filterValue: string; onFilterChange: (v: string) => void }) {
+function FilterOnlyTh({
+  label,
+  filterValue,
+  onFilterChange,
+  width,
+  onResize,
+}: {
+  label: string;
+  filterValue: string;
+  onFilterChange: (v: string) => void;
+  width?: number;
+  onResize?: (width: number) => void;
+}) {
   return (
     <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top">
       <div className="mb-1 font-semibold">{label}</div>
       <FilterInput value={filterValue} onChange={onFilterChange} />
+      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
     </th>
   );
 }
@@ -224,6 +255,19 @@ type SharedCircuitFields = Pick<
 // tầm nhìn nếu người dùng đang cuộn sâu trong bảng khi bấm Sửa.
 const EDIT_BOX_ID = "dc-edit-box";
 
+// Độ rộng cột co dãn được (yêu cầu người dùng 2026-07-27: "các bảng dữ liệu
+// đều" phải kéo to/nhỏ cột được) — chỉ áp cho cột chứa text dài, các cột
+// ngắn/giá trị cố định (Trib, Giao tiếp, Thao tác) giữ nguyên không co dãn.
+type ResizableCol = "name" | "device" | "positionOwn" | "positionNext" | "counterpart" | "notes";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
+  name: 260,
+  device: 180,
+  positionOwn: 170,
+  positionNext: 220,
+  counterpart: 200,
+  notes: 200,
+};
+
 export default function DeviceCircuitList({
   circuits,
   devices,
@@ -239,6 +283,10 @@ export default function DeviceCircuitList({
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   const [deviceNames, setDeviceNames] = useState<string[] | null>(null); // null = tất cả thiết bị (trong phạm vi lĩnh vực)
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>(
+    "odf-device-circuits-col-widths",
+    DEFAULT_COL_WIDTHS
+  );
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
     trib: "",
@@ -400,9 +448,10 @@ export default function DeviceCircuitList({
   // Ô "Thiết bị (tiếp theo)" (Ô2 của Vị trí ODF tiếp theo, thêm 2026-07-27) —
   // tên thiết bị LOCAL (ADN1), KHÔNG có tiền tố trạm như ô Đối phương, nên
   // không cần parseTransitText ở đây — chỉ kiểm tra thẳng tên đã có trong
-  // devices chưa. Chỉ được gọi khi KHÔNG khớp rack trung kế nào (xem
-  // saveEdit/submitCreate gọi qua validatePositionNext().trunkMatch.matched)
-  // — chế độ cáp quang trung kế không bao giờ gọi tới hàm này.
+  // devices chưa. Chỉ được gọi khi KHÔNG ở chế độ Cáp quang (xem
+  // saveEdit/submitCreate gọi qua validatePositionNext().isCableMode) — tức
+  // là gọi cả khi Ô1 không khớp gì LẪN khi khớp ODF/DDF nội bộ (domain=
+  // 'device'), chỉ trừ khi khớp đúng rack trung kế thật.
   async function maybeCreateNextDevice(deviceName: string) {
     const trimmed = deviceName.trim();
     if (!trimmed) return;
@@ -435,14 +484,26 @@ export default function DeviceCircuitList({
   //     đã khớp ("báo là ko đúng để bắt nhập liệu cho đúng").
   //   - warning: CẢNH BÁO không chặn — port đã khớp NHƯNG đang có luồng khác
   //     dùng rồi (vẫn cho lưu, tự rà lại luồng cũ sau).
-  function validatePositionNext(odfText: string, tribText: string): { trunkMatch: TrunkPositionMatch; error: string | null; warning: string | null } {
+  function validatePositionNext(
+    odfText: string,
+    tribText: string
+  ): { trunkMatch: TrunkPositionMatch; isCableMode: boolean; error: string | null; warning: string | null } {
     const trunkMatch = matchTrunkPosition(odfText, trunkPorts);
-    if (!trunkMatch.matched) return { trunkMatch, error: null, warning: null };
+    // "Chế độ Cáp quang" CHỈ khi khớp rack TRUNG KẾ thật (đấu thẳng ra tuyến
+    // cáp) — khớp rack ODF/DDF nội bộ (domain='device', thêm 2026-07-27, xem
+    // scripts/import-internal-odf-racks.ts) vẫn ở "chế độ Thiết bị" như cũ vì
+    // đó là đấu chéo thiết bị-thiết bị tại chỗ, không phải tuyến cáp ra trạm
+    // khác — chỉ khác 1 điểm: Ô1 vẫn được chuẩn hóa + validate port vì giờ đã
+    // có dữ liệu port thật để đối chiếu.
+    const isCableMode = trunkMatch.matched && trunkMatch.rackDomain === "trunk";
+    if (!trunkMatch.matched) return { trunkMatch, isCableMode, error: null, warning: null };
 
     if (trunkMatch.invalidPortNumbers && trunkMatch.invalidPortNumbers.length > 0) {
+      const placeLabel = isCableMode ? "tuyến cáp" : "ODF/DDF";
       return {
         trunkMatch,
-        error: `Port ${trunkMatch.invalidPortNumbers.join(",")} không tồn tại trong tuyến cáp "${trunkMatch.rackCode}".`,
+        isCableMode,
+        error: `Port ${trunkMatch.invalidPortNumbers.join(",")} không tồn tại trong ${placeLabel} "${trunkMatch.rackCode}".`,
         warning: null,
       };
     }
@@ -450,13 +511,16 @@ export default function DeviceCircuitList({
     // Ô3 (Sợi) hiện tại có thật sự khớp đúng với port đã suy ra ở Ô1 không —
     // bắt các trường hợp người dùng gõ tay Sợi không có thật (onChange của Ô3
     // chỉ ghi lại Ô1 khi tìm thấy khớp, nên gõ sai sẽ để lại Ô3 "mồ côi").
+    // CHỈ áp dụng ở chế độ Cáp quang — ODF/DDF nội bộ thì Ô3 là "Trib" tự do
+    // (vd "S1-1"), không phải số Sợi, không có gì để đối chiếu port<->sợi.
     const tribTrimmed = tribText.trim();
-    if (tribTrimmed && trunkMatch.rackCode) {
+    if (isCableMode && tribTrimmed && trunkMatch.rackCode) {
       const fiberNumbers = parseNumberList(tribTrimmed);
       const foundByFiber = fiberNumbers ? findPortsByFiberNumbers(trunkMatch.rackCode, fiberNumbers, trunkPorts) : null;
       if (!foundByFiber) {
         return {
           trunkMatch,
+          isCableMode,
           error: `Sợi "${tribTrimmed}" không tồn tại trong tuyến cáp "${trunkMatch.rackCode}".`,
           warning: null,
         };
@@ -470,7 +534,24 @@ export default function DeviceCircuitList({
             .map((p) => p.circuitName ?? "?")
             .join(", ")}) — vẫn thêm được, nên rà lại luồng cũ cho khớp sau nếu cần.`
         : null;
-    return { trunkMatch, error: null, warning };
+    return { trunkMatch, isCableMode, error: null, warning };
+  }
+
+  // Bắt buộc nhập đủ MỌI ô số liệu khi Thêm mới/Sửa luồng thiết bị, TRỪ Đối
+  // phương và Ghi chú (yêu cầu người dùng 2026-07-27 — 2 ô này vẫn luôn được
+  // để trống như thiết kế gốc, xem architecture.md mục 3.4). Nhãn Thiết
+  // bị/Trib "(tiếp theo)" đổi theo đúng chế độ đang hiển thị (isCableMode) để
+  // thông báo khớp với những gì người dùng đang thấy trên form.
+  function findMissingRequiredFields(values: SharedCircuitFields, isCableMode: boolean): string[] {
+    const missing: string[] = [];
+    if (!values.name.trim()) missing.push("Tên luồng");
+    if (!values.tribText.trim()) missing.push("Trib");
+    if (!values.positionOwn.trim()) missing.push("Vị trí ODF (thiết bị)");
+    if (!values.positionNextOdf.trim()) missing.push("Vị trí ODF (tiếp theo)");
+    if (!values.positionNextDevice.trim()) missing.push(isCableMode ? "Cáp quang (tiếp theo)" : "Thiết bị (tiếp theo)");
+    if (!values.positionNextTrib.trim()) missing.push(isCableMode ? "Sợi quang (tiếp theo)" : "Trib (tiếp theo)");
+    if (!values.interfaceType.trim()) missing.push("Giao tiếp");
+    return missing;
   }
 
   // Cuộn tới đúng dòng + tô sáng tạm thời khi hash là "#dc-<id>" — cả lúc
@@ -723,9 +804,16 @@ export default function DeviceCircuitList({
     // Port/Sợi (tiếp theo) gõ không có thật trong tuyến cáp đã khớp -> CHẶN
     // lưu (yêu cầu người dùng 2026-07-27: "báo là ko đúng để bắt nhập liệu
     // cho đúng").
-    const { trunkMatch, error: positionNextError } = validatePositionNext(edit.positionNextOdf, edit.positionNextTrib);
+    const { isCableMode, error: positionNextError } = validatePositionNext(edit.positionNextOdf, edit.positionNextTrib);
     if (positionNextError) {
       setError(positionNextError);
+      return;
+    }
+    // Bắt buộc đủ mọi ô số liệu, trừ Đối phương/Ghi chú (yêu cầu người dùng
+    // 2026-07-27).
+    const missingFields = findMissingRequiredFields(edit, isCableMode);
+    if (missingFields.length > 0) {
+      setError(`Vui lòng nhập đủ: ${missingFields.join(", ")}.`);
       return;
     }
     setBusy(true);
@@ -749,10 +837,9 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
     await maybeCreateCounterpartDevice(edit.counterpartText);
-    // Ô2 (tiếp theo) khớp rack trung kế thật (trunkMatch.matched) thì ghi tên
-    // tuyến cáp, không phải thiết bị — không có gì để tạo devices/ghi thư
-    // viện device_position_map.
-    if (!trunkMatch.matched) {
+    // Chế độ Cáp quang (isCableMode) thì Ô2 ghi tên tuyến cáp, không phải
+    // thiết bị — không có gì để tạo devices/ghi thư viện device_position_map.
+    if (!isCableMode) {
       await maybeGrowLibrary(edit.positionNextDevice || null, edit.positionNextTrib, edit.positionNextOdf);
       await maybeCreateNextDevice(edit.positionNextDevice);
     }
@@ -856,6 +943,14 @@ export default function DeviceCircuitList({
   // theo ý thích".
   function handleCreateChange(patch: Partial<CreateDraft>) {
     const merged = { ...createDraft, ...patch };
+    // Chọn thẳng Thiết bị (không cần chọn Lĩnh vực trước) — thiết bị đã được
+    // chuẩn hóa category sẵn trong `devices`, nên suy ngược Lĩnh vực từ thiết
+    // bị vừa chọn luôn, khỏi bắt người dùng chọn tay 2 lần (yêu cầu người
+    // dùng 2026-07-27).
+    if ("deviceId" in patch && patch.deviceId) {
+      const picked = devices.find((d) => d.id === patch.deviceId);
+      if (picked) merged.category = deviceCategoryLabel(picked.category);
+    }
     const activeCount = Object.values(nameTicks).filter(Boolean).length;
     if (activeCount === 2 && !("name" in patch)) {
       // Đổi Thiết bị (deviceId) thì createDeviceName (useMemo) CHƯA kịp cập
@@ -900,9 +995,16 @@ export default function DeviceCircuitList({
       setError("Chọn thiết bị trước khi thêm luồng.");
       return;
     }
-    const { trunkMatch, error: positionNextError } = validatePositionNext(createDraft.positionNextOdf, createDraft.positionNextTrib);
+    const { isCableMode, error: positionNextError } = validatePositionNext(createDraft.positionNextOdf, createDraft.positionNextTrib);
     if (positionNextError) {
       setError(positionNextError);
+      return;
+    }
+    // Bắt buộc đủ mọi ô số liệu, trừ Đối phương/Ghi chú (yêu cầu người dùng
+    // 2026-07-27).
+    const missingFields = findMissingRequiredFields(createDraft, isCableMode);
+    if (missingFields.length > 0) {
+      setError(`Vui lòng nhập đủ: ${missingFields.join(", ")}.`);
       return;
     }
     setBusy(true);
@@ -925,7 +1027,7 @@ export default function DeviceCircuitList({
     }
     await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
     await maybeCreateCounterpartDevice(createDraft.counterpartText);
-    if (!trunkMatch.matched) {
+    if (!isCableMode) {
       await maybeGrowLibrary(createDraft.positionNextDevice || null, createDraft.positionNextTrib, createDraft.positionNextOdf);
       await maybeCreateNextDevice(createDraft.positionNextDevice);
     }
@@ -948,14 +1050,14 @@ export default function DeviceCircuitList({
     tribNextDatalistId: string,
     enableNameTicks: boolean
   ) {
-    const { trunkMatch, error: positionNextError, warning: positionNextWarning } = validatePositionNext(
+    const { trunkMatch, isCableMode, error: positionNextError, warning: positionNextWarning } = validatePositionNext(
       values.positionNextOdf,
       values.positionNextTrib
     );
     return (
       <>
         <label className="text-xs text-slate-500">
-          Tên luồng
+          Tên luồng <span className="text-red-500">*</span>
           {/* textarea (không phải input) để kéo to/nhỏ được như ô Ghi chú —
               tên luồng thực tế có thể rất dài (yêu cầu người dùng 2026-07-27:
               ô nhỏ quá, phải cuộn ngang mới xem/sửa hết được). rows=1 để mặc
@@ -970,7 +1072,7 @@ export default function DeviceCircuitList({
           />
         </label>
         <label className="text-xs text-slate-500">
-          Trib
+          Trib <span className="text-red-500">*</span>
           <input
             className="input mt-1"
             list={tribDatalistId}
@@ -984,7 +1086,7 @@ export default function DeviceCircuitList({
           />
         </label>
         <label className="text-xs text-slate-500">
-          Vị trí ODF (thiết bị)
+          Vị trí ODF (thiết bị) <span className="text-red-500">*</span>
           <input
             className="input mt-1"
             list="dc-odf-position-options"
@@ -995,20 +1097,35 @@ export default function DeviceCircuitList({
               const match = findLibraryMatchByOdf(deviceNameForLookup, v);
               onChange({ positionOwn: v, tribText: match?.devicePosition ?? values.tribText });
             }}
+            onBlur={() => {
+              // Cùng cơ chế chuẩn hóa như Ô1 "Vị trí ODF (tiếp theo)" (thêm
+              // 2026-07-27 khi đã có rack ODF/DDF nội bộ thật) — ô này không
+              // có Ô2/Ô3 đi kèm nên chỉ cần chuẩn hóa chữ, không có chế độ gì
+              // để phân biệt.
+              const match = matchTrunkPosition(values.positionOwn, trunkPorts);
+              const canonical = formatCanonicalOdfPosition(match);
+              if (canonical && canonical !== values.positionOwn) {
+                onChange({ positionOwn: canonical });
+              }
+            }}
           />
         </label>
         <div className="text-xs text-slate-500">
-          Vị trí ODF (tiếp theo)
+          Vị trí ODF (tiếp theo) <span className="text-red-500">*</span>
           {/* 3 ô xếp chồng (yêu cầu người dùng 2026-07-27, tinh chỉnh lại sau
               đó): Ô1 tọa độ ODF, Ô2 thiết bị local ADN1 HOẶC cáp quang trung
               kế, Ô3 Trib/Sợi — TỰ NHẬN DIỆN chế độ qua matchTrunkPosition(Ô1)
-              (không còn chọn tay): khớp được 1 rack trung kế thật -> chắc
-              chắn là ca đấu thẳng ra trung kế (rack/port bên thiết bị KHÔNG
-              được tạo thật trong hệ thống, xem architecture.md mục 7.2), tự
-              điền Ô2 (tên tuyến cáp, KHÓA không cho sửa tay để đảm bảo toàn
-              vẹn dữ liệu) + suy 2 chiều Port(Ô1)<->Sợi(Ô3). Lưu gộp lại 1
-              chuỗi qua combinePositionNext(), hiển thị bảng tổng hợp vẫn 1
-              cột như cũ. */}
+              (không còn chọn tay): khớp được 1 rack TRUNG KẾ thật -> chắc
+              chắn đấu thẳng ra trung kế, tự điền Ô2 (tên tuyến cáp, KHÓA
+              không cho sửa tay để đảm bảo toàn vẹn dữ liệu) + suy 2 chiều
+              Port(Ô1)<->Sợi(Ô3). Khớp rack ODF/DDF NỘI BỘ thật (domain=
+              'device', thêm 2026-07-27 — xem
+              scripts/import-internal-odf-racks.ts) thì VẪN ở chế độ Thiết bị
+              như không khớp gì (không phải đấu ra trạm khác) — chỉ khác là Ô1
+              vẫn được chuẩn hóa/validate vì đã có port thật để đối chiếu, xem
+              isCableMode trong validatePositionNext(). Lưu gộp lại 1 chuỗi
+              qua combinePositionNext(), hiển thị bảng tổng hợp vẫn 1 cột như
+              cũ. */}
           <input
             className="input mt-1"
             list="dc-odf-position-options"
@@ -1017,7 +1134,11 @@ export default function DeviceCircuitList({
             onChange={(e) => {
               const v = e.target.value;
               const match = matchTrunkPosition(v, trunkPorts);
-              if (match.matched) {
+              // Chỉ chuyển "chế độ Cáp quang" khi khớp rack TRUNG KẾ thật —
+              // khớp rack ODF/DDF nội bộ (domain='device') vẫn ở chế độ Thiết
+              // bị như không khớp gì (xem validatePositionNext.isCableMode).
+              const isCableMatch = match.matched && match.rackDomain === "trunk";
+              if (isCableMatch) {
                 const cleanPorts = !match.invalidPortNumbers || match.invalidPortNumbers.length === 0;
                 const fiberText =
                   cleanPorts && match.resolvedPorts && match.resolvedPorts.length > 0
@@ -1025,20 +1146,33 @@ export default function DeviceCircuitList({
                     : values.positionNextTrib;
                 onChange({ positionNextOdf: v, positionNextDevice: match.cableRouteName ?? "", positionNextTrib: fiberText });
               } else {
-                // Không khớp rack trung kế nào -> chế độ Thiết bị (Ô2 quay
-                // lại free-text, dùng findLibraryMatchByOdf như trước).
+                // Không khớp rack trung kế nào (hoặc khớp ODF/DDF nội bộ) ->
+                // chế độ Thiết bị (Ô2 quay lại free-text, dùng
+                // findLibraryMatchByOdf như trước).
                 const libMatch = findLibraryMatchByOdf(values.positionNextDevice || null, v);
                 onChange({ positionNextOdf: v, positionNextTrib: libMatch?.devicePosition ?? values.positionNextTrib });
               }
             }}
+            onBlur={() => {
+              // Chờ gõ xong hẳn (buông focus) mới viết lại đúng chuẩn — gõ
+              // dở nửa chừng mà đã bị sửa lại thì rất khó chịu.
+              const canonical = formatCanonicalOdfPosition(trunkMatch);
+              if (canonical && canonical !== values.positionNextOdf) {
+                onChange({ positionNextOdf: canonical });
+              }
+            }}
           />
-          {trunkMatch.matched ? (
+          {isCableMode ? (
             <>
-              <div className="mt-1 text-[11px] text-slate-400">Cáp quang (tiếp theo)</div>
+              <div className="mt-1 text-[11px] text-slate-400">
+                Cáp quang (tiếp theo) <span className="text-red-500">*</span>
+              </div>
               {/* Read-only (yêu cầu người dùng: khóa không cho sửa tay để đảm
                   bảo toàn vẹn dữ liệu — lấy thẳng từ racks.cable_route_name). */}
               <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">{trunkMatch.cableRouteName ?? "—"}</div>
-              <div className="mt-1 text-[11px] text-slate-400">Sợi quang (tiếp theo)</div>
+              <div className="mt-1 text-[11px] text-slate-400">
+                Sợi quang (tiếp theo) <span className="text-red-500">*</span>
+              </div>
               <input
                 className="input mt-1"
                 placeholder="VD: 1,2"
@@ -1069,7 +1203,7 @@ export default function DeviceCircuitList({
                     title="Dùng thiết bị (tiếp theo) này để tự đặt tên luồng (tối đa 2 mục)"
                   />
                 )}
-                Thiết bị (tiếp theo)
+                Thiết bị (tiếp theo) <span className="text-red-500">*</span>
               </div>
               <input
                 className="input mt-1"
@@ -1078,7 +1212,9 @@ export default function DeviceCircuitList({
                 value={values.positionNextDevice}
                 onChange={(e) => onChange({ positionNextDevice: e.target.value })}
               />
-              <div className="mt-1 text-[11px] text-slate-400">Trib (tiếp theo)</div>
+              <div className="mt-1 text-[11px] text-slate-400">
+                Trib (tiếp theo) <span className="text-red-500">*</span>
+              </div>
               <input
                 className="input mt-1"
                 list={tribNextDatalistId}
@@ -1096,7 +1232,7 @@ export default function DeviceCircuitList({
           {!positionNextError && positionNextWarning && <p className="mt-1 text-[11px] font-medium text-amber-600">{positionNextWarning}</p>}
         </div>
         <label className="text-xs text-slate-500">
-          Giao tiếp
+          Giao tiếp <span className="text-red-500">*</span>
           <input
             className="input mt-1"
             list="dc-interface-options"
@@ -1232,7 +1368,7 @@ export default function DeviceCircuitList({
                     onChange={() => toggleNameTick("own")}
                     title="Dùng thiết bị này để tự đặt tên luồng (tối đa 2 mục)"
                   />
-                  Thiết bị
+                  Thiết bị <span className="text-red-500">*</span>
                 </span>
                 <SearchableSelect
                   items={createDeviceItems}
@@ -1424,7 +1560,18 @@ export default function DeviceCircuitList({
           Giới hạn chiều cao để khung THẬT SỰ tự cuộn, khi đó tiêu đề bảng mới
           dính lại đúng như mong đợi. */}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: colWidths.name }} />
+            <col style={{ width: 110 }} />
+            {showDeviceColumn && <col style={{ width: colWidths.device }} />}
+            <col style={{ width: colWidths.positionOwn }} />
+            <col style={{ width: colWidths.positionNext }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: colWidths.counterpart }} />
+            <col style={{ width: colWidths.notes }} />
+            <col style={{ width: 130 }} />
+          </colgroup>
           <thead className="text-primary-800">
             <tr>
               <SortFilterTh
@@ -1435,6 +1582,8 @@ export default function DeviceCircuitList({
                 onSort={toggleSort}
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
+                width={colWidths.name}
+                onResize={(w) => resizeCol("name", w)}
               />
               <SortFilterTh
                 label="Trib"
@@ -1454,6 +1603,8 @@ export default function DeviceCircuitList({
                   onSort={toggleSort}
                   filterValue={filters.device}
                   onFilterChange={(v) => setFilter("device", v)}
+                  width={colWidths.device}
+                  onResize={(w) => resizeCol("device", w)}
                 />
               )}
               <SortFilterTh
@@ -1464,6 +1615,8 @@ export default function DeviceCircuitList({
                 onSort={toggleSort}
                 filterValue={filters.positionOwn}
                 onFilterChange={(v) => setFilter("positionOwn", v)}
+                width={colWidths.positionOwn}
+                onResize={(w) => resizeCol("positionOwn", w)}
               />
               <SortFilterTh
                 label="Vị trí ODF (tiếp theo)"
@@ -1473,6 +1626,8 @@ export default function DeviceCircuitList({
                 onSort={toggleSort}
                 filterValue={filters.positionNext}
                 onFilterChange={(v) => setFilter("positionNext", v)}
+                width={colWidths.positionNext}
+                onResize={(w) => resizeCol("positionNext", w)}
               />
               <SortFilterTh
                 label="Giao tiếp"
@@ -1491,8 +1646,16 @@ export default function DeviceCircuitList({
                 onSort={toggleSort}
                 filterValue={filters.counterpart}
                 onFilterChange={(v) => setFilter("counterpart", v)}
+                width={colWidths.counterpart}
+                onResize={(w) => resizeCol("counterpart", w)}
               />
-              <FilterOnlyTh label="Ghi chú" filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
+              <FilterOnlyTh
+                label="Ghi chú"
+                filterValue={filters.notes}
+                onFilterChange={(v) => setFilter("notes", v)}
+                width={colWidths.notes}
+                onResize={(w) => resizeCol("notes", w)}
+              />
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
@@ -1516,13 +1679,13 @@ export default function DeviceCircuitList({
                           : "hover:bg-primary-50/50"
                   }`}
                 >
-                  <td className="px-4 py-2 text-slate-700">
+                  <td className="px-4 py-2 text-slate-700 break-words">
                     {displayName(c) || "—"}
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
-                  <td className="px-4 py-2 text-slate-600">{c.tribText ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>
                   {showDeviceColumn && (
-                    <td className="px-4 py-2 text-slate-600">
+                    <td className="px-4 py-2 text-slate-600 break-words">
                       {c.deviceName ?? "(chưa xác định)"}
                       {!c.deviceId && (
                         <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
@@ -1531,7 +1694,7 @@ export default function DeviceCircuitList({
                       )}
                     </td>
                   )}
-                  <td className={`px-4 py-2 ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+                  <td className={`px-4 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
                     {c.devicePositionOwn ?? "—"}
                     {ownConflict && (
                       <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
@@ -1539,9 +1702,9 @@ export default function DeviceCircuitList({
                       </div>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-600">{c.devicePositionNext ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600">{c.interfaceType ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600">{c.counterpartText ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{c.devicePositionNext ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>
                   <td className="px-4 py-2 text-slate-500 max-w-xs">
                     <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
                       {c.notes ?? "—"}

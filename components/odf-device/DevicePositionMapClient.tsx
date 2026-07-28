@@ -9,12 +9,17 @@ import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
-import SortableTh from "@/components/ui/SortableTh";
+import { useColumnWidths } from "@/lib/useColumnWidths";
+import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 import type { DeviceRow } from "@/lib/devices";
 
 type SortKey = "deviceName" | "devicePosition" | "odfPosition";
+
+// Cả 3 cột dữ liệu đều có thể dài (yêu cầu người dùng 2026-07-27: "các bảng
+// dữ liệu đều" kéo dãn được) — chỉ "Thao tác" (nút bấm) giữ cố định.
+const DEFAULT_COL_WIDTHS: Record<SortKey, number> = { deviceName: 220, devicePosition: 180, odfPosition: 200 };
 
 function cellText(r: DevicePositionMapRow, key: SortKey): string | null {
   switch (key) {
@@ -48,6 +53,7 @@ export default function DevicePositionMapClient({
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<SortKey>("device-position-map-col-widths", DEFAULT_COL_WIDTHS);
   const [filters, setFilters] = useState<Record<SortKey, string>>({ deviceName: "", devicePosition: "", odfPosition: "" });
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editId, setEditId] = useState<string | null>(null);
@@ -489,12 +495,42 @@ export default function DevicePositionMapClient({
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: colWidths.deviceName }} />
+            <col style={{ width: colWidths.devicePosition }} />
+            <col style={{ width: colWidths.odfPosition }} />
+            <col style={{ width: 140 }} />
+          </colgroup>
           <thead className="bg-primary-50 text-primary-800">
             <tr>
-              <SortableTh label="Tên thiết bị" sortKey="deviceName" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Vị trí thiết bị" sortKey="devicePosition" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Vị trí ODF/DDF" sortKey="odfPosition" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <ResizableTh
+                label="Tên thiết bị"
+                sortKey="deviceName"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.deviceName}
+                onResize={(w) => resizeCol("deviceName", w)}
+              />
+              <ResizableTh
+                label="Vị trí thiết bị"
+                sortKey="devicePosition"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.devicePosition}
+                onResize={(w) => resizeCol("devicePosition", w)}
+              />
+              <ResizableTh
+                label="Vị trí ODF/DDF"
+                sortKey="odfPosition"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.odfPosition}
+                onResize={(w) => resizeCol("odfPosition", w)}
+              />
               <th className="px-4 py-2 text-left font-semibold">Thao tác</th>
             </tr>
             <tr className="bg-white">
@@ -554,9 +590,9 @@ export default function DevicePositionMapClient({
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-2 text-slate-700">{r.deviceName}</td>
-                      <td className="px-4 py-2 text-slate-600">{r.devicePosition ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-600">{r.odfPosition ?? "—"}</td>
+                      <td className="px-4 py-2 text-slate-700 break-words">{r.deviceName}</td>
+                      <td className="px-4 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>
+                      <td className="px-4 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>
                       <td className="px-4 py-2">
                         <div className="flex gap-2">
                           <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy}>

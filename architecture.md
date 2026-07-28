@@ -316,13 +316,84 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
 6. **"Vị trí ODF (tiếp theo)" tách 3 ô khi sửa/nhập luồng thiết bị** (yêu cầu
    người dùng 2026-07-27, KHÔNG đổi schema — vẫn 1 cột
    `circuits.device_position_next`): UI tách thành Ô1 (tọa độ ODF), Ô2 (thiết
-   bị HOẶC tên tuyến cáp trung kế nếu thiết bị đấu thẳng ra trung kế — chọn
-   qua toggle, xem `PositionNextMode` trong `DeviceCircuitList.tsx`), Ô3
-   (Trib/sợi), ghép lại đúng 1 chuỗi qua `combinePositionNext()`
-   (`lib/parsers/transit-text.ts`) khi lưu — cùng cơ chế đã dùng cho "Chuyển
-   tiếp" bên ODF trung kế (`splitOdfDeviceStructure`/`PortTable.tsx`).
+   bị local ADN1 HOẶC tên tuyến cáp trung kế), Ô3 (Trib/sợi), ghép lại đúng 1
+   chuỗi qua `combinePositionNext()` (`lib/parsers/transit-text.ts`) khi lưu —
+   cùng cơ chế đã dùng cho "Chuyển tiếp" bên ODF trung kế
+   (`splitOdfDeviceStructure`/`PortTable.tsx`). Ô2/Ô3 KHÔNG chọn tay qua
+   toggle — Ô1 gõ tới đâu tự dò khớp rack trung kế THẬT tới đó qua
+   `matchTrunkPosition()` (`lib/trunkPorts.ts`): khớp được → chắc chắn đấu
+   thẳng ra trung kế (rack/port bên ODF/DDF thiết bị chưa được tạo thật trong
+   hệ thống, xem mục 7), tự khóa Ô2 = tên tuyến cáp (không cho sửa tay) + suy
+   2 chiều Port(Ô1)<->Sợi(Ô3); không khớp được rack nào → Ô2 quay lại
+   free-text "Thiết bị (tiếp theo)" như trước. Port/sợi gõ không có thật
+   trong rack → báo lỗi chặn lưu; port đã có luồng khác → chỉ cảnh báo, vẫn
+   cho lưu (luồng cũ tự rà lại sau, không tự động can thiệp).
    Tương tự, ô "Đối phương" từng bị nhầm lẫn giữa thiết bị ADN1 nội bộ và
    trạm/thực thể khác thật (lỗi gõ "AĐN1" có dấu Đ khiến parser cũ bỏ sót —
    đã sửa `parseTransitText`/`isManagedStationCode` dùng `normalizeVN`); dữ
    liệu cũ đã di chuyển 1 lần bằng
    `scripts/migrate-counterpart-to-position-next.ts`.
+
+7. **Tự chuẩn hóa chữ gõ ở ô "Vị trí ODF"** (yêu cầu người dùng 2026-07-27,
+   hàm `formatCanonicalOdfPosition()` — chuyển sang dùng CHUNG ở
+   `lib/trunkPorts.ts` vì áp dụng cho CẢ 2 nơi) — lúc rời khỏi ô (blur), NẾU
+   đã khớp đúng 1 rack trung kế thật và không có port/sợi sai (mục 6), tự
+   viết lại đúng chuẩn ban hành `ODF x/y (a,b)`. Áp dụng ở:
+   - Ô1 "Vị trí ODF (tiếp theo)" bên luồng thiết bị (`DeviceCircuitList.tsx`).
+   - Ô "Vị trí ODF" khi "Chuyển tiếp" bên ODF trung kế đã tách cấu trúc 2
+     (`PortTable.tsx`, `EditRow`) — CHỈ ô tách riêng này, không áp dụng khi
+     "Chuyển tiếp" còn ở dạng 1 ô gộp tự do (cấu trúc 1), vì lúc đó không chắc
+     toàn bộ nội dung ô chỉ là tọa độ ODF (có thể có chữ tự do khác), viết đè
+     cả ô sẽ mất dữ liệu.
+   - Chuỗi hiển thị được DỰNG LẠI từ `rackCode` + port đã xác nhận thật trong
+     DB (không giữ nguyên chữ gõ tay), nên "ODF" tự động thành chữ hoa dù gõ
+     tắt chữ thường, và luôn có khoảng cách trước "x/y" — kể cả khi
+     `racks.code` thật trong DB không có khoảng cách (đã khảo sát toàn bộ 41
+     rack trung kế: tất cả đều kiểu "ODF1/1", "ODF2/7.1"... không dòng nào có
+     khoảng cách sẵn). Khoảng cách được chèn thêm CHỈ lúc hiển thị ở đây,
+     KHÔNG sửa `racks.code` gốc trong DB.
+   - Đúng 2 port (cặp Tx/Rx) → đệm 2 chữ số (vd "(05,06)"); CHỈ 1 port (dùng
+     1 sợi) → không đệm số 0 (vd "(5)") — 2 kiểu viết khác nhau có chủ đích
+     theo yêu cầu người dùng, không phải thiếu sót.
+   - Không tự sửa khi đang gõ dở (chưa blur) hoặc khi port/sợi gõ sai — để
+     nguyên chữ gõ cho người dùng tự sửa theo đúng lỗi đã báo (mục 6), tránh
+     sửa đè lên chỗ đang cần sửa.
+
+8. **`racks`/`ports` THẬT cho ODF/DDF nội bộ** (domain='device', yêu cầu
+   người dùng 2026-07-28, `scripts/import-internal-odf-racks.ts`) — trước đây
+   mục 6/7 ghi "rack/port bên ODF/DDF thiết bị KHÔNG được tạo thật trong hệ
+   thống" (đúng lúc viết, giai đoạn 7 chưa làm); nay đã tạo thật **112 rack ×
+   48 port = 5.376 port** cho ODF/DDF đấu chéo thiết bị-thiết bị tại ADN1
+   (7 block: 3,4,5,7,8,9,11 — phát hiện qua quét toàn bộ
+   `device_position_own`/`device_position_next`/`device_position_map.odf_position`
+   tìm "ODF x/y" chưa có rack, xác nhận với người dùng đây là ODF/DDF nội bộ
+   thật, không phải tuyến cáp thiếu). Mỗi rack: `odf_type='distribution'`,
+   `cable_route_name=null` (không có ý nghĩa ngoài domain=trunk),
+   `device_id=null` (panel DÙNG CHUNG nhiều thiết bị đấu tới, không thuộc
+   riêng 1 thiết bị), 48 port mặc định `status='unused'`, `fiber_number=null`
+   (không có ý nghĩa ngoài domain=trunk). Script idempotent (rack code đã có
+   thì bỏ qua) + quét SỐNG từ DB (không hardcode danh sách) nên chạy lại an
+   toàn nếu phát hiện thêm block mới sau này.
+   - **Giới hạn đã biết**: port mới tạo đều `status='unused'` vì dữ liệu text
+     hiện có (vd "ODF 3/6 (35,36)") CHƯA được nối thật qua `port_circuit_links`
+     — cảnh báo "port đang có luồng khác" (mục 6) sẽ CHƯA chính xác 100% cho
+     các rack này (nhiều port thực ra đã dùng nhưng hệ thống chưa biết). Nối
+     thật từng luồng vào đúng port là việc lớn hơn, chưa làm ở đây.
+   - **Khớp cả 2 domain**: `lib/trunkPorts.ts` thêm `fetchAllOdfPorts()`
+     (cạnh `fetchAllTrunkPorts()` cũ, giữ nguyên cho Tìm kiếm nhanh/Dashboard
+     — không đụng 2 nơi đó) lấy CẢ rack trung kế lẫn ODF/DDF nội bộ, dùng cho
+     `DeviceCircuitList.tsx` + `PortTable.tsx`. `TrunkPortRow`/
+     `TrunkPositionMatch` thêm field `rackDomain`/`domain`. Khớp được rack
+     ODF/DDF nội bộ vẫn CHUẨN HÓA + VALIDATE port ở Ô1 y hệt trung kế (mục 7),
+     nhưng **KHÔNG chuyển "chế độ Cáp quang"** (Ô2 khóa hiện tên tuyến) — vẫn
+     giữ "chế độ Thiết bị" (Ô2 tự do gõ tên thiết bị) vì đây là đấu chéo tại
+     chỗ, không phải tuyến cáp ra trạm khác. Cũng áp dụng chuẩn hóa này cho ô
+     "Vị trí ODF (thiết bị)" (`positionOwn`) — trước đây hoàn toàn tự do vì
+     chưa có dữ liệu thật để đối chiếu, nay khớp được thì tự chuẩn hóa (không
+     có chế độ gì để phân biệt vì ô này không có Ô2/Ô3 đi kèm).
+   - **Trang xem/sửa**: `/odf-device/odf-ddf-noi-bo` (mới, menu "ODF/DDF nội
+     bộ") liệt kê 112 rack này bằng lại `RackListTable` — bấm vào 1 rack dùng
+     lại NGUYÊN trang `/odf-trunk/[rackId]` (không tạo trang riêng, đúng yêu
+     cầu người dùng "dùng lại đúng bảng/nút bấm đã có") vì trang đó vốn không
+     lọc theo domain khi tra rack theo id — chỉ khác link "quay lại" tự trỏ
+     đúng danh sách theo `rack.domain`.

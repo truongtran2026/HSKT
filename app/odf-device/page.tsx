@@ -2,7 +2,7 @@ import Link from "next/link";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 import { fetchDevices } from "@/lib/devices";
 import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
-import { fetchAllTrunkPorts } from "@/lib/trunkPorts";
+import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import DeviceCircuitList from "@/components/odf-device/DeviceCircuitList";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
@@ -10,11 +10,14 @@ import DeviceCircuitList from "@/components/odf-device/DeviceCircuitList";
 export const dynamic = "force-dynamic";
 
 export default async function OdfDevicePage() {
+  // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — cần CẢ rack trung kế
+  // lẫn ODF/DDF nội bộ (domain='device') để "Vị trí ODF (tiếp theo)" nhận
+  // diện/chuẩn hóa được cả 2 loại (yêu cầu người dùng 2026-07-27).
   const [circuits, devices, devicePositionMap, trunkPorts] = await Promise.all([
     fetchDeviceCircuits(),
     fetchDevices(),
     fetchDevicePositionMap(),
-    fetchAllTrunkPorts(),
+    fetchAllOdfPorts(),
   ]);
   return (
     <div>

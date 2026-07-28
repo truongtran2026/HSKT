@@ -6,7 +6,9 @@ import { compareRackCode } from "@/lib/rackCode";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
+import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
+import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 
 export interface RackListItem {
@@ -57,8 +59,15 @@ function cellText(r: RackListItem, key: SortKey): string | number | null {
 
 const FILTER_KEYS: SortKey[] = ["code", "route", "odfType", "portCount", "inUse"];
 
+// Chỉ "Tuyến cáp" cần kéo dãn (có thể dài, vd "96FO#1 ADN1 - 2T9") — các cột
+// còn lại giá trị ngắn/cố định (yêu cầu người dùng 2026-07-27: "các bảng dữ
+// liệu đều" kéo dãn được).
+type ResizableCol = "route";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220 };
+
 export default function RackListTable({ racks }: { racks: RackListItem[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("code");
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("rack-list-col-widths", DEFAULT_COL_WIDTHS);
   const [filters, setFilters] = useState<Record<SortKey, string>>({
     code: "",
     route: "",
@@ -88,11 +97,26 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: 120 }} />
+            <col style={{ width: colWidths.route }} />
+            <col style={{ width: 110 }} />
+            <col style={{ width: 100 }} />
+            <col style={{ width: 110 }} />
+          </colgroup>
           <thead className="bg-primary-50 text-primary-800">
             <tr>
               <SortableTh label="Mã rack" sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Tuyến cáp" sortKey="route" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <ResizableTh
+                label="Tuyến cáp"
+                sortKey="route"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.route}
+                onResize={(w) => resizeCol("route", w)}
+              />
               <SortableTh label="Loại ODF" sortKey="odfType" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <SortableTh
                 label="Số port"
@@ -137,7 +161,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
                     {rack.code}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-slate-600">{rack.cableRouteName}</td>
+                <td className="px-4 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>
                 <td className="px-4 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>
                 <td className="px-4 py-2 text-right text-slate-600">{rack.portCount}</td>
                 <td className="px-4 py-2 text-right text-slate-600">

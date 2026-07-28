@@ -14,7 +14,8 @@
     "migrate-notes-to-position-columns": "tsx scripts/migrate-notes-to-position-columns.ts",
     "dedupe-device-position-map": "tsx scripts/dedupe-device-position-map.ts",
     "standardize-transit-links": "tsx scripts/standardize-transit-links.ts",
-    "migrate-counterpart-to-position-next": "tsx scripts/migrate-counterpart-to-position-next.ts"
+    "migrate-counterpart-to-position-next": "tsx scripts/migrate-counterpart-to-position-next.ts",
+    "import-internal-odf-racks": "tsx scripts/import-internal-odf-racks.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

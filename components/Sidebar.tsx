@@ -20,6 +20,7 @@ const menuGroups = [
       { href: "/odf-trunk", label: "Hồ sơ ODF Trung kế" },
       { href: "/odf-device", label: "Hồ sơ ODF Thiết bị" },
       { href: "/odf-device/vi-tri-thiet-bi", label: "Vị trí thiết bị → ODF/DDF" },
+      { href: "/odf-device/odf-ddf-noi-bo", label: "ODF/DDF nội bộ" },
       { href: "/search", label: "Tìm kiếm nhanh" },
     ],
   },

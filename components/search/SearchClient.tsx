@@ -6,7 +6,9 @@ import { compareRackCode } from "@/lib/rackCode";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
+import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
+import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import { derivePortStatus, type DerivedPortStatus } from "@/lib/portStatus";
 import type { TrunkPortRow } from "@/lib/trunkPorts";
@@ -69,10 +71,16 @@ function freeCellText(r: SearchRow, key: FreeFilterKey): string | number | null 
 
 const FREE_FILTER_KEYS: FreeFilterKey[] = ["route", "port", "fiber", "name", "counterpart"];
 
+// Cột dễ dài cần kéo dãn (yêu cầu người dùng 2026-07-27: "các bảng dữ liệu
+// đều" kéo dãn được) — Rack/Port/Sợi/Trạng thái ngắn, giữ cố định.
+type ResizableCol = "route" | "name" | "counterpart";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220, name: 220, counterpart: 200 };
+
 export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   const [mode, setMode] = useState<FilterMode>("all");
   const [rackId, setRackId] = useState(""); // "" = tất cả rack
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("rack");
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-col-widths", DEFAULT_COL_WIDTHS);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     route: "",
     port: "",
@@ -150,16 +158,49 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
       </p>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: 100 }} />
+            <col style={{ width: colWidths.route }} />
+            <col style={{ width: 70 }} />
+            <col style={{ width: 70 }} />
+            <col style={{ width: 110 }} />
+            <col style={{ width: colWidths.name }} />
+            <col style={{ width: colWidths.counterpart }} />
+          </colgroup>
           <thead className="bg-primary-50 text-primary-800">
             <tr>
               <SortableTh label="Rack" sortKey="rack" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Tuyến cáp" sortKey="route" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <ResizableTh
+                label="Tuyến cáp"
+                sortKey="route"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.route}
+                onResize={(w) => resizeCol("route", w)}
+              />
               <SortableTh label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
               <SortableTh label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
               <SortableTh label="Trạng thái" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Tên luồng" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <ResizableTh
+                label="Tên luồng"
+                sortKey="name"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.name}
+                onResize={(w) => resizeCol("name", w)}
+              />
+              <ResizableTh
+                label="Đối phương"
+                sortKey="counterpart"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.counterpart}
+                onResize={(w) => resizeCol("counterpart", w)}
+              />
             </tr>
             <tr className="bg-white">
               <th className="px-2 py-1" />
@@ -191,7 +232,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
                       {r.rackCode}
                     </Link>
                   </td>
-                  <td className="px-4 py-2 text-slate-600">{r.cableRouteName}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{r.cableRouteName}</td>
                   <td className="px-4 py-2 text-right text-slate-600">{r.portNumber}</td>
                   <td className="px-4 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>
                   <td className="px-4 py-2">
@@ -208,8 +249,8 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
                       {STATUS_LABEL[ds]}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-slate-700">{r.circuit?.name ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600">{r.circuit?.counterpartText ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>
                 </tr>
               );
             })}

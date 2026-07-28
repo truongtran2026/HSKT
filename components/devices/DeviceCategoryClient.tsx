@@ -10,12 +10,20 @@ import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
 import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
 import { formatLastUpdated } from "@/lib/format";
+import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
+import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DeviceRow } from "@/lib/devices";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 
 type SortKey = "name" | "category" | "source";
+
+// Chỉ "Tên thiết bị" cần kéo dãn (có thể rất dài) — Lĩnh vực/Nguồn giá trị
+// ngắn, cố định (yêu cầu người dùng 2026-07-27: "các bảng dữ liệu đều" kéo
+// dãn được).
+type ResizableCol = "name";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 280 };
 
 function cellText(d: DeviceRow, key: SortKey): string {
   switch (key) {
@@ -85,6 +93,7 @@ export default function DeviceCategoryClient({
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("device-category-col-widths", DEFAULT_COL_WIDTHS);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   const [search, setSearch] = useState("");
   // Tick giữ nguyên qua mọi lượt đổi lĩnh vực/tìm kiếm — tập id độc lập,
@@ -481,7 +490,13 @@ export default function DeviceCategoryClient({
       )}
 
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
-        <table className="min-w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: 40 }} />
+            <col style={{ width: colWidths.name }} />
+            <col style={{ width: 140 }} />
+            <col style={{ width: 100 }} />
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-primary-50 text-primary-800">
             <tr>
               <th className="px-4 py-2 font-semibold">
@@ -492,7 +507,15 @@ export default function DeviceCategoryClient({
                   title="Chọn/bỏ chọn tất cả đang hiện"
                 />
               </th>
-              <SortableTh label="Tên thiết bị" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              <ResizableTh
+                label="Tên thiết bị"
+                sortKey="name"
+                activeSortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                width={colWidths.name}
+                onResize={(w) => resizeCol("name", w)}
+              />
               <SortableTh label="Lĩnh vực" sortKey="category" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
               <SortableTh label="Nguồn" sortKey="source" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
             </tr>
@@ -506,7 +529,7 @@ export default function DeviceCategoryClient({
                 <td className="px-4 py-2">
                   <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
                 </td>
-                <td className="px-4 py-2 text-slate-700">
+                <td className="px-4 py-2 text-slate-700 break-words">
                   {d.name}
                   <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
                 </td>

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchCircuitOptions } from "@/lib/circuitOptions";
 import { fetchDevices } from "@/lib/devices";
+import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
@@ -19,6 +20,7 @@ interface RackInfo {
   odf_type: "welded" | "distribution";
   port_count: number;
   station_id: string;
+  domain: "trunk" | "device";
 }
 
 // Kết quả embed thô từ Supabase — port_circuit_links/transit_links có thể trả
@@ -82,7 +84,7 @@ function normalizePort(raw: RawPort): PortView {
 async function getRackAndPorts(rackId: string) {
   const { data: rack, error: rackErr } = await supabase
     .from("racks")
-    .select("id, code, cable_route_name, odf_type, port_count, station_id")
+    .select("id, code, cable_route_name, odf_type, port_count, station_id, domain")
     .eq("id", rackId)
     .maybeSingle();
   if (rackErr) throw rackErr;
@@ -104,14 +106,28 @@ async function getRackAndPorts(rackId: string) {
 }
 
 export default async function RackDetailPage({ params }: { params: { rackId: string } }) {
-  const [data, options, devices] = await Promise.all([getRackAndPorts(params.rackId), fetchCircuitOptions(), fetchDevices()]);
+  // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — "Chuyển tiếp" có thể
+  // trỏ tới rack trung kế HOẶC ODF/DDF nội bộ (domain='device'), cần cả 2 để
+  // nhận diện/chuẩn hóa đúng (yêu cầu người dùng 2026-07-27).
+  const [data, options, devices, trunkPorts] = await Promise.all([
+    getRackAndPorts(params.rackId),
+    fetchCircuitOptions(),
+    fetchDevices(),
+    fetchAllOdfPorts(),
+  ]);
   if (!data) notFound();
   const { rack, ports } = data;
+  // Rack ODF/DDF nội bộ (domain='device', thêm 2026-07-27) dùng lại NGUYÊN
+  // trang này (đúng yêu cầu "dùng lại đúng bảng/nút bấm đã có") — chỉ khác
+  // link "quay lại" phải trỏ đúng danh sách của nó, không phải danh sách rack
+  // trung kế.
+  const backHref = rack.domain === "device" ? "/odf-device/odf-ddf-noi-bo" : "/odf-trunk";
+  const backLabel = rack.domain === "device" ? "← Danh sách ODF/DDF nội bộ" : "← Danh sách rack";
 
   return (
     <div>
-      <Link href="/odf-trunk" className="text-sm text-primary-600 hover:underline">
-        ← Danh sách rack
+      <Link href={backHref} className="text-sm text-primary-600 hover:underline">
+        {backLabel}
       </Link>
       <div className="mt-2">
         <RackHeader
@@ -134,7 +150,14 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       />
 
       <div className="mt-6">
-        <PortTable rackId={rack.id} initialPorts={ports} options={options} devices={devices} stationId={rack.station_id} />
+        <PortTable
+          rackId={rack.id}
+          initialPorts={ports}
+          options={options}
+          devices={devices}
+          stationId={rack.station_id}
+          trunkPorts={trunkPorts}
+        />
       </div>
     </div>
   );
