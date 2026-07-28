@@ -153,9 +153,20 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
         </div>
       </div>
 
-      <p className="text-sm text-slate-500 mb-2">
-        {filtered.length}/{rows.length} port
-      </p>
+      <div className="flex items-center gap-3 mb-2">
+        <p className="text-sm text-slate-500">
+          {filtered.length}/{rows.length} port
+        </p>
+        {Object.values(filters).some((v) => v) && (
+          <button
+            type="button"
+            className="text-xs text-primary-600 hover:underline"
+            onClick={() => setFilters({ route: "", port: "", fiber: "", name: "", counterpart: "" })}
+          >
+            Xóa bộ lọc
+          </button>
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">

@@ -92,9 +92,20 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
 
   return (
     <div>
-      <p className="text-sm text-slate-500 mb-2">
-        {filtered.length}/{racks.length} rack
-      </p>
+      <div className="flex items-center gap-3 mb-2">
+        <p className="text-sm text-slate-500">
+          {filtered.length}/{racks.length} rack
+        </p>
+        {Object.values(filters).some((v) => v) && (
+          <button
+            type="button"
+            className="text-xs text-primary-600 hover:underline"
+            onClick={() => setFilters({ code: "", route: "", odfType: "", portCount: "", inUse: "" })}
+          >
+            Xóa bộ lọc
+          </button>
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">

@@ -4,7 +4,9 @@ import { supabase } from "@/lib/supabase";
 import { fetchCircuitOptions } from "@/lib/circuitOptions";
 import { fetchDevices } from "@/lib/devices";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
+import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
+import DeviceRackPortView from "@/components/odf-device/DeviceRackPortView";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
 
@@ -117,12 +119,16 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   ]);
   if (!data) notFound();
   const { rack, ports } = data;
-  // Rack ODF/DDF nội bộ (domain='device', thêm 2026-07-27) dùng lại NGUYÊN
-  // trang này (đúng yêu cầu "dùng lại đúng bảng/nút bấm đã có") — chỉ khác
-  // link "quay lại" phải trỏ đúng danh sách của nó, không phải danh sách rack
-  // trung kế.
-  const backHref = rack.domain === "device" ? "/odf-device/odf-ddf-noi-bo" : "/odf-trunk";
-  const backLabel = rack.domain === "device" ? "← Danh sách ODF/DDF nội bộ" : "← Danh sách rack";
+  // Rack ODF/DDF nội bộ (domain='device') dùng lại NGUYÊN trang này (đúng
+  // yêu cầu "dùng lại đúng bảng/nút bấm đã có" — RackHeader/RackAdminPanel
+  // không đổi gì) — chỉ khác link "quay lại" (nay trỏ về "/odf-device", nơi
+  // danh sách 112 rack này chuyển tới, xem architecture.md) và phần bảng
+  // port: domain='device' không có port_circuit_links thật nên không dùng
+  // PortTable (chỉ đọc bảng nối đó) — dùng DeviceRackPortView (đối chiếu
+  // text qua lib/deviceRackPorts.ts) thay thế, yêu cầu người dùng 2026-07-28.
+  const backHref = rack.domain === "device" ? "/odf-device" : "/odf-trunk";
+  const backLabel = rack.domain === "device" ? "← Hồ sơ ODF Thiết bị" : "← Danh sách rack";
+  const devicePortRefs = rack.domain === "device" ? await fetchDeviceRackPortRefs(rack.code, trunkPorts) : null;
 
   return (
     <div>
@@ -150,14 +156,18 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       />
 
       <div className="mt-6">
-        <PortTable
-          rackId={rack.id}
-          initialPorts={ports}
-          options={options}
-          devices={devices}
-          stationId={rack.station_id}
-          trunkPorts={trunkPorts}
-        />
+        {devicePortRefs ? (
+          <DeviceRackPortView portCount={rack.port_count} portRefs={devicePortRefs} />
+        ) : (
+          <PortTable
+            rackId={rack.id}
+            initialPorts={ports}
+            options={options}
+            devices={devices}
+            stationId={rack.station_id}
+            trunkPorts={trunkPorts}
+          />
+        )}
       </div>
     </div>
   );

@@ -780,6 +780,29 @@ export default function PortTable({
           </button>
         </div>
       )}
+      {Object.values(filters).some((v) => v) && (
+        <div className="mb-2">
+          <button
+            type="button"
+            className="text-xs text-primary-600 hover:underline"
+            onClick={() =>
+              setFilters({
+                port: "",
+                fiber: "",
+                name: "",
+                interface: "",
+                transit: "",
+                counterpart: "",
+                responsePlan: "",
+                station: "",
+                notes: "",
+              })
+            }
+          >
+            Xóa bộ lọc
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-sm table-fixed">
           <colgroup>

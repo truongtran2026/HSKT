@@ -1,5 +1,6 @@
 import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchDevices } from "@/lib/devices";
+import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import DevicePositionMapClient from "@/components/odf-device/DevicePositionMapClient";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
@@ -7,7 +8,7 @@ import DevicePositionMapClient from "@/components/odf-device/DevicePositionMapCl
 export const dynamic = "force-dynamic";
 
 export default async function DevicePositionMapPage() {
-  const [rows, devices] = await Promise.all([fetchDevicePositionMap(), fetchDevices()]);
+  const [rows, devices, trunkPorts] = await Promise.all([fetchDevicePositionMap(), fetchDevices(), fetchAllOdfPorts()]);
 
   return (
     <div>
@@ -17,7 +18,7 @@ export default async function DevicePositionMapPage() {
         luồng thiết bị chỉ cần chọn thiết bị + vị trí là tự điền đúng vị trí ODF/DDF, tránh gõ tay sai định dạng.
       </p>
       <div className="mt-6">
-        <DevicePositionMapClient rows={rows} devices={devices} />
+        <DevicePositionMapClient rows={rows} devices={devices} trunkPorts={trunkPorts} />
       </div>
     </div>
   );

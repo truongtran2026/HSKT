@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort, type SortDir } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
+import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import {
   isPlaceholderCircuitName,
   looksLikeRealPositionText,
@@ -116,11 +117,10 @@ function FilterOnlyTh({
   );
 }
 
-// Anchor để trang khác (vd danh sách trùng vị trí ở /odf-device/chuan-hoa)
-// trỏ thẳng vào đúng dòng luồng cần sửa — xem rowAnchor()/useEffect bên dưới.
-export function rowAnchor(circuitId: string): string {
-  return `dc-${circuitId}`;
-}
+// rowAnchor() chuyển sang lib/deviceCircuitAnchor.ts (file "use client" này
+// không dùng trực tiếp được từ Server Component như DeviceRackPortView.tsx)
+// — import lại ở đây (dùng ở nhiều chỗ trong file này, xem bên dưới).
+export { rowAnchor };
 
 // Tên tự sinh "(chưa đặt tên)..." chỉ hiện khi CHƯA có vị trí ODF tiếp theo
 // (chưa có luồng dịch vụ thật) — hiện đúng tên hồ sơ khi đã có, để trống cho
@@ -1548,9 +1548,31 @@ export default function DeviceCircuitList({
         <GroupedMultiSelect items={scopedDeviceItems} selected={deviceNames} onChange={setDeviceNames} buttonLabel="Thiết bị" />
       </div>
 
-      <p className="text-sm text-slate-500 mb-2">
-        {filtered.length}/{circuits.length} luồng
-      </p>
+      <div className="flex items-center gap-3 mb-2">
+        <p className="text-sm text-slate-500">
+          {filtered.length}/{circuits.length} luồng
+        </p>
+        {Object.values(filters).some((v) => v) && (
+          <button
+            type="button"
+            className="text-xs text-primary-600 hover:underline"
+            onClick={() =>
+              setFilters({
+                name: "",
+                trib: "",
+                device: "",
+                positionOwn: "",
+                positionNext: "",
+                interface: "",
+                counterpart: "",
+                notes: "",
+              })
+            }
+          >
+            Xóa bộ lọc
+          </button>
+        )}
+      </div>
 
       {/* max-h + overflow-auto (thay vì chỉ overflow-x-auto) là bắt buộc để
           sticky hoạt động: overflow-x khác "visible" mà overflow-y vẫn

@@ -15,7 +15,10 @@
     "dedupe-device-position-map": "tsx scripts/dedupe-device-position-map.ts",
     "standardize-transit-links": "tsx scripts/standardize-transit-links.ts",
     "migrate-counterpart-to-position-next": "tsx scripts/migrate-counterpart-to-position-next.ts",
-    "import-internal-odf-racks": "tsx scripts/import-internal-odf-racks.ts"
+    "import-internal-odf-racks": "tsx scripts/import-internal-odf-racks.ts",
+    "normalize-odf-positions": "tsx scripts/normalize-odf-positions.ts",
+    "fix-100g-label": "tsx scripts/fix-100g-label.ts",
+    "add-missing-rack-odf1-15": "tsx scripts/add-missing-rack-odf1-15.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

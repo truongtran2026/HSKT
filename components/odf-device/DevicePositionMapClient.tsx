@@ -10,6 +10,7 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import { useColumnWidths } from "@/lib/useColumnWidths";
+import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -47,9 +48,11 @@ const EMPTY_DRAFT: Draft = { deviceName: "", devicePosition: "", odfPosition: ""
 export default function DevicePositionMapClient({
   rows,
   devices,
+  trunkPorts,
 }: {
   rows: DevicePositionMapRow[];
   devices: DeviceRow[];
+  trunkPorts: TrunkPortRow[];
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
@@ -359,6 +362,11 @@ export default function DevicePositionMapClient({
             placeholder="VD: ODF 5/7 (37,38)"
             value={draft.odfPosition}
             onChange={(e) => setDraft({ ...draft, odfPosition: e.target.value })}
+            onBlur={() => {
+              const match = matchTrunkPosition(draft.odfPosition, trunkPorts);
+              const canonical = formatCanonicalOdfPosition(match);
+              if (canonical && canonical !== draft.odfPosition) setDraft((d) => ({ ...d, odfPosition: canonical }));
+            }}
           />
           <datalist id="dpm-odf-position-options">
             {odfPositionOptions.map((v) => (
@@ -490,9 +498,20 @@ export default function DevicePositionMapClient({
         </div>
       )}
 
-      <p className="text-sm text-slate-500 mb-2">
-        {filtered.length}/{rows.length} dòng
-      </p>
+      <div className="flex items-center gap-3 mb-2">
+        <p className="text-sm text-slate-500">
+          {filtered.length}/{rows.length} dòng
+        </p>
+        {Object.values(filters).some((v) => v) && (
+          <button
+            type="button"
+            className="text-xs text-primary-600 hover:underline"
+            onClick={() => setFilters({ deviceName: "", devicePosition: "", odfPosition: "" })}
+          >
+            Xóa bộ lọc
+          </button>
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
@@ -575,6 +594,12 @@ export default function DevicePositionMapClient({
                           list="dpm-odf-position-options"
                           value={editDraft.odfPosition}
                           onChange={(e) => setEditDraft({ ...editDraft, odfPosition: e.target.value })}
+                          onBlur={() => {
+                            const match = matchTrunkPosition(editDraft.odfPosition, trunkPorts);
+                            const canonical = formatCanonicalOdfPosition(match);
+                            if (canonical && canonical !== editDraft.odfPosition)
+                              setEditDraft((d) => ({ ...d, odfPosition: canonical }));
+                          }}
                         />
                       </td>
                       <td className="px-4 py-2">

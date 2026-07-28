@@ -397,3 +397,157 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
      cầu người dùng "dùng lại đúng bảng/nút bấm đã có") vì trang đó vốn không
      lọc theo domain khi tra rack theo id — chỉ khác link "quay lại" tự trỏ
      đúng danh sách theo `rack.domain`.
+
+9. **Sửa lỗi biên trong `matchTrunkPosition()` + rà lại dữ liệu ODF cũ đã lưu
+   sai** (phát hiện + xử lý 2026-07-28) — sau khi mục 8 tạo rack ODF/DDF nội
+   bộ thật, người dùng kiểm tra lại đúng luồng test ban đầu
+   ("ADN1.ASBR#2-MX2020 (7/0/3)") thì thấy Ô "Vị trí ODF" vẫn ghi sai cú pháp
+   (`"ODF3/6/(39,40)"`, `"ODF 11/5/(13,14)"` — thiếu khoảng cách, còn dấu "/"
+   thay vì " (" trước danh sách port). Nguyên nhân: `formatCanonicalOdfPosition()`
+   CHỈ chạy khi người dùng gõ+rời khỏi ô (onBlur) — dữ liệu lưu TRƯỚC KHI rack
+   thật tồn tại (test ở mục 8) không tự động chuẩn hóa lại chỉ vì rack đã được
+   tạo sau đó, phải gõ lại + rời ô thì mới kích hoạt.
+   - **Rà soát dữ liệu cũ**: 2 script DRY RUN/`--commit` mới —
+     `scripts/normalize-odf-positions.ts` (rà lại toàn bộ
+     `circuits.device_position_own`/`device_position_next` +
+     `device_position_map.odf_position`, dùng lại ĐÚNG thuật toán
+     `matchTrunkPosition`/`formatCanonicalOdfPosition` đang chạy live — script
+     chỉ sửa đúng những gì UI sẽ tự sửa nếu gõ lại + rời ô hôm nay, không có
+     rủi ro sai khác; `device_position_next` dùng `splitOdfDeviceStructure`/
+     `combinePositionNext` để chỉ chuẩn hóa phần ODF, giữ nguyên phần thiết
+     bị/trib ghép kèm) — đã chạy `--commit`, sửa 62 circuits + 32
+     device_position_map. Không import trực tiếp `lib/trunkPorts.ts` được vào
+     script (file đó `import { supabase } from "@/lib/supabase"`, đọc
+     `process.env` NGAY lúc import module — không tương thích khi chạy qua
+     `tsx` vì `.env.local` chỉ nạp được SAU khi import đã chạy xong) nên 2 hàm
+     match/format được copy nguyên văn vào script; **sửa thuật toán gốc thì
+     phải sửa lại y hệt ở bản copy trong script**.
+   - **Lỗi biên phát hiện được nhờ rà dữ liệu cũ** (nghiêm trọng hơn — ảnh
+     hưởng cả đường live, không chỉ dữ liệu cũ): `matchTrunkPosition()` so
+     khớp bằng `string.startsWith()` sau khi bỏ khoảng trắng, không kiểm tra
+     ranh giới số — vd rack "ODF1/16" KHÔNG tồn tại thật (block 1 chỉ có
+     "ODF1/1".."ODF1/14"), nhưng do "ODF1/16..." vẫn khớp tiền tố ký tự với mã
+     rack ngắn hơn "ODF1/1" (thật), số "6" còn dư bị hiểu nhầm thành 1 port,
+     sinh dữ liệu SAI kiểu `"ODF 1/1 (06,05,06)"` từ input đúng
+     `"ODF 1/16 (05,06)"`. Đã sửa: chặn khớp khi điểm cắt nằm GIỮA 1 dãy số
+     liền nhau (mã rack kết thúc bằng chữ số VÀ phần còn lại bắt đầu bằng chữ
+     số) — coi như không khớp, thử mã ngắn hơn tiếp theo, cuối cùng trả về
+     "không khớp" đúng bản chất (rack đó chưa tồn tại thật, không đoán đại).
+     Áp dụng ở CẢ `lib/trunkPorts.ts` (đường live) lẫn bản copy trong script.
+     Đã kiểm chứng lại bằng Playwright: gõ "ODF1/16 (5,6)" (rack không tồn
+     tại) → giữ nguyên, không tự sửa sai; gõ "odf1/14/3,4" (rack 2 chữ số có
+     thật, dễ nhầm với "ODF1/1") → vẫn khớp đúng "ODF 1/14 (03,04)".
+   - **Thêm chuẩn hóa cho ô thứ 3 còn thiếu**: `DevicePositionMapClient.tsx`
+     (trang `/odf-device/vi-tri-thiet-bi`, cả khung "Thêm dòng mới" lẫn Sửa)
+     trước đó KHÔNG có onBlur chuẩn hóa cho ô "Vị trí ODF/DDF" (chỉ
+     `DeviceCircuitList.tsx`/`PortTable.tsx` có) — nay thêm cho đủ 3 nơi, nhận
+     `trunkPorts` qua prop mới (`fetchAllOdfPorts()`, page.tsx truyền vào).
+
+10. **"100G" → "100GE"** (yêu cầu người dùng 2026-07-28) — dữ liệu import gốc
+    còn sót nhãn tốc độ giao tiếp thiếu chữ "E" (`circuits.interface_type` và
+    cả tiền tố trong `circuits.name` tự do, vd `"100G AĐN1.P2 (...) - ..."`) —
+    "100GE" vốn đã là giá trị đúng dùng phổ biến sẵn (placeholder ô "Giao
+    tiếp", comment cột `interface_type` trong migration gốc), "100G" chỉ là
+    thiếu sót còn sót lại, không phải 1 giá trị hợp lệ khác. Script
+    `scripts/fix-100g-label.ts` (DRY RUN/`--commit`, regex `/100G(?!E)/gi` —
+    bỏ qua cụm đã đúng "100GE" sẵn) đã sửa 328 circuits. Đây là sửa DỮ LIỆU
+    (chạy 1 lần), KHÔNG phải sửa schema hay thêm validation — nếu sau này lại
+    gõ "100G" thiếu chữ E thì vẫn lưu được bình thường (ô "Giao tiếp" là
+    free-text/datalist gợi ý, không ép buộc theo danh sách cố định).
+
+11. **Nút "Xóa bộ lọc"** (yêu cầu người dùng 2026-07-28) — mỗi bảng dữ liệu có
+    nhiều ô lọc theo cột (`FilterInput`, xem mục lọc kiểu Excel ở
+    `lib/tableFilter.ts`) nay có thêm 1 nút xóa TOÀN BỘ ô lọc của bảng đó về
+    rỗng cùng lúc, thay vì phải xóa tay từng ô — chỉ hiện khi có ít nhất 1 ô
+    đang lọc (tránh rối khi không cần). Áp dụng cho cả 5 bảng có ô lọc:
+    `DeviceCircuitList.tsx`, `PortTable.tsx`, `RackListTable.tsx`,
+    `SearchClient.tsx`, `DevicePositionMapClient.tsx`. Không tạo hook/component
+    dùng chung cho việc này — mỗi bảng tự quản lý state `filters` riêng từ
+    trước (không có 1 hook lọc chung để móc vào), nút chỉ gọi thẳng
+    `setFilters(...)` với object rỗng đúng shape từng bảng, đủ đơn giản để
+    không cần trừu tượng hóa thêm. `SearchClient.tsx` CHỈ xóa các ô lọc tự do
+    theo cột (route/port/fiber/name/counterpart) — KHÔNG đụng tới bộ lọc
+    "Trạng thái" (nút bấm)/"chọn rack" (dropdown) vì đó là control khác, bấm 1
+    lần đã xong, không phải nỗi đau "gõ nhiều ô" mà người dùng phản ánh.
+
+12. **Rack "ODF1/15" thiếu thật** (phát hiện khi rà lỗi biên mục 9 — người
+    dùng xác nhận 2026-07-28: block 1 chỉ có thật tới "ODF1/15", "ODF1/16"
+    xuất hiện 5 lần trong dữ liệu chỉ là lỗi gõ/nhầm, KHÔNG tạo rack cho nó).
+    `scripts/add-missing-rack-odf1-15.ts` (DRY RUN/`--commit`) tạo rack +
+    48 port. **Lưu ý quan trọng — thử SAI trước khi ra đúng**: lần đầu nhân
+    bản theo rack liền trước "ODF1/14" (`domain='trunk'`, `odf_type=
+    'distribution'`) vì tưởng cùng bản chất "phân phối/dự phòng" trong 1 block
+    trung kế thật; kiểm thử Playwright ngay sau đó lộ ra 2 vấn đề:
+    - "ODF1/14" hóa ra là rack trung kế THẬT SỰ, có luồng gắn qua
+      `port_circuit_links` (Tx/Rx) — KHÔNG hề được tham chiếu qua
+      `device_position_own/next` như "ODF1/15". Số block giống nhau không có
+      nghĩa cùng bản chất domain.
+    - `domain='trunk'` khiến UI tự khóa Ô2 "tiếp theo" vào `cable_route_name`
+      (chế độ Cáp quang) + bắt Ô3 phải là SỐ SỢI — nhưng dữ liệu thật ghép
+      kèm "ODF 1/15" lại là TÊN THIẾT BỊ (OME-TK#1/#2) + trib dạng "S10-2"
+      (không phải số sợi), sinh lỗi sai "Sợi 'S10-2' không tồn tại trong
+      tuyến cáp 'ODF1/15'" và Ô2 hiện rỗng dù dữ liệu thật có tên thiết bị.
+    → Đã sửa lại **`domain='device'`** (cable_route_name=null, fiber_number=
+    null mọi port — đúng quy ước 112 rack "ODF/DDF nội bộ" mục 8, vì bản chất
+    dùng giống hệt: chỉ tồn tại qua text tự do, chưa từng có `port_circuit_links`
+    thật). Bài học: **quyết định domain='trunk'/'device' phải dựa vào CÁCH
+    RACK ĐƯỢC THAM CHIẾU THẬT trong dữ liệu (qua `port_circuit_links` thật hay
+    chỉ qua text tự do `device_position_*`), KHÔNG dựa vào số block hay rack
+    liền kề nào** — 2 rack cùng nằm trong 1 block trung kế (cùng số "1") vẫn
+    có thể khác domain nhau.
+
+13. **"Hồ sơ ODF Thiết bị" đổi sang cấu trúc rack → port → luồng** (yêu cầu
+    người dùng 2026-07-28) — gộp 2 trang "Vị trí thiết bị → ODF/DDF" +
+    "ODF/DDF nội bộ" thành 1, để xem ODF/DDF thiết bị theo đúng kiểu "Hồ sơ
+    ODF Trung kế" (chọn rack → thấy port nào đang có luồng thật) thay vì danh
+    sách luồng phẳng như trước.
+    - **Định tuyến lại**: `/odf-device` (giữ nguyên tên/URL quen thuộc) nay
+      là danh sách rack domain='device' (nội dung cũ ở
+      `/odf-device/odf-ddf-noi-bo`, route này đã xóa). Danh sách luồng phẳng
+      (Thêm/Sửa/Xóa, `DeviceCircuitList.tsx`) chuyển sang
+      `/odf-device/sua-luong`, đổi tên "Sửa luồng thiết bị" — vẫn là nơi DUY
+      NHẤT thao tác chi tiết luồng. `/odf-device/vi-tri-thiet-bi` (thư viện
+      gợi ý, `DevicePositionMapClient.tsx`) giữ nguyên route/component, chỉ
+      bỏ khỏi Sidebar, truy cập qua link ở trang `/odf-device` mới.
+    - **Vì sao KHÔNG dùng `port_circuit_links` thật cho luồng thiết bị**:
+      khảo sát code xác nhận "luồng thiết bị" được ĐỊNH NGHĨA trong toàn bộ
+      hệ thống (kể cả 6+ script, xem `lib/deviceCircuits.ts`
+      `fetchDeviceCircuits()`) là "circuit KHÔNG có `port_circuit_links`
+      nào" — nếu gán luồng thiết bị vào bảng nối thật để hiện chặt như trung
+      kế, nó sẽ tự động biến mất khỏi mọi nơi đang coi nó là luồng thiết bị.
+      Đây là thay đổi kiến trúc lớn, không làm trong đợt này.
+    - **`lib/deviceRackPorts.ts`** (mới) — `fetchDeviceRackPortRefs(rackCode,
+      trunkPorts)`: quét toàn bộ `circuits`, đối chiếu
+      `device_position_own`/`device_position_next` (tách phần ODF khỏi phần
+      thiết bị/trib qua `splitOdfDeviceStructure()` trước khi so khớp — thiếu
+      bước này từng gây đếm sai số liệu khi khảo sát, xem dưới) qua
+      `matchTrunkPosition()` đã có, trả về map port → danh sách luồng
+      own/next. Đây là ĐỐI CHIẾU TEXT một chiều (port → luồng), KHÔNG phải
+      bảng nối thật.
+    - **`components/odf-device/DeviceRackPortView.tsx`** (mới, Server
+      Component thuần, không sửa tại chỗ được — yêu cầu người dùng: đợt này
+      chỉ xem + link nhảy sang Sửa) — dùng ở `/odf-trunk/[rackId]/page.tsx`
+      (route dùng chung cho cả 2 domain, y hệt trước) THAY CHO `PortTable`
+      khi `rack.domain==='device'`. Mỗi port hiện tối đa 2 dòng: luồng có
+      **own** = port này, luồng có **next** = port này (đầu xa của 1 luồng
+      khác) — mỗi dòng link `/odf-device/sua-luong#dc-<id>`.
+    - **`lib/deviceCircuitAnchor.ts`** (mới) — tách `rowAnchor()` ra khỏi
+      `DeviceCircuitList.tsx` (file `"use client"`) thành file thuần không
+      client/server gì, vì Next.js App Router **không cho Server Component
+      dùng trực tiếp 1 export thường (không phải component) từ module
+      `"use client"`** (gặp lỗi runtime "is not a function" khi thử — bài
+      học chung: hàm tiện ích cần dùng ở CẢ Server lẫn Client Component phải
+      nằm ở file không có `"use client"`). `DeviceCircuitList.tsx` vẫn
+      `export { rowAnchor }` lại (import từ file mới) để nơi khác không phải
+      đổi cách import.
+    - **Khảo sát dữ liệu trước khi xây** (minh bạch: lần đầu tính sai) — quét
+      thử ban đầu báo "696 port bị nhiều luồng mâu thuẫn" do BUG ở chính
+      script khảo sát (quét nhầm cả chữ số trong tên thiết bị/trib phía sau
+      `device_position_next`, chưa tách phần ODF trước khi so khớp — đúng lỗi
+      đã tránh được ở `lib/deviceRackPorts.ts` nhờ dùng `splitOdfDeviceStructure()`
+      trước). Sau khi sửa cách khảo sát, dữ liệu THẬT SẠCH: 3314/5424 port có
+      tham chiếu, 2014 port có đủ own+next (đúng mô hình 2 chặng), chỉ **1
+      xung đột thật** (2 luồng cùng nhận own="ODF 4/3 (43,44)") — đã xác nhận
+      với người dùng luồng "TSSE3B (ETMOD-25-3)" sai (thiết bị đã tắt nguồn)
+      và xóa `device_position_own` của đúng dòng đó (còn 1 dòng khác cùng tên
+      nhưng own khác, không đụng tới).

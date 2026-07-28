@@ -39,6 +39,7 @@ Người dùng là kỹ sư Điện tử Viễn thông (ETE), không phải lậ
   7. UI ODF/DDF thiết bị + liên kết 2 chiều với ODF trung kế qua `devices`/`transit_links`.
 - Sau mỗi giai đoạn, tóm tắt ngắn gọn đã làm gì, còn thiếu gì, để người dùng xác nhận trước khi qua bước tiếp theo.
 - Không tự ý đổi schema trong `architecture.md` mà không hỏi trước — nếu phát hiện vấn đề khi code thực tế, dừng lại và đề xuất thay đổi, chờ xác nhận.
+- **Cập nhật file `.md` ngay sau mỗi việc/tính năng làm xong** (yêu cầu người dùng 2026-07-28, không đợi dồn tới cuối buổi): chi tiết schema/tính năng/lỗi đã sửa → ghi vào `architecture.md` (nguồn sự thật về data model, xem đầu file). Còn thay đổi về CHÍNH quy trình/nguyên tắc làm việc chung (như dòng này) → ghi thẳng vào `CLAUDE.md`. Tránh chép trùng chi tiết kỹ thuật vào đây — `CLAUDE.md` chỉ giữ nguyên tắc/quy trình cấp cao, chi tiết luôn ở `architecture.md`.
 
 ## Giao diện / UX
 - Tông màu xanh dương sáng, layout sidebar trái (menu: Xem / Sửa / Dashboard / Cài đặt — xem ảnh mẫu người dùng cung cấp, tên app tham khảo "PTools").

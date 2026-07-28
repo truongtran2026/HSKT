@@ -166,6 +166,17 @@ export function matchTrunkPosition(text: string, trunkPorts: TrunkPortRow[]): Tr
     if (!normalized.startsWith(normalizedCode)) continue;
 
     const remainder = normalized.slice(normalizedCode.length);
+    // Chặn khớp SAI khi mã rack DÀI HƠN (chứa cùng tiền tố số) không tồn tại
+    // thật: vd "ODF1/16" không có rack thật (chỉ có "ODF1/1".."ODF1/14"),
+    // nếu không chặn thì "ODF1/1" (ngắn hơn, cũng khớp tiền tố ký tự) sẽ
+    // "nuốt" nhầm số "6" còn lại thành 1 port giả, sinh dữ liệu sai kiểu
+    // "ODF 1/1 (06,...)" — phát hiện thực tế 2026-07-28 khi rà dữ liệu cũ
+    // (scripts/normalize-odf-positions.ts). Mã rack luôn kết thúc bằng chữ
+    // số nên chỉ cần chặn đúng 1 trường hợp: điểm cắt nằm GIỮA 1 dãy số liền
+    // nhau (remainder bắt đầu bằng chữ số) — coi như KHÔNG khớp, thử mã
+    // ngắn hơn tiếp theo (rất có thể cũng không khớp -> trả về matched:false,
+    // đúng vì rack này chưa tồn tại thật, không nên đoán đại).
+    if (/\d$/.test(normalizedCode) && /^\d/.test(remainder)) continue;
     const requestedPortNumbers = [...remainder.matchAll(/\d+/g)].map((m) => parseInt(m[0], 10));
     const portsInRack = trunkPorts.filter((p) => p.rackCode === rackCode);
     const cableRouteName = portsInRack[0]?.cableRouteName ?? null;

@@ -4,11 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 // "Xem" và "Sửa" từng tách riêng ở giai đoạn skeleton (khi CRUD thật chưa
-// tồn tại) nhưng nay cả 2 trang ODF trung kế/thiết bị đều xem+sửa ngay tại
-// chỗ (PortTable/DeviceCircuitList có sẵn nút Sửa), nên gộp lại 1 nhóm cho
-// đỡ trùng lặp — không còn lý do để tách "Xem" và "Sửa" ra 2 mục giống hệt
-// nhau nữa. Dashboard (thống kê tổng quan) tách nhóm riêng lên đầu, phần
-// hồ sơ/chi tiết số liệu để nhóm dưới cho đỡ rối.
+// tồn tại) nhưng ODF trung kế đã gộp xem+sửa ngay tại chỗ từ lâu (PortTable
+// có sẵn nút Sửa) nên không tách riêng nữa. Riêng "Hồ sơ ODF Thiết bị" lại
+// tách LẠI thành 2 mục (yêu cầu người dùng 2026-07-28): "Hồ sơ" giờ là danh
+// sách rack/port xem theo cấu trúc giống trung kế (DeviceRackPortView, chỉ
+// xem — không có port_circuit_links thật để sửa tại chỗ như trung kế, xem
+// architecture.md), còn "Sửa luồng thiết bị" (DeviceCircuitList) mới là nơi
+// duy nhất Thêm/Sửa/Xóa chi tiết luồng. Dashboard (thống kê tổng quan) tách
+// nhóm riêng lên đầu, phần hồ sơ/chi tiết số liệu để nhóm dưới cho đỡ rối.
 const menuGroups = [
   {
     label: "Thống kê",
@@ -19,8 +22,7 @@ const menuGroups = [
     items: [
       { href: "/odf-trunk", label: "Hồ sơ ODF Trung kế" },
       { href: "/odf-device", label: "Hồ sơ ODF Thiết bị" },
-      { href: "/odf-device/vi-tri-thiet-bi", label: "Vị trí thiết bị → ODF/DDF" },
-      { href: "/odf-device/odf-ddf-noi-bo", label: "ODF/DDF nội bộ" },
+      { href: "/odf-device/sua-luong", label: "Sửa luồng thiết bị" },
       { href: "/search", label: "Tìm kiếm nhanh" },
     ],
   },
