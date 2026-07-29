@@ -1515,3 +1515,35 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       nhanh 1 dòng" ở trang Chất lượng dữ liệu (mục 28) — phức tạp hơn (cần
       1 form sửa thật, không chỉ xem), để riêng cho đợt sau; Giai đoạn 3
       (command palette Cmd/Ctrl+K).
+
+30. **Sửa lỗi "Thêm dòng mới" ở trang Vị trí thiết bị → ODF/DDF trông như
+    không có tác dụng** (báo lỗi + sửa 2026-07-29, `DevicePositionMapClient.tsx`)
+    — người dùng điền form "Thêm dòng mới" và bấm Thêm nhưng không thấy dòng
+    mới xuất hiện trong bảng bên dưới, tưởng thao tác thất bại.
+    - **Nguyên nhân thật** (xác nhận bằng Playwright chạy thật trên dev
+      server, không chỉ đọc code): dòng mới VẪN được lưu đúng vào Supabase
+      (POST 201, tổng số dòng ở "X/Y dòng" tăng đúng 1) — nhưng nếu đang có 1
+      chip **Lĩnh vực** khác "Tất cả" đang chọn (hoặc 1 ô lọc cột đang gõ dở),
+      dòng mới bị CHÍNH bộ lọc đó loại khỏi danh sách hiển thị ngay lập tức.
+      Rõ nhất khi thêm 1 thiết bị chưa từng có trong `devices` — dòng mới rơi
+      vào lĩnh vực "Chưa phân loại", nếu chip đang chọn không phải "Chưa phân
+      loại"/"Tất cả" thì biến mất hoàn toàn khỏi bảng, chỉ còn dấu vết là số
+      bên trái "X/Y dòng" không tăng dù số bên phải có tăng — rất dễ bỏ qua.
+    - **Sửa**: thêm state `addHiddenNotice`. Ngay sau khi `addRow()` insert
+      thành công, tính trước (dùng lại `matchesFilter()` + `categoryByDeviceKey`
+      đã có sẵn) xem dòng vừa thêm có qua được cả bộ lọc cột lẫn chip Lĩnh vực
+      **hiện tại** không — nếu không, hiện banner cảnh báo màu vàng ngay trong
+      khung "Thêm dòng mới" kèm nút "Bỏ lọc để xem" (xóa cả 3 ô lọc cột VÀ
+      reset chip Lĩnh vực về "Tất cả" cùng lúc). Có ý KHÔNG tự động xóa bộ lọc
+      thay người dùng ngay khi thêm — vì họ có thể đang cố tình lọc theo 1
+      lĩnh vực để thêm liên tiếp nhiều dòng cùng loại; chỉ báo rõ + để họ tự
+      quyết định có xem ngay hay không. Banner tự ẩn khi người dùng tự đổi bộ
+      lọc/chip sau đó (tránh còn sót lại thông báo đã cũ/sai ngữ cảnh).
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Playwright chạy thật (KHÔNG chỉ mô
+      phỏng) trên dữ liệu thật, có dọn dữ liệu test qua script xóa trực tiếp
+      sau khi xong: chọn chip "IP" → thêm 1 thiết bị lạ → banner hiện đúng,
+      dòng đúng là ẩn (đếm "190/2034" không đổi phần lọc dù tổng tăng) → bấm
+      "Bỏ lọc để xem" → dòng xuất hiện, banner biến mất, chip "Tất cả" sáng
+      lại, đếm về "2035/2035". Trường hợp chip đang chọn SẴN LÀ "Chưa phân
+      loại" (dòng mới lẽ ra vẫn lọt qua) → xác nhận banner KHÔNG hiện sai
+      (không báo giả khi dòng thật ra vẫn nhìn thấy được).

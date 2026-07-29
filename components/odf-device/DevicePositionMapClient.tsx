@@ -63,6 +63,13 @@ export default function DevicePositionMapClient({
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cảnh báo khi dòng vừa Thêm bị CHÍNH bộ lọc/lĩnh vực đang chọn ẩn mất khỏi
+  // bảng ngay sau khi lưu — lỗi thực tế gặp phải 2026-07-29 (tưởng bấm Thêm
+  // không có tác dụng, thật ra dữ liệu đã lưu đúng, chỉ là đang bị lọc ẩn).
+  // Không tự ý xóa bộ lọc thay người dùng (có thể họ đang cố tình lọc theo 1
+  // lĩnh vực để thêm liên tiếp nhiều dòng cùng loại) — chỉ báo rõ + có nút để
+  // tự bỏ lọc nếu muốn xem ngay.
+  const [addHiddenNotice, setAddHiddenNotice] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   // Mặc định MỞ SẴN (không thu gọn) — người dùng phản hồi 2026-07-27: bấm
   // lọc "Chưa phân loại" ở khung Lĩnh vực chỉ lọc bảng bên dưới, không liên
@@ -85,6 +92,7 @@ export default function DevicePositionMapClient({
 
   function setFilter(key: SortKey, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
+    setAddHiddenNotice(null);
   }
 
   const odfPositionOptions = useMemo(() => {
@@ -240,10 +248,12 @@ export default function DevicePositionMapClient({
       }
       return [...prev, cat];
     });
+    setAddHiddenNotice(null);
   }
 
   function resetCategory() {
     setCategoryFilter(null);
+    setAddHiddenNotice(null);
   }
 
   const filtered = useMemo(() => {
@@ -268,16 +278,33 @@ export default function DevicePositionMapClient({
     }
     setBusy(true);
     setError(null);
+    setAddHiddenNotice(null);
+    const deviceName = draft.deviceName.trim();
+    const devicePosition = draft.devicePosition.trim() || null;
+    const odfPosition = draft.odfPosition.trim() || null;
     const { error: err } = await supabase.from("device_position_map").insert({
-      device_name: draft.deviceName.trim(),
-      device_position: draft.devicePosition.trim() || null,
-      odf_position: draft.odfPosition.trim() || null,
+      device_name: deviceName,
+      device_position: devicePosition,
+      odf_position: odfPosition,
     });
     setBusy(false);
     if (err) {
       setError(err.message);
       return;
     }
+
+    // Kiểm tra ngay: dòng vừa lưu có bị bộ lọc cột HOẶC chip Lĩnh vực đang
+    // chọn loại khỏi bảng không — xem ghi chú ở khai báo addHiddenNotice.
+    const passesColumnFilters =
+      matchesFilter(deviceName, filters.deviceName) &&
+      matchesFilter(devicePosition, filters.devicePosition) &&
+      matchesFilter(odfPosition, filters.odfPosition);
+    const newRowCategory = categoryByDeviceKey.get(normalizeDeviceNameKey(deviceName)) ?? UNCATEGORIZED_LABEL;
+    const passesCategory = categoryFilter === null || categoryFilter.includes(newRowCategory);
+    if (!passesColumnFilters || !passesCategory) {
+      setAddHiddenNotice(`Đã lưu dòng mới ("${deviceName}"), nhưng đang bị ẩn bởi bộ lọc hiện tại.`);
+    }
+
     setDraft(EMPTY_DRAFT);
     router.refresh();
   }
@@ -377,6 +404,22 @@ export default function DevicePositionMapClient({
             Thêm
           </button>
         </div>
+        {addHiddenNotice && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span>{addHiddenNotice}</span>
+            <button
+              type="button"
+              className="font-medium underline hover:text-amber-900"
+              onClick={() => {
+                setFilters({ deviceName: "", devicePosition: "", odfPosition: "" });
+                setCategoryFilter(null);
+                setAddHiddenNotice(null);
+              }}
+            >
+              Bỏ lọc để xem
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="mb-4">
