@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort, type SortDir } from "@/lib/useSort";
@@ -13,9 +14,11 @@ import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, typ
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import type { CircuitOptions } from "@/lib/circuitOptions";
-import type { DeviceRow } from "@/lib/devices";
+import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
+import { formatLastUpdated } from "@/lib/format";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import FilterInput from "@/components/ui/FilterInput";
+import SlideOverPanel from "@/components/ui/SlideOverPanel";
 
 export interface PortView {
   id: string;
@@ -1306,6 +1309,17 @@ function EditRow({
   // "Cáp quang (tiếp theo)" đã làm ở DeviceCircuitList.tsx (isCableMode).
   const bareTrunkCableRouteName = bareMatch && bareMatch.rackDomain === "trunk" ? bareMatch.cableRouteName : null;
 
+  // Slide-over "xem nhanh" (yêu cầu người dùng 2026-07-29, "Giai đoạn 2") —
+  // xem port trung kế đích / thiết bị đối phương mà KHÔNG rời rack đang sửa.
+  // Port đích lấy thẳng từ `trunkPorts` (đã tải sẵn TOÀN BỘ port + luồng
+  // hiện tại của mọi rack cho trang này) — không cần fetch thêm gì.
+  const [quickView, setQuickView] = useState<"trunk" | "device" | null>(null);
+  const bareMatchedTrunkPorts = useMemo(() => {
+    if (!bareMatch || bareMatch.rackDomain !== "trunk" || !bareMatch.resolvedPorts) return [];
+    const portNumbers = new Set(bareMatch.resolvedPorts.map((p) => p.portNumber));
+    return trunkPorts.filter((p) => p.rackCode === bareMatch.rackCode && portNumbers.has(p.portNumber));
+  }, [bareMatch, trunkPorts]);
+
   // Ô "Thiết bị" (tách từ cấu trúc 2, yêu cầu người dùng 2026-07-29) — check
   // "đã có trong hồ sơ thiết bị (devices) chưa", CÙNG kiểu UX với ô Vị trí
   // ODF ở trên (so khớp với dữ liệu THẬT, gợi ý đúng tên chuẩn đang lưu nếu
@@ -1449,6 +1463,15 @@ function EditRow({
                 {showWillCreateDeviceHint && (
                   <p className="text-xs text-amber-600">Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu.</p>
                 )}
+                {matchedDevice && (
+                  <button
+                    type="button"
+                    className="self-start text-xs text-primary-600 hover:underline"
+                    onClick={() => setQuickView("device")}
+                  >
+                    Xem nhanh thiết bị này →
+                  </button>
+                )}
                 <input
                   className="input"
                   list="port-table-transit-device-port-options"
@@ -1507,6 +1530,13 @@ function EditRow({
                       Tên ODF trung kế (tự nhận diện — nối thẳng, không qua thiết bị)
                     </div>
                     <div className="input flex items-center bg-slate-100 text-slate-500">{bareTrunkCableRouteName}</div>
+                    <button
+                      type="button"
+                      className="self-start text-xs text-primary-600 hover:underline"
+                      onClick={() => setQuickView("trunk")}
+                    >
+                      Xem nhanh port đích →
+                    </button>
                   </>
                 )}
               </div>
@@ -1596,6 +1626,61 @@ function EditRow({
           </button>
         </div>
       </td>
+
+      {/* Chỉ render khi thật sự có thể mở (yêu cầu người dùng 2026-07-29) —
+          tránh mỗi dòng đang sửa đều âm thầm gắn thêm 2 <aside> vào DOM dù
+          không liên quan gì (bareMatch/matchedDevice không khớp thì never
+          mở được panel này), gây rối khi có nhiều dòng debug/test DOM. */}
+      {bareTrunkCableRouteName && (
+      <SlideOverPanel open={quickView === "trunk"} onClose={() => setQuickView(null)} title={`${bareMatch?.rackCode ?? ""} — xem nhanh`}>
+        <div className="space-y-3">
+          {bareMatchedTrunkPorts.map((p) => (
+            <div key={p.portId} className="rounded border border-slate-200 p-3 text-sm">
+              <p className="font-medium text-slate-700">
+                Port {p.portNumber}
+                {p.fiberNumber != null && p.fiberNumber !== p.portNumber ? ` (sợi ${p.fiberNumber})` : ""}
+              </p>
+              {p.circuit ? (
+                <>
+                  <p className="mt-1 text-slate-600">Luồng: {p.circuit.name}</p>
+                  {p.circuit.interfaceType && <p className="text-slate-500">Giao tiếp: {p.circuit.interfaceType}</p>}
+                </>
+              ) : (
+                <p className="mt-1 text-slate-400">— Trống —</p>
+              )}
+            </div>
+          ))}
+          {bareMatchedTrunkPorts.length === 0 && <p className="text-sm text-slate-400">Không tìm thấy port thật khớp.</p>}
+          {bareMatchedTrunkPorts[0] && (
+            <Link
+              href={`/odf-trunk/${bareMatchedTrunkPorts[0].rackId}#port-${bareMatchedTrunkPorts[0].portId}`}
+              className="text-sm text-primary-600 hover:underline"
+            >
+              Mở đầy đủ rack {bareMatch?.rackCode} →
+            </Link>
+          )}
+        </div>
+      </SlideOverPanel>
+      )}
+
+      {matchedDevice && (
+      <SlideOverPanel open={quickView === "device"} onClose={() => setQuickView(null)} title={matchedDevice.name}>
+        <div className="space-y-2 text-sm">
+          <p>
+            <span className="text-slate-500">Lĩnh vực:</span> {deviceCategoryLabel(matchedDevice.category)}
+          </p>
+          <p>
+            <span className="text-slate-500">Nguồn:</span> {matchedDevice.source === "manual" ? "Nhập tay" : "Tự sinh"}
+          </p>
+          <p>
+            <span className="text-slate-500">Cập nhật lần cuối:</span> {formatLastUpdated(matchedDevice.updatedAt)}
+          </p>
+          <Link href="/odf-device/sua-luong" className="text-primary-600 hover:underline">
+            Mở &quot;Hồ sơ đấu nối&quot; →
+          </Link>
+        </div>
+      </SlideOverPanel>
+      )}
     </tr>
   );
 }

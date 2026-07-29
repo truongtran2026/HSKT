@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort, type SortDir } from "@/lib/useSort";
@@ -29,6 +30,7 @@ import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
+import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -316,6 +318,17 @@ export default function DeviceCircuitList({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  // Slide-over "xem nhanh port trung kế" (yêu cầu người dùng 2026-07-29,
+  // "Giai đoạn 2") — renderCircuitFormFields() gọi từ CẢ form Sửa lẫn form
+  // Thêm mới, nên đặt state dùng chung ở đây thay vì lặp lại 2 nơi. Lưu
+  // thẳng TrunkPositionMatch (không chỉ 1 flag) vì mỗi lần bấm có thể là
+  // match khác nhau (từ dòng đang sửa khác nhau).
+  const [quickViewTrunkMatch, setQuickViewTrunkMatch] = useState<TrunkPositionMatch | null>(null);
+  const quickViewTrunkPorts = useMemo(() => {
+    if (!quickViewTrunkMatch || !quickViewTrunkMatch.resolvedPorts) return [];
+    const portNumbers = new Set(quickViewTrunkMatch.resolvedPorts.map((p) => p.portNumber));
+    return trunkPorts.filter((p) => p.rackCode === quickViewTrunkMatch.rackCode && portNumbers.has(p.portNumber));
+  }, [quickViewTrunkMatch, trunkPorts]);
   // Phân biệt highlightId đến từ "vừa thêm mới" (đẩy lên đầu bảng) với
   // highlightId đến từ link "#dc-<id>" ngoài trang (chỉ tô sáng, giữ nguyên
   // vị trí theo sắp xếp) — xem filtered (useMemo) và submitCreate() bên dưới.
@@ -1277,6 +1290,13 @@ export default function DeviceCircuitList({
               {/* Read-only (yêu cầu người dùng: khóa không cho sửa tay để đảm
                   bảo toàn vẹn dữ liệu — lấy thẳng từ racks.cable_route_name). */}
               <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">{trunkMatch.cableRouteName ?? "—"}</div>
+              <button
+                type="button"
+                className="mt-1 self-start text-xs text-primary-600 hover:underline"
+                onClick={() => setQuickViewTrunkMatch(trunkMatch)}
+              >
+                Xem nhanh port đích →
+              </button>
               <div className="mt-1 text-[11px] text-slate-400">
                 Sợi quang (tiếp theo) <span className="text-red-500">*</span>
               </div>
@@ -1929,6 +1949,40 @@ export default function DeviceCircuitList({
           </tbody>
         </table>
       </div>
+
+      <SlideOverPanel
+        open={quickViewTrunkMatch !== null}
+        onClose={() => setQuickViewTrunkMatch(null)}
+        title={`${quickViewTrunkMatch?.rackCode ?? ""} — xem nhanh`}
+      >
+        <div className="space-y-3">
+          {quickViewTrunkPorts.map((p) => (
+            <div key={p.portId} className="rounded border border-slate-200 p-3 text-sm">
+              <p className="font-medium text-slate-700">
+                Port {p.portNumber}
+                {p.fiberNumber != null && p.fiberNumber !== p.portNumber ? ` (sợi ${p.fiberNumber})` : ""}
+              </p>
+              {p.circuit ? (
+                <>
+                  <p className="mt-1 text-slate-600">Luồng: {p.circuit.name}</p>
+                  {p.circuit.interfaceType && <p className="text-slate-500">Giao tiếp: {p.circuit.interfaceType}</p>}
+                </>
+              ) : (
+                <p className="mt-1 text-slate-400">— Trống —</p>
+              )}
+            </div>
+          ))}
+          {quickViewTrunkPorts.length === 0 && <p className="text-sm text-slate-400">Không tìm thấy port thật khớp.</p>}
+          {quickViewTrunkPorts[0] && (
+            <Link
+              href={`/odf-trunk/${quickViewTrunkPorts[0].rackId}#port-${quickViewTrunkPorts[0].portId}`}
+              className="text-sm text-primary-600 hover:underline"
+            >
+              Mở đầy đủ rack {quickViewTrunkMatch?.rackCode} →
+            </Link>
+          )}
+        </div>
+      </SlideOverPanel>
     </div>
   );
 }

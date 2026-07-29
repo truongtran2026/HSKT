@@ -1460,3 +1460,58 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       slide-over panel (tra cứu nhanh không rời trang đang sửa) và command
       palette (Cmd/Ctrl+K tìm xuyên hệ thống, nâng cấp từ trang Tìm kiếm
       nhanh hiện có).
+
+29. **Giai đoạn 2 — Slide-over panel "xem nhanh"** (yêu cầu người dùng
+    2026-07-29, tiếp mục 28) — panel trượt từ phải, xem nhanh 1 thứ liên quan
+    (port trung kế đích / thiết bị đối phương) mà KHÔNG rời trang/dòng đang
+    sửa (khác điều hướng `<Link>` full-page trước đây, mất context đang cuộn/
+    đang sửa dở).
+    - **`components/ui/SlideOverPanel.tsx`** (mới, dùng chung) — ESC hoặc bấm
+      backdrop để đóng, `z-50` (cao hơn Sidebar lúc bỏ ghim, `z-40`). Portal
+      thẳng vào `document.body` (`createPortal`) — **bắt buộc** vì nơi gọi
+      đầu tiên (`PortTable.tsx EditRow`) trả về nguyên 1 `<tr>`; nếu không
+      portal thì `<aside>` sẽ thành con trực tiếp của `<tbody>`, sai cấu trúc
+      HTML bảng. `document.body` chỉ có ở client nên phải chờ `mounted`
+      (set qua `useEffect`) mới portal, tránh lỗi khi Next.js render lần đầu
+      ở server.
+    - **`PortTable.tsx` (`EditRow`)** — 2 nút "Xem nhanh":
+      - "Xem nhanh port đích" cạnh ô tên tuyến cáp trung kế (case bare-trunk-
+        link, mục 25) — lấy thẳng port đích từ `trunkPorts` (đã tải sẵn TOÀN
+        BỘ port + luồng hiện tại của mọi rack cho trang này, xem
+        `bareMatchedTrunkPorts`) — **không fetch thêm gì**, hiện port/sợi/
+        luồng/giao tiếp của port đích, kèm link "Mở đầy đủ" nếu vẫn muốn
+        điều hướng thật.
+      - "Xem nhanh thiết bị này" cạnh ô Thiết bị (cấu trúc 2, mục 27) — dùng
+        lại `matchedDevice` (đã tính sẵn cho tính năng gợi ý tên) hiện lĩnh
+        vực/nguồn/cập nhật lần cuối.
+      - **Chỉ render `<SlideOverPanel>` khi thật sự có thể mở** (bọc
+        `{bareTrunkCableRouteName && (...)}` / `{matchedDevice && (...)}`) —
+        phát hiện khi tự kiểm bằng Playwright: ban đầu render KHÔNG ĐIỀU
+        KIỆN ở mọi dòng đang sửa (chỉ ẩn qua CSS translate khi đóng) khiến
+        MỖI dòng luôn có 2 `<aside>` trong DOM dù không liên quan gì — không
+        phải bug hiển thị cho người dùng thật (panel đóng luôn vô hình), chỉ
+        là DOM dư thừa + khó test tự động (2 `<aside>` cùng có `<h2>`, không
+        phân biệt được đang mở cái nào bằng selector thường). Sửa xong mỗi
+        dòng chỉ mount panel liên quan tới nó.
+    - **`DeviceCircuitList.tsx`** — nút "Xem nhanh port đích" cạnh ô "Cáp
+      quang (tiếp theo)" (chế độ `isCableMode`, mục 6/16) — cùng cơ chế, đọc
+      từ `trunkPorts` có sẵn. Vì `renderCircuitFormFields()` dùng chung cho
+      CẢ form Sửa lẫn form Thêm mới, state `quickViewTrunkMatch` đặt ở component
+      cha (không lặp lại 2 nơi), lưu thẳng `TrunkPositionMatch` (không chỉ 1
+      cờ boolean) vì mỗi lần bấm có thể là dòng/match khác nhau.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Playwright CHỈ ĐỌC (mở Sửa quan
+      sát, LUÔN Hủy, không Lưu) trên dữ liệu thật:
+      - Port 17,18 rack ODF1/1 (bare-trunk-link) → "Xem nhanh port đích" hiện
+        đúng "ODF2/11 — xem nhanh", đúng Port 15/16 của rack đó.
+      - Port 41 rack ODF1/1 (thiết bị `ADN1.OMS3255`) → "Xem nhanh thiết bị
+        này" hiện đúng tên + "Lĩnh vực: Truyền Dẫn" + "Nguồn: Tự sinh" khớp
+        dữ liệu thật trong `devices`.
+      - 1 luồng thiết bị thật (`"100GE AĐN1.PE#2-MX2020..."`, Vị trí ODF tiếp
+        theo = "ODF 1/5 (35,36)") → "Xem nhanh port đích" hiện đúng
+        "ODF1/5 — xem nhanh", Port 35/36 kèm đúng luồng thật đang chiếm 2 port
+        đó ("100GE ADN1.PE2 (et-11/0/0) - 2T9.P1 (et-1/0/1)").
+      - Đóng bằng ESC và bằng bấm ra ngoài (backdrop) đều hoạt động đúng.
+    - **Còn lại của bản kế hoạch gốc, CHƯA làm**: dùng slide-over cho "sửa
+      nhanh 1 dòng" ở trang Chất lượng dữ liệu (mục 28) — phức tạp hơn (cần
+      1 form sửa thật, không chỉ xem), để riêng cho đợt sau; Giai đoạn 3
+      (command palette Cmd/Ctrl+K).
