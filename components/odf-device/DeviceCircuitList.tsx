@@ -7,12 +7,7 @@ import { compareValues } from "@/lib/sort";
 import { useSort, type SortDir } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
-import {
-  isPlaceholderCircuitName,
-  looksLikeRealPositionText,
-  normalizeDeviceNameKey,
-  normalizeDevicePositionKey,
-} from "@/lib/deviceNotes";
+import { isPlaceholderCircuitName, normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import { formatLastUpdated } from "@/lib/format";
 import {
@@ -34,7 +29,7 @@ import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
-import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
+import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 
@@ -730,24 +725,9 @@ export default function DeviceCircuitList({
   // khác. Lý do (người dùng chỉnh lại 2026-07-25): vị trí "tiếp theo" của
   // thiết bị A trùng vị trí "thiết bị" của thiết bị B là chuyện BÌNH THƯỜNG
   // — đó chính là chỗ nhảy dây đấu nối A với B, không phải lỗi trùng port.
-  const positionConflicts = useMemo(() => {
-    const map = new Map<
-      string,
-      { positionText: string; entries: { deviceName: string; circuitName: string; circuitId: string }[]; deviceIds: Set<string> }
-    >();
-    for (const c of circuits) {
-      if (!c.deviceId) continue;
-      const position = c.devicePositionOwn;
-      if (!position || !looksLikeRealPositionText(position)) continue;
-      const key = normalizeDevicePositionKey(position);
-      if (!key) continue;
-      const entry = map.get(key) ?? { positionText: position, entries: [], deviceIds: new Set<string>() };
-      entry.entries.push({ deviceName: c.deviceName ?? "(không rõ)", circuitName: c.name, circuitId: c.id });
-      entry.deviceIds.add(c.deviceId);
-      map.set(key, entry);
-    }
-    return [...map.values()].filter((v) => v.deviceIds.size > 1);
-  }, [circuits]);
+  // Logic tách sang lib/deviceCircuits.ts (yêu cầu người dùng 2026-07-29, dùng
+  // lại ở trang "Chất lượng dữ liệu" mới) — hành vi giữ nguyên 100%.
+  const positionConflicts = useMemo(() => findDevicePositionConflicts(circuits), [circuits]);
 
   // Tra nhanh "luồng này có đang dính vị trí trùng không (cột Vị trí ODF
   // thiết bị), trùng với ai" — để bôi đỏ NGAY tại dòng trong bảng bên dưới,

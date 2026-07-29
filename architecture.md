@@ -1366,3 +1366,97 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
         viết "1-19-4"/"1/10/2" cùng tồn tại (xác nhận đúng lo ngại ban đầu).
         Gõ thử "adn1.oms3255" (sai hoa/thường) → nút gợi ý hiện đúng
         "ADN1.OMS3255", rời ô (onBlur) tự áp đúng giá trị chuẩn.
+
+28. **Trang mới `/data-quality` — "Chất lượng dữ liệu"** (yêu cầu người dùng
+    2026-07-29, dựa theo 1 bản kế hoạch người dùng đã thảo luận trước với 1
+    AI khác rồi dán nguyên văn vào đây để triển khai — đã đối chiếu lại với
+    code thật, có vài điểm khác với bản kế hoạch gốc, ghi rõ bên dưới) — gộp
+    3 khung rà soát trước đây rời rạc mỗi rack/mỗi trang thành 1 nơi rà hàng
+    ngày duy nhất, có tab, truy cập từ Sidebar nhóm "Hồ sơ".
+    - **Tab 1 "Chuyển tiếp chưa chuẩn"**: tái dùng NGUYÊN `TransitFormatWarning`
+      (mục 26) không đổi gì — component tự vẽ nếu `items.length>0`.
+    - **Tab 2 "Thiết bị trùng gần đúng" (hoàn toàn mới)**:
+      - `lib/deviceDedup.ts` — `findFuzzyDuplicateDevices()` so khớp
+        Levenshtein (`fastest-levenshtein`, thêm mới vào `package.json`, KHÔNG
+        chỉ cài tạm như Playwright — đây là dependency thật của app) trên
+        `normalizeDeviceNameKey()` của toàn bộ `devices.name` (150 dòng, O(N²)
+        ~11k phép so sánh, không cần bật `pg_trgm`).
+      - **Chạy thử trên dữ liệu thật TRƯỚC KHI xây UI (bắt buộc, vì merge là
+        thao tác phá hủy) phát hiện ngưỡng distance≤2 riêng nó báo ra 199 cặp
+        cho 150 thiết bị — ĐA SỐ là nhiễu**: thiết bị viễn thông rất hay đặt
+        tên kiểu đánh số "TP5000#1".."TP5000#15" (15 thiết bị THẬT khác nhau),
+        1 cặp số liền nhau luôn ra distance nhỏ dù là 2 thiết bị hoàn toàn
+        khác nhau. Thêm bộ lọc `looksLikeNumberedSiblings()`: tách CHỮ SỐ CUỐI
+        CÙNG bất kỳ đâu trong chuỗi ra riêng (vd "tp5000#3" -> chữ "tp5000#" +
+        số 3); 2 tên cùng phần chữ nhưng KHÁC giá trị số -> chắc chắn là 2
+        thiết bị đánh số khác nhau, loại bỏ. Cùng phần chữ VÀ cùng giá trị số
+        (chỉ khác đệm số 0, vd "01" so "1") thì vẫn giữ (dấu hiệu thật của 1
+        thiết bị ghi 2 kiểu). Giảm 199 -> **52 cặp** — vẫn còn vài trường hợp
+        lọt lưới (vd "TP4100#2"/"TP5000#2" khác dòng máy nhưng trùng số thứ
+        tự) nhưng chấp nhận được, xử lý bằng nút "Bỏ qua" thay vì cố hoàn
+        thiện thuật toán thêm (rủi ro càng sửa càng dễ loại nhầm ca thật).
+      - **`mergeDeviceInto(sourceId, targetId)`** (mới) — tách từ phần lõi rủi
+        ro nhất của `applyBulkRename()` (`DeviceCategoryClient.tsx`): plan gốc
+        giả định hàm này "đã có sẵn, dùng lại được ngay" nhưng thực tế nó là
+        logic nằm sâu trong state của component đó (tick chọn, ô đổi tên),
+        không phải hàm xuất dùng chung. Đã tách đúng 2 câu lệnh rủi ro nhất
+        (chuyển `circuits.device_id` sang đích + xóa thiết bị nguồn) thành hàm
+        chung, `applyBulkRename()` refactor lại gọi hàm này (hành vi giữ
+        nguyên 100%, phần xử lý "đích đổi tên gì"/đồng bộ `device_position_map`
+        vẫn ở lại mỗi nơi gọi vì 2 nơi cần khác nhau).
+      - **Bảng mới `device_dedup_ignored`** (migration
+        `20260729000002_device_dedup_ignored.sql`) — "Bỏ qua" 1 cặp nghi trùng
+        (xác nhận là 2 thiết bị thật khác nhau), lưu DB để còn nguyên sau F5/
+        đổi máy (cùng tinh thần `transit_links.format_ack` mục 26). **Khác
+        gợi ý ban đầu của plan (lưu theo TÊN thiết bị)**: dùng
+        `device_a_id`/`device_b_id` (uuid, FK thật `references devices(id) on
+        delete cascade`) — vì tên có thể đổi sau (đổi tên/gộp ở "Danh mục
+        thiết bị"), lưu theo tên sẽ tự lệch dần đúng kiểu vấn đề
+        `device_position_map` từng gặp (phải có riêng
+        `syncDevicePositionMapNames()` để chữa). `check (device_a_id <
+        device_b_id)` + unique index — luôn insert/tra theo đúng 1 thứ tự cố
+        định (sort trước) để 1 cặp chỉ có đúng 1 cách biểu diễn.
+      - **Nút "Gộp vào ..." có `confirm()` nêu rõ hậu quả** (thiết bị nguồn bị
+        xóa hẳn + số luồng sẽ chuyển) — cùng mức cảnh báo `DeleteRackButton.
+        tsx`/`applyBulkRename` đã dùng. Nút "Bỏ qua" không cần confirm (không
+        phá hủy gì, chỉ thêm 1 dòng).
+    - **Tab 3 "Xung đột vị trí"**: `findDevicePositionConflicts()` (mới, tách
+      từ `positionConflicts` trong `DeviceCircuitList.tsx` sang
+      `lib/deviceCircuits.ts`, hành vi giữ nguyên) — **"port xung đột" theo
+      plan gốc trích dẫn nhầm mục 15 (mục đó nói chuyện khác)**; đây thực ra
+      là 1 vị trí ODF/DDF thiết bị bị gán cho ≥2 thiết bị khác nhau (mục 6).
+      Trả về kiểu dữ liệu KHÔNG chứa `Set` (bản gốc trong component dùng
+      `Set<string>` để đếm distinct — phải bỏ khi trả ra ngoài vì Server
+      Component truyền props sang Client Component qua RSC không serialize
+      được `Set`). UI ở tab này đơn giản hơn bản gốc trong
+      `DeviceCircuitList.tsx` (bỏ phần bôi đỏ dòng trong bảng — chỉ có ý
+      nghĩa tại chính bảng đó).
+    - **Sidebar**: thêm mục "Chất lượng dữ liệu" vào nhóm "Hồ sơ". **Chưa làm
+      badge số lượng chưa xử lý cạnh mục Sidebar** (có trong plan gốc) — cần
+      fetch dữ liệu ở `app/layout.tsx` (bọc MỌI trang), tức mọi trang trong
+      app đều tốn thêm vài query Supabase dù không liên quan gì tới chất
+      lượng dữ liệu; đã tạm bỏ qua phần này để không thêm chi phí cho mọi
+      trang, tổng số hiện đã thấy ngay khi mở `/data-quality` (dòng "Tổng:...").
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Migration cần chạy tay qua Supabase
+      SQL Editor (không có cách tự động DDL trong môi trường này, xem mục 26)
+      — `/data-quality` báo 500 đúng dự kiến trước khi chạy, hết ngay sau khi
+      chạy xong. Playwright trên dữ liệu thật sau khi chạy migration:
+      - Tổng đúng "357 chuyển tiếp chưa chuẩn · 52 thiết bị nghi trùng · 0 vị
+        trí xung đột".
+      - Tab thiết bị trùng hiện đúng cặp thật `"ADN1.PSS24X#2 BB1"` (11 luồng)
+        ↔ `"ADN1.PSS24X#2/BB1"` (0 luồng), khoảng cách 0 — 1 thiết bị trùng
+        thật 100% do lỗi nhập liệu cũ, đúng giá trị tính năng này nhắm tới.
+      - Nút "Gộp vào..." bấm thử → dialog `confirm()` hiện đúng chữ cảnh báo
+        → chủ động DISMISS (không Accept) → xác nhận cặp vẫn còn nguyên, KHÔNG
+        gộp thật (đúng quy tắc an toàn Playwright đã lưu — không test thao tác
+        phá hủy bằng cách bấm thật trên dữ liệu sản xuất).
+      - Nút "Bỏ qua" bấm thật trên 1 cặp khác (`"ADN1.TP4100#2"`/`"ADN1.
+        TP5000#2"`, đúng ca lọt lưới đã nói ở trên) → tổng giảm đúng 52->51,
+        F5 vẫn giữ (lưu DB thật) → sau khi xác nhận xong, tự xóa dòng
+        `device_dedup_ignored` vừa tạo để trả lại đúng trạng thái 52 ban đầu,
+        không để lại tác dụng phụ ngoài ý muốn.
+    - **Còn lại của bản kế hoạch gốc, CHƯA làm** (giai đoạn 2/3 theo đúng yêu
+      cầu người dùng "làm theo thứ tự 1 → 2 → 3", báo lại trước khi làm tiếp):
+      slide-over panel (tra cứu nhanh không rời trang đang sửa) và command
+      palette (Cmd/Ctrl+K tìm xuyên hệ thống, nâng cấp từ trang Tìm kiếm
+      nhanh hiện có).

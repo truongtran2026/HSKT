@@ -26,6 +26,7 @@ const menuGroups = [
       { href: "/odf-device", label: "Hồ sơ ODF Thiết bị" },
       { href: "/odf-device/sua-luong", label: "Hồ sơ đấu nối" },
       { href: "/search", label: "Tìm kiếm nhanh" },
+      { href: "/data-quality", label: "Chất lượng dữ liệu" },
     ],
   },
   {

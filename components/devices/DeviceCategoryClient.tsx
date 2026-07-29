@@ -9,6 +9,7 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
 import { syncDevicePositionMapNames, deleteDevicePositionMapForNames } from "@/lib/devicePositionMap";
+import { mergeDeviceInto } from "@/lib/deviceDedup";
 import { formatLastUpdated } from "@/lib/format";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
@@ -251,10 +252,10 @@ export default function DeviceCategoryClient({
       const oldNames = selectedDevices.map((d) => d.name);
       for (const d of selectedDevices) {
         if (d.id === targetId) continue;
-        const { error: relinkErr } = await supabase.from("circuits").update({ device_id: targetId }).eq("device_id", d.id);
-        if (relinkErr) throw relinkErr;
-        const { error: delErr } = await supabase.from("devices").delete().eq("id", d.id);
-        if (delErr) throw delErr;
+        // Phần lõi chuyển luồng + xóa thiết bị nguồn tách sang lib/deviceDedup.ts
+        // (yêu cầu người dùng 2026-07-29, dùng chung với trang "Chất lượng dữ
+        // liệu" mới) — hành vi giữ nguyên 100%.
+        await mergeDeviceInto(d.id, targetId);
       }
 
       try {
