@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import type { NonConformingTransitLink } from "@/lib/transitLinks";
 import { compareRackCode } from "@/lib/rackCode";
 
@@ -9,10 +11,29 @@ import { compareRackCode } from "@/lib/rackCode";
 // — cùng kiểu UI với khung "positionConflicts" đã có ở DeviceCircuitList.tsx
 // (tìm/phân trang, KHÔNG tự sửa). Bấm 1 dòng nhảy sang đúng port ở trang rack
 // đó (`/odf-trunk/<rackId>#port-<portId>`, xem PortTable.tsx phần đọc hash).
+// Nút "Ack" (yêu cầu người dùng 2026-07-29) cho dòng thực chất PHẢI ghi khác
+// chuẩn (không phải lỗi) — ghi transit_links.format_ack=true rồi
+// router.refresh() để Server Component (fetchNonConformingTransitLinks) tải
+// lại danh sách mới KHÔNG còn dòng đó (lib/transitLinks.ts đã lọc format_ack).
 export default function TransitFormatWarning({ items }: { items: NonConformingTransitLink[] }) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(5);
   const [page, setPage] = useState(0);
+  const [ackingId, setAckingId] = useState<string | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
+
+  async function ack(id: string) {
+    setAckingId(id);
+    setAckError(null);
+    const { error } = await supabase.from("transit_links").update({ format_ack: true }).eq("id", id);
+    setAckingId(null);
+    if (error) {
+      setAckError(error.message);
+      return;
+    }
+    router.refresh();
+  }
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => compareRackCode(a.rackCode, b.rackCode) || a.portNumber - b.portNumber),
@@ -43,13 +64,15 @@ export default function TransitFormatWarning({ items }: { items: NonConformingTr
 
   return (
     <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
-      <h2 className="font-semibold text-amber-800">
-        Phát hiện {items.length} "Chuyển tiếp" chưa đúng chuẩn form &quot;ODF x/y (a,b) - ADN1.thiết bị (port)&quot;
-      </h2>
+      <h2 className="font-semibold text-amber-800">Phát hiện {items.length} "Chuyển tiếp" chưa đúng chuẩn form</h2>
       <p className="mt-1 text-xs text-amber-700">
-        Không tự sửa — nhiều trường hợp không khớp mẫu này vẫn có thể đúng (vd đi thẳng ra trạm khác không qua thiết
-        bị ADN1 nào, hoặc chưa rõ thiết bị đích). Bấm vào 1 dòng để nhảy tới đúng port rồi tự sửa tay.
+        Chuẩn form hợp lệ: (1) &quot;ODF x/y (a,b) - ADN1.thiết bị (port)&quot;, hoặc (2) &quot;ODF x/y (a,b) - Tên ODF
+        Trung kế&quot; (trỏ thẳng sang rack trung kế khác, không qua thiết bị). Không tự sửa — nhiều trường hợp khác
+        vẫn có thể đúng (vd đi thẳng ra trạm khác không qua thiết bị/ODF ADN1 nào). Bấm vào 1 dòng để nhảy tới đúng
+        port rồi tự sửa tay, hoặc bấm &quot;Ack&quot; nếu dòng đó vốn dĩ phải ghi khác 2 form trên (không phải lỗi) —
+        Ack rồi sẽ không hiện lại nữa.
       </p>
+      {ackError && <p className="mt-1 text-xs text-red-600">Lỗi khi Ack: {ackError}</p>}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input
@@ -64,7 +87,7 @@ export default function TransitFormatWarning({ items }: { items: NonConformingTr
         <label className="ml-auto flex items-center gap-1 text-xs text-amber-700">
           Số dòng/trang:
           <select className="input w-auto py-1" value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
-            {[10, 20, 50, 100].map((n) => (
+            {[5, 10, 20, 50, 100].map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
@@ -75,13 +98,22 @@ export default function TransitFormatWarning({ items }: { items: NonConformingTr
 
       <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-amber-800">
         {paged.map((it) => (
-          <li key={it.id}>
-            <Link href={`/odf-trunk/${it.rackId}#port-${it.portId}`} className="hover:underline">
+          <li key={it.id} className="flex items-start justify-between gap-2">
+            <Link href={`/odf-trunk/${it.rackId}#port-${it.portId}`} className="min-w-0 flex-1 break-words hover:underline">
               <span className="font-medium">
                 {it.rackCode} port {it.portNumber}:
               </span>{" "}
               &quot;{it.rawText}&quot;
             </Link>
+            <button
+              type="button"
+              className="btn-secondary shrink-0 px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => ack(it.id)}
+              disabled={ackingId === it.id}
+              title="Xác nhận đã xem, dòng này vốn dĩ phải ghi khác form chuẩn — bỏ qua, không hiện lại"
+            >
+              {ackingId === it.id ? "Đang Ack..." : "Ack"}
+            </button>
           </li>
         ))}
         {paged.length === 0 && <li className="text-amber-400">Không có dòng nào khớp bộ lọc.</li>}

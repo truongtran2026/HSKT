@@ -152,3 +152,21 @@ export async function growDevicePositionMapByTrib(
   if (insErr) throw insErr;
   return { grown: true };
 }
+
+// Gợi ý "mẫu port/trib đã dùng" cho 1 thiết bị cụ thể (yêu cầu người dùng
+// 2026-07-29, ô "Chuyển tiếp" bên trung kế tách ô Thiết bị/Port) — dữ liệu
+// thật cho thấy nhiều kiểu viết khác nhau cùng tồn tại cho cùng 1 khái niệm
+// (vd "1-23-10", "1/23/10", "S23/10", "S23-10"), KHÔNG có 1 chuẩn chung nào
+// để tự đoán/chuyển đổi an toàn giữa các kiểu — nên CHỈ liệt kê giá trị ĐÃ
+// DÙNG THẬT cho đúng thiết bị này (lấy từ device_position_map.device_position
+// đã tải sẵn 1 lần, không query lại mỗi lần gõ) để người dùng tự chọn/soi
+// theo, không tự bịa ra 1 kiểu viết chuẩn hóa mới.
+export function distinctPositionsForDevice(deviceName: string, all: DevicePositionMapRow[]): string[] {
+  const key = normalizeDeviceNameKey(deviceName);
+  if (!key) return [];
+  const set = new Set<string>();
+  for (const r of all) {
+    if (r.devicePosition && normalizeDeviceNameKey(r.deviceName) === key) set.add(r.devicePosition);
+  }
+  return [...set].sort();
+}

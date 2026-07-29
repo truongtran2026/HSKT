@@ -202,6 +202,27 @@ export function matchTrunkPosition(text: string, trunkPorts: TrunkPortRow[]): Tr
   return { matched: false };
 }
 
+// "Form 2" hợp lệ cho ô "Chuyển tiếp" (yêu cầu người dùng 2026-07-29): text
+// CHỈ là 1 tọa độ ODF trỏ THẲNG sang rack khác, không qua thiết bị (vd "ODF
+// 2/11 (15,16)") — khác "form 1" (splitOdfDeviceStructure(), có đuôi " -
+// Thiết bị (port)"). Dùng CHUNG cho PortTable.tsx (gợi ý + ô "Tên ODF trung
+// kế" chỉ đọc) VÀ lib/transitLinks.ts (loại form này khỏi danh sách "chưa
+// đúng chuẩn") — tách hàm ra đây để 2 nơi không tự lặp lại (và tự lệch nhau)
+// cùng 1 rào an toàn: chỉ tin khi resolvedPorts ĐÚNG 1 hoặc 2 port, không có
+// port sai. Chuỗi có đuôi free text lạ (vd "ODF2/12/17,18 - IDC Tầng 3 ADN1")
+// có thể bị matchTrunkPosition() nuốt nhầm chữ số trong phần đuôi thành port
+// giả — quá 2 port gần như chắc chắn là dấu hiệu đó, không nhận diện.
+export function matchBareTrunkLink(text: string, trunkPorts: TrunkPortRow[]): TrunkPositionMatch | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const match = matchTrunkPosition(trimmed, trunkPorts);
+  if (!match.matched) return null;
+  const resolvedCount = match.resolvedPorts?.length ?? 0;
+  if (resolvedCount === 0 || resolvedCount > 2) return null;
+  if (match.invalidPortNumbers && match.invalidPortNumbers.length > 0) return null;
+  return match;
+}
+
 // Tra ngược: đã biết rack (từ matchTrunkPosition ở Ô1), gõ 1-2 số Sợi ở Ô3 ->
 // tìm port tương ứng để viết lại Ô1 (yêu cầu người dùng 2026-07-27: "nhập sợi
 // ở dưới thì suy ra port ở trên"). Trả về null nếu có sợi KHÔNG tồn tại trong

@@ -1173,3 +1173,196 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     (không auto-accept mù), và (2) chờ/poll trạng thái thật (vd số dòng bảng
     đổi) thay vì `sleep` cố định trước khi đọc kết quả một thao tác có chuỗi
     `await` không cố định thời gian.
+
+25. **Gợi ý chuẩn hóa "Chuyển tiếp" chưa áp dụng cho trường hợp "1 tọa độ ODF
+    trơn, không qua thiết bị"** (người dùng phát hiện 2026-07-29, so sánh rack
+    ODF1/1: port 5,6/9,10 có gợi ý vì "Chuyển tiếp" dạng
+    `"ODF x/y (a,b) - <thiết bị>(<port>)"` — tách được cấu trúc 2 — nhưng port
+    17,18 là `"ODF 2/11 (15,16)"` (trỏ THẲNG sang 1 rack trung kế khác, không
+    qua thiết bị nào, nên KHÔNG có " - <thiết bị>(<port>)" để tách) lại không
+    có gợi ý gì, dù vẫn là 1 tọa độ ODF thật đối chiếu/chuẩn hóa được).
+    - **Sửa**: `PortTable.tsx` (`EditRow`) thêm `bareOdfSuggestion` — khi
+      `transitSplit=false` (chưa tách được cấu trúc 2), thử chuẩn hóa trên
+      TOÀN BỘ `edit.transitText` (thay vì bỏ qua hoàn toàn) qua
+      `matchTrunkPosition()` + `formatCanonicalOdfPosition()`, cùng kiểu nút
+      💡 và `onBlur` tự chuẩn hóa như nhánh cấu trúc 2 đã có.
+    - **Phát hiện an toàn dữ liệu QUAN TRỌNG khi rà thật trước khi chốt cách
+      làm** (script tạm, xóa sau khi chạy — KHÔNG lưu gì lên UI, chỉ đọc): với
+      chuỗi có phần ĐUÔI free text sau tọa độ ODF mà không đúng cấu trúc 2
+      (vd `"ODF2/12/17,18 - IDC Tầng 3 ADN1"`, `"ODF1/6/(5,6) - 48FO
+      ADN1-HUE"`), `matchTrunkPosition()` vô tình "nuốt" các CHỮ SỐ nằm trong
+      phần đuôi đó (vd "3" trong "Tầng 3", "48"/"01" trong "48FO...") vào
+      danh sách port, sinh gợi ý SAI kiểu `"ODF 2/12 (17,18,03,01)"` — nếu áp
+      dụng sẽ XÓA MẤT phần mô tả đuôi thật (tên thiết bị/tuyến cáp) mà không
+      hề báo gì. **Chặn bằng 1 điều kiện**: chỉ gợi ý khi
+      `trunkMatch.resolvedPorts` có ĐÚNG 1 hoặc 2 port (đúng nguyên tắc "1 sợi
+      hoặc 1 cặp Tx/Rx", CLAUDE.md #1) — quá 2 port gần như chắc chắn đã nuốt
+      nhầm số từ phần đuôi, không gợi ý. Quét thật toàn bộ transit_links xác
+      nhận điều kiện này lọc đúng: **98 dòng được gợi ý hợp lệ** (toàn bộ đều
+      là lỗi thiếu khoảng trắng/dùng dấu `/` thay `(...)`, vd `"ODF1/6
+      (15,16)"` -> `"ODF 1/6 (15,16)"`, `"ODF2/3/35,36"` -> `"ODF 2/3
+      (35,36)"`), **21 dòng bị chặn đúng** (toàn bộ đều thuộc dạng đuôi free
+      text nguy hiểm nêu trên).
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Test Playwright CHỈ MỞ SỬA để quan
+      sát (không bấm Lưu/Xóa gì) trên rack ODF1/1 thật: port 25
+      (`"ODF1/6 (15,16)"`) hiện đúng nút "💡 Gợi ý: ODF 1/6 (15,16) — bấm để
+      áp dụng"; port 17,18 (`"ODF 2/11 (15,16)"`, đã đúng chuẩn sẵn) không
+      hiện gợi ý nào (đúng — không có gì để sửa).
+    - **Theo dõi ngay sau đó (cùng ngày, người dùng bổ sung)**: "Chuyển tiếp"
+      trỏ thẳng sang 1 rack trung kế khác (không qua thiết bị) về bản chất
+      vẫn nên có "2 ô" như cấu trúc 2 — Ô1 = tọa độ ODF (đã làm ở trên), Ô2 =
+      **tên ODF Trung kế đích** (thay vì tên thiết bị+port như cấu trúc 2) —
+      đúng tinh thần Ô2 "Cáp quang (tiếp theo)" đã có ở
+      `DeviceCircuitList.tsx` (isCableMode). Thêm:
+      - `bareMatch` (đổi tên từ phép tính trong `bareOdfSuggestion`, dùng
+        chung cho cả gợi ý chuẩn hóa lẫn nhận diện liên kết trung kế — vẫn
+        qua đúng an toàn "<=2 port" ở trên) → nếu `rackDomain==='trunk'`, hiện
+        thêm 1 ô CHỈ ĐỌC (nền xám) ngay dưới ô ODF, giá trị là
+        `racks.cable_route_name` của rack đích (vd rack "ODF2/11" ->
+        `"48FO#2 ADN1 - T2-T3"`) — KHÔNG lưu riêng, chỉ đọc để biết đang trỏ
+        tới tuyến nào, `transitText` lưu DB vẫn chỉ là đúng tọa độ ODF (không
+        ghép thêm gì, khác cấu trúc 2 vốn ghép cả 2 phần vào 1 chuỗi lưu).
+      - **Sửa luôn 1 lỗ hổng phát hiện khi làm phần này**: `onBlur` của ô bare
+        ODF (thêm lúc trước) tự tính lại `matchTrunkPosition` KHÔNG qua an
+        toàn "<=2 port" — nghĩa là rời khỏi ô (kể cả không bấm nút gợi ý) vẫn
+        có thể tự áp gợi ý SAI (ca nuốt nhầm số) mà không cảnh báo gì, còn
+        nguy hiểm hơn nút gợi ý (phải bấm mới áp). Đổi `onBlur` dùng LẠI
+        `bareOdfSuggestion` (đã qua an toàn) thay vì tự tính riêng.
+      - **`PortTable.tsx` bảng danh sách (không chỉ form Sửa)**: thêm
+        `transitDisplay()` + map `transitDisplayByPortId` (tính 1 lần, cùng
+        cách `positionNextDisplayById` bên `DeviceCircuitList.tsx`) — cột
+        "Chuyển tiếp" giờ hiện `"<tọa độ ODF> - <tên tuyến cáp>"` ngay trong
+        bảng cho ca bare-trunk-link, không cần bấm Sửa mới thấy (cùng lý do
+        đã sửa cho "Vị trí ODF (tiếp theo)" bên thiết bị).
+      - **Kiểm chứng**: `tsc --noEmit` sạch. Playwright CHỈ ĐỌC (không Lưu/
+        Xóa): bảng danh sách port 17,18 hiện đúng `"ODF 2/11 (15,16) - 48FO#2
+        ADN1 - T2-T3"`; form Sửa hiện đúng nhãn "Tên ODF trung kế" + ô chỉ đọc
+        `"48FO#2 ADN1 - T2-T3"` khớp 100% dữ liệu thật trong `racks`.
+
+26. **Dạy khung `TransitFormatWarning` nhận 2 form hợp lệ + nút "Ack" + đổi
+    mặc định phân trang 10→5** (yêu cầu người dùng 2026-07-29, tiếp mục 25) —
+    trước đây `fetchNonConformingTransitLinks()` chỉ công nhận "form 1"
+    (`splitOdfDeviceStructure`: `"ODF x/y (a,b) - ADN1.thiết bị (port)"`),
+    nên mọi dòng "form 2" (tọa độ ODF trỏ thẳng sang rack trung kế khác,
+    không qua thiết bị — vd port 17,18 rack ODF1/1 mục 25) đều bị liệt vào
+    danh sách cảnh báo dù hoàn toàn hợp lệ (báo nhầm/false positive).
+    - **`matchBareTrunkLink()` (mới, `lib/trunkPorts.ts`)** — tách rào an
+      toàn "resolvedPorts đúng 1-2, không có port sai" (trước đó lặp lại y
+      hệt ở `bareMatch` trong `PortTable.tsx`) thành 1 hàm dùng CHUNG, để
+      `lib/transitLinks.ts` (không phải React, không dùng `useMemo` được)
+      cũng áp dụng đúng rào này mà không copy logic lần 2 (tránh 2 nơi tự
+      lệch nhau về sau). `PortTable.tsx` (`transitDisplay()` cấp bảng và
+      `bareMatch` trong `EditRow`) đổi sang gọi hàm này, hành vi giữ nguyên
+      100% (chỉ refactor, không đổi kết quả).
+    - **`lib/transitLinks.ts`**: khi `splitOdfDeviceStructure()` không khớp
+      (form 1), thử tiếp `matchBareTrunkLink()` — khớp VÀ `rackDomain==='trunk'`
+      thì coi là form 2 hợp lệ, **không** liệt vào cảnh báo nữa. Domain
+      `'device'` (bare match trỏ sang rack ODF/DDF nội bộ, không có tên
+      thiết bị kèm theo) KHÔNG được tính là form hợp lệ nào cả — người dùng
+      chỉ xác nhận đúng 2 form ở trên, giữ nguyên báo cho trường hợp còn mơ
+      hồ này (đúng triết lý "không tự đoán thêm" của toàn khung này).
+    - **Nút "Ack" (Acknowledge — xác nhận đã xem, bỏ qua)** — mục 20 trước đó
+      đã dừng lại hỏi ý kiến vì cần đổi schema; **yêu cầu 2026-07-29 này chính
+      là xác nhận đó**. Thêm cột `transit_links.format_ack boolean not null
+      default false` (migration
+      `supabase/migrations/20260729000001_transit_links_format_ack.sql`).
+      `fetchNonConformingTransitLinks()` lọc `format_ack=true` ra khỏi kết
+      quả ngay từ đầu vòng lặp. `TransitFormatWarning.tsx` thêm nút "Ack" mỗi
+      dòng (`btn-secondary` nhỏ, disable + "Đang Ack..." lúc chờ, lỗi hiện
+      chữ đỏ nhỏ dùng đúng pattern `error`/`busy` đã có ở `DeleteRackButton.
+      tsx` — không dùng `alert()`) — bấm thì `update({format_ack:true})` rồi
+      `router.refresh()` để Server Component tải lại danh sách mới (đúng
+      pattern `router.refresh()` toàn bộ `PortTable.tsx` đã dùng). **Chưa có
+      nút "un-Ack"** (bật lại hiển thị 1 dòng đã Ack) — không nằm trong yêu
+      cầu lần này, để dành nếu cần sau.
+    - **Mặc định "Số dòng/trang" đổi 10 → 5** (yêu cầu người dùng) — thêm `5`
+      vào mảng lựa chọn (`[5, 10, 20, 50, 100]`, trước đó thiếu `5`).
+    - **Sửa lại chữ mô tả khung cảnh báo** — tiêu đề bỏ bớt tên "form 1" cụ
+      thể (giờ có 2 form), đoạn mô tả liệt kê rõ cả 2 form + hướng dẫn dùng
+      nút Ack.
+    - **QUAN TRỌNG — cần người dùng tự chạy migration**: môi trường này không
+      có cách nào tự động áp DDL lên Supabase thật (không có Postgres
+      connection string trong `.env.local`, không cài `pg`, không có
+      Supabase CLI/Management API) — mọi migration trong dự án từ trước tới
+      giờ đều phải chạy TAY qua Supabase Dashboard → SQL Editor. Đã báo rõ
+      cho người dùng: trước khi chạy migration này, trang `/odf-trunk` sẽ
+      lỗi 500 (`column transit_links.format_ack does not exist`, đã thấy
+      thật trong log dev server) — đúng dự kiến, không phải bug code, hết
+      ngay sau khi chạy xong SQL.
+    - **Kiểm chứng (đầy đủ, sau khi người dùng chạy migration 2026-07-29)**:
+      `tsc --noEmit` sạch. Playwright + supabase-js (cài/gỡ tạm như các lần
+      trước) trên dữ liệu THẬT xác nhận toàn bộ:
+      - Số dòng cảnh báo giảm từ 452 (mục 19b) xuống còn **359** — tức 93
+        dòng "form 2" (bare-trunk-link) trước đây bị báo nhầm, giờ đã đúng.
+      - Search "2/11 (15,16)" (rack ODF1/1 port 17,18, ví dụ gốc mục 25) →
+        0 kết quả, xác nhận không còn bị liệt kê.
+      - Dropdown "Số dòng/trang" mặc định đúng giá trị `5`.
+      - Ack thật 1 dòng ("ODF1/1 port 7") → dòng biến mất ngay (359→358),
+        F5 (reload cứng) vẫn không hiện lại → xác nhận Ack lưu THẬT trong DB
+        (`format_ack`), không phải state trình duyệt.
+      - Sau khi xác nhận xong, tự revert `format_ack` về `false` cho đúng
+        dòng vừa test (qua `source_port_id` lấy từ href của dòng đó) — không
+        để lại tác dụng phụ, vì người dùng chưa thật sự chọn Ack dòng dữ liệu
+        này, chỉ là dòng dùng để kiểm thử.
+
+27. **Tách ô "Thiết bị (port)" (cấu trúc 2) thành 2 ô riêng + gợi ý theo hồ sơ
+    thiết bị thật** (yêu cầu người dùng 2026-07-29) — trước đây `PortTable.tsx`
+    (`EditRow`) đã tách "Chuyển tiếp" cấu trúc 2 thành 2 ô (Vị trí ODF / Thiết
+    bị+port GHÉP CHUNG 1 ô, vd "ADN1.OMEMSPP#01 (1/23/10)"). Giờ tách tiếp ô
+    thứ 2 thành **Thiết bị** riêng và **Port** riêng — `splitOdfDeviceStructure()`
+    (`lib/parsers/transit-text.ts`) vốn đã trả về `deviceName`/`port` tách sẵn
+    2 field, chỉ là UI trước đây tự ghép lại thành 1 ô, nên phần lõi parser
+    KHÔNG cần đổi gì.
+    - **Ô "Thiết bị"**: `<datalist>` gợi ý toàn bộ tên trong `devices` (prop
+      mới truyền vào `EditRow`), so khớp qua `normalizeDeviceNameKey()` (tự bỏ
+      dấu/tiền tố "ADN1."/khoảng trắng thừa) — khớp được 1 thiết bị thật mà
+      chữ gõ khác tên chuẩn đang lưu (hoa/thường, có/không tiền tố) thì hiện
+      nút "💡 Gợi ý" + tự áp khi rời ô (onBlur), Y HỆT UX ô Vị trí ODF (yêu
+      cầu người dùng: "đưa ra gợi ý như phần ODF trên"). Không khớp được thiết
+      bị nào NHƯNG có tiền tố trạm ADN1 (`isManagedStationCode`) → hiện chữ
+      "Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu." (đúng cơ chế
+      `maybeStandardizeTransitDevice()` ĐÃ CÓ SẴN từ trước — hàm này vẫn y
+      nguyên, chỉ là giờ người dùng THẤY TRƯỚC kết quả sẽ xảy ra thay vì chỉ
+      biết qua `confirm()` sau khi bấm Lưu). Thiết bị thuộc trạm khác (không
+      phải ADN1) → không hiện gì (đúng nguyên tắc CLAUDE.md #6, không tự tạo/
+      không giả định gì về trạm ngoài phạm vi quản lý).
+    - **Ô "Port"**: `distinctPositionsForDevice()` (mới, `lib/devicePositionMap.ts`)
+      lọc `device_position_map` (đã tải sẵn 1 lần qua prop `devicePositionMap`,
+      không query lại mỗi lần gõ) lấy toàn bộ `device_position` từng ghi nhận
+      cho ĐÚNG thiết bị đang gõ ở ô Thiết bị — hiện làm `<datalist>` + 1 dòng
+      chữ nhỏ liệt kê tối đa 6 mẫu ("Mẫu port đã dùng cho thiết bị này: ...").
+      **CHỦ Ý KHÔNG tự động chuẩn hóa/chuyển đổi định dạng** (khác hẳn ô ODF) —
+      khảo sát thật xác nhận đúng nỗi lo người dùng nêu: thiết bị "ADN1.
+      OMS3255" có 163 mẫu port lịch sử, gồm CẢ 2 kiểu viết cho cùng khái niệm
+      ("1-19-4", "1-6-1" kiểu gạch ngang lẫn "1/10/2", "1/11/11" kiểu gạch
+      chéo) — không có 1 quy tắc chung an toàn nào để tự suy luận quy đổi giữa
+      các kiểu này (khác ODF, nơi có bảng `racks`/`ports` thật làm "trọng tài"
+      đúng/sai). Chỉ liệt kê để người dùng tự chọn/soi theo, đúng triết lý
+      "không tự đoán" xuyên suốt dự án.
+    - **"Cập nhật hồ sơ liên quan sau khi Lưu"**: cơ chế này THỰC RA đã có sẵn
+      từ trước (không phải xây mới) — `saveEdit()` gọi
+      `maybeStandardizeTransitDevice()` sau khi lưu `raw_text`, hàm này (a)
+      hỏi tạo `devices` mới nếu chưa có (nay đã BÁO TRƯỚC qua hint ở trên,
+      không còn bất ngờ), (b) gọi `growDevicePositionMapByTrib()` ghi nhận
+      cặp thiết bị+port này vào `device_position_map` nếu chưa có — thư viện
+      này CHÍNH LÀ nguồn dữ liệu nuôi gợi ý "mẫu port" ở trên cho lần sau, và
+      cũng là thư viện autosuggest ODF khi tạo luồng thiết bị mới ở
+      `DeviceCircuitList.tsx`. Vì vậy việc lưu 1 dòng "Chuyển tiếp" cấu trúc 2
+      chuẩn ở đây sẽ tự động làm giàu gợi ý cho các hồ sơ liên quan khác, không
+      cần thêm code đồng bộ nào mới.
+    - **Không đổi**: `saveEdit()`, `maybeStandardizeTransitDevice()`, cách
+      dựng lại `raw_text` cuối cùng (vẫn `"<ODF> - <Thiết bị> (<Port>)"`) —
+      chỉ thêm 1 hàm `buildTransitText()` cục bộ trong `EditRow` để 5 nơi ghép
+      chuỗi (ODF onChange/onBlur/gợi ý, Thiết bị onChange/gợi ý, Port
+      onChange) dùng chung, tránh lặp lại cùng 1 mẫu ghép chuỗi.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Playwright CHỈ ĐỌC (mở Sửa quan
+      sát + đổi giá trị ô input để test gợi ý, LUÔN bấm Hủy, không bấm Lưu)
+      trên dữ liệu thật rack ODF1/1:
+      - Port 31 (`"ADN1.OMEMSPP#01 (1/23/10)"`, thiết bị CHƯA có) — 3 ô hiện
+        đúng giá trị tách rời, hint "Chưa có trong hồ sơ thiết bị" hiện đúng,
+        KHÔNG hiện hint mẫu port (đúng, thiết bị mới không có lịch sử).
+      - Port 41 (`"ADN1.OMS3255(1/9/2)"`, thiết bị ĐÃ có, 163 mẫu lịch sử) —
+        KHÔNG hiện hint "chưa có"; hint mẫu port hiện đúng, thấy rõ cả 2 kiểu
+        viết "1-19-4"/"1/10/2" cùng tồn tại (xác nhận đúng lo ngại ban đầu).
+        Gõ thử "adn1.oms3255" (sai hoa/thường) → nút gợi ý hiện đúng
+        "ADN1.OMS3255", rời ô (onBlur) tự áp đúng giá trị chuẩn.

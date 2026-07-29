@@ -1,15 +1,23 @@
 import { supabase } from "@/lib/supabase";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
-import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
+import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
 
 // Rà soát TOÀN BỘ cột "Chuyển tiếp" (transit_links.raw_text) bên ODF trung kế
-// tìm dòng CHƯA đúng chuẩn form đã ban hành "ODF x/y (a,b) - ADN1.thiết bị
-// (port)" (yêu cầu người dùng 2026-07-28, cùng tinh thần "positionConflicts"
-// đã làm ở DeviceCircuitList.tsx: chỉ LIỆT KÊ để người dùng tự rà — KHÔNG tự
-// đoán/sửa, vì rất nhiều trường hợp không khớp cấu trúc 2 vẫn hoàn toàn hợp
-// lệ (vd đi thẳng ra trạm khác không qua thiết bị ADN1 nào, hoặc mới chỉ có
-// tọa độ ODF chưa rõ thiết bị đích) — chỉ người dùng có đủ bối cảnh thực tế
-// trạm ADN1 để phân biệt đâu là lỗi thật.
+// tìm dòng CHƯA đúng chuẩn form đã ban hành (yêu cầu người dùng 2026-07-28,
+// cùng tinh thần "positionConflicts" đã làm ở DeviceCircuitList.tsx: chỉ LIỆT
+// KÊ để người dùng tự rà — KHÔNG tự đoán/sửa). Công nhận ĐÚNG 2 form (yêu cầu
+// người dùng 2026-07-29):
+//   1. "ODF x/y (a,b) - ADN1.thiết bị (port)"      (splitOdfDeviceStructure)
+//   2. "ODF x/y (a,b) - Tên ODF trung kế"          (matchBareTrunkLink, tọa độ
+//      trỏ thẳng sang 1 rack trung kế khác, không qua thiết bị)
+// Ngoài 2 form này, rất nhiều trường hợp khác vẫn có thể hợp lệ (vd đi thẳng
+// ra trạm khác không qua thiết bị/ODF ADN1 nào) — chỉ người dùng có đủ bối
+// cảnh thực tế trạm ADN1 để phân biệt đâu là lỗi thật, nên không tự đoán thêm
+// form nào khác ngoài 2 form đã xác nhận ở trên.
+//
+// Dòng đã bấm "Ack" (transit_links.format_ack = true) — người dùng xác nhận
+// đã xem, biết đây không theo 2 form trên nhưng vẫn đúng thực tế — bị loại
+// khỏi kết quả vĩnh viễn cho tới khi có cách "un-Ack" (chưa yêu cầu).
 export interface NonConformingTransitLink {
   id: string;
   rawText: string;
@@ -32,6 +40,7 @@ interface RawPort {
 interface RawRow {
   id: string;
   raw_text: string | null;
+  format_ack: boolean;
   ports: RawPort | RawPort[] | null;
 }
 
@@ -53,7 +62,7 @@ export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[])
     // nếu không sẽ báo lỗi PGRST201 "more than one relationship was found".
     const { data, error } = await supabase
       .from("transit_links")
-      .select("id, raw_text, ports:ports!transit_links_source_port_id_fkey(id, port_number, rack_id, racks(code, domain))")
+      .select("id, raw_text, format_ack, ports:ports!transit_links_source_port_id_fkey(id, port_number, rack_id, racks(code, domain))")
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw error;
@@ -64,6 +73,7 @@ export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[])
 
   const result: NonConformingTransitLink[] = [];
   for (const row of all) {
+    if (row.format_ack) continue; // Đã Ack — không hiện lại (yêu cầu người dùng 2026-07-29).
     const port = firstOf(row.ports);
     if (!port) continue;
     const rack = firstOf(port.racks);
@@ -77,6 +87,12 @@ export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[])
     const item = { id: row.id, rawText: raw, rackId: port.rack_id, rackCode: rack.code, portId: port.id, portNumber: port.port_number };
     const split = splitOdfDeviceStructure(raw);
     if (!split.matched) {
+      // "Form 2" hợp lệ: tọa độ ODF trỏ thẳng sang 1 rack TRUNG KẾ khác,
+      // không qua thiết bị (yêu cầu người dùng 2026-07-29) — trước đây MỌI
+      // dòng không có đuôi " - Thiết bị (port)" đều bị liệt vào đây, kể cả
+      // dạng này (báo nhầm/false positive).
+      const bareMatch = matchBareTrunkLink(raw, trunkPorts);
+      if (bareMatch && bareMatch.rackDomain === "trunk") continue;
       result.push(item);
       continue;
     }
