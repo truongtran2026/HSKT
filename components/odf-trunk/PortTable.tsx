@@ -11,6 +11,7 @@ import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
+import { autoCreateTrunkTrunkMirrorForCircuit } from "@/lib/mirrorTrunkCircuits";
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import type { CircuitOptions } from "@/lib/circuitOptions";
@@ -701,6 +702,20 @@ export default function PortTable({
         }
       }
       if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
+
+      // Tự tạo mirror trung kế-trung kế nếu "Chuyển tiếp" vừa lưu trỏ sang 1
+      // port trung kế THẬT khác đang trống (yêu cầu người dùng 2026-07-31,
+      // sửa CÙNG LÚC với mục 38/39 thay vì đợi có ca báo riêng — cùng 1 lỗ
+      // hổng: cơ chế này trước giờ chỉ chạy qua script dọn dữ liệu, chưa gắn
+      // UI). Không chặn việc lưu dù bước này lỗi — chỉ báo cho người dùng.
+      try {
+        const trunkResult = await autoCreateTrunkTrunkMirrorForCircuit(circuitId);
+        if (trunkResult.status === "error") {
+          setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${trunkResult.message}`);
+        }
+      } catch (e) {
+        setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
+      }
 
       refreshAndThen(() => setEdit(null));
     } catch (e) {

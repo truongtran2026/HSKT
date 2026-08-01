@@ -3,6 +3,7 @@ import { fetchDeviceCircuits, findDevicePositionConflicts } from "@/lib/deviceCi
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import { findFuzzyDuplicateDevices, fetchIgnoredDevicePairs } from "@/lib/deviceDedup";
+import { findTrunkCircuitsMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
 import DataQualityClient from "@/components/data-quality/DataQualityClient";
 
 // Trang "Chất lượng dữ liệu" (yêu cầu người dùng 2026-07-29) — gộp 3 khung
@@ -14,11 +15,12 @@ import DataQualityClient from "@/components/data-quality/DataQualityClient";
 export const dynamic = "force-dynamic";
 
 export default async function DataQualityPage() {
-  const [devices, circuits, trunkPorts, ignoredPairs] = await Promise.all([
+  const [devices, circuits, trunkPorts, ignoredPairs, trunkMissingDeviceItems] = await Promise.all([
     fetchDevices(),
     fetchDeviceCircuits(),
     fetchAllOdfPorts(),
     fetchIgnoredDevicePairs(),
+    findTrunkCircuitsMissingDeviceMirror(),
   ]);
   // fetchNonConformingTransitLinks cần trunkPorts đã tải xong (đối chiếu phần
   // ODF bên trong, xem lib/transitLinks.ts) nên chờ riêng, không gộp Promise.all.
@@ -34,7 +36,12 @@ export default async function DataQualityPage() {
       </p>
 
       <div className="mt-6">
-        <DataQualityClient transitItems={nonConformingTransit} dupCandidates={dupCandidates} positionConflicts={positionConflicts} />
+        <DataQualityClient
+          transitItems={nonConformingTransit}
+          dupCandidates={dupCandidates}
+          positionConflicts={positionConflicts}
+          trunkMissingDeviceItems={trunkMissingDeviceItems}
+        />
       </div>
     </div>
   );

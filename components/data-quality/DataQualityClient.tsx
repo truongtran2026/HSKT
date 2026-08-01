@@ -7,28 +7,38 @@ import type { DevicePositionConflict } from "@/lib/deviceCircuits";
 import { mergeDeviceInto, ignoreDevicePair, type DeviceDupCandidate } from "@/lib/deviceDedup";
 import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
+import type { TrunkCircuitMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
+import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
 
-type Tab = "transit" | "devices" | "positions";
+type Tab = "transit" | "devices" | "positions" | "trunkMissingDevice";
 
 export default function DataQualityClient({
   transitItems,
   dupCandidates,
   positionConflicts,
+  trunkMissingDeviceItems,
 }: {
   transitItems: NonConformingTransitLink[];
   dupCandidates: DeviceDupCandidate[];
   positionConflicts: DevicePositionConflict[];
+  trunkMissingDeviceItems: TrunkCircuitMissingDeviceMirror[];
 }) {
   const [tab, setTab] = useState<Tab>(
-    transitItems.length > 0 ? "transit" : dupCandidates.length > 0 ? "devices" : "positions"
+    transitItems.length > 0
+      ? "transit"
+      : dupCandidates.length > 0
+        ? "devices"
+        : positionConflicts.length > 0
+          ? "positions"
+          : "trunkMissingDevice"
   );
 
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500">
         Tổng: {transitItems.length} chuyển tiếp chưa chuẩn · {dupCandidates.length} thiết bị nghi trùng ·{" "}
-        {positionConflicts.length} vị trí xung đột
+        {positionConflicts.length} vị trí xung đột · {trunkMissingDeviceItems.length} luồng trung kế thiếu bên thiết bị
       </p>
 
       <div className="mb-4 flex gap-1 border-b border-slate-200">
@@ -41,6 +51,9 @@ export default function DataQualityClient({
         <TabButton active={tab === "positions"} onClick={() => setTab("positions")} count={positionConflicts.length}>
           Xung đột vị trí
         </TabButton>
+        <TabButton active={tab === "trunkMissingDevice"} onClick={() => setTab("trunkMissingDevice")} count={trunkMissingDeviceItems.length}>
+          Trung kế thiếu bên thiết bị
+        </TabButton>
       </div>
 
       {tab === "transit" &&
@@ -51,6 +64,7 @@ export default function DataQualityClient({
         ))}
       {tab === "devices" && <DeviceDupTab candidates={dupCandidates} />}
       {tab === "positions" && <PositionConflictsTab conflicts={positionConflicts} />}
+      {tab === "trunkMissingDevice" && <TrunkMissingDeviceMirrorTab items={trunkMissingDeviceItems} />}
     </div>
   );
 }
@@ -225,6 +239,12 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
                   </button>
                 </span>
               </div>
+              {(c.deviceA.circuits.length > 0 || c.deviceB.circuits.length > 0) && (
+                <div className="mt-1 flex flex-col gap-0.5 text-xs text-amber-600">
+                  <CircuitLinkList label={c.deviceA.name} circuits={c.deviceA.circuits} />
+                  <CircuitLinkList label={c.deviceB.name} circuits={c.deviceB.circuits} />
+                </div>
+              )}
             </li>
           );
         })}
@@ -253,6 +273,28 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Liệt kê link nhảy thẳng tới từng luồng (domain=device, KHÔNG gán port nào
+// nên không thể nằm ở bất kỳ Rack ODF trung kế nào — chỉ có thể tìm thấy ở
+// "Hồ sơ đấu nối" /odf-device/sua-luong) đang gắn 1 thiết bị trong cặp nghi
+// trùng — thêm 2026-07-30 sau khi người dùng gặp khó không biết "2 luồng"
+// nằm ở đâu để kiểm tra trước khi quyết định gộp.
+function CircuitLinkList({ label, circuits }: { label: string; circuits: { id: string; name: string }[] }) {
+  if (circuits.length === 0) return null;
+  return (
+    <span>
+      {label}:{" "}
+      {circuits.map((c, i) => (
+        <span key={c.id}>
+          {i > 0 && "; "}
+          <a href={`/odf-device/sua-luong#${rowAnchor(c.id)}`} className="underline hover:text-amber-900">
+            {c.name || "(chưa đặt tên)"}
+          </a>
+        </span>
+      ))}
+    </span>
   );
 }
 

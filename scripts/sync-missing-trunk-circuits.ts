@@ -13,6 +13,12 @@
 // trong dữ liệu thật (vd cặp own=ODF1/15/next=ODF9/17 và ngược lại từ phía
 // OME-TK#1 cho cùng 1 luồng "10GE AĐN1.P2 (8/3/2)...").
 //
+// Sửa 2026-07-31: gắn `circuits.mirror_of_id` NGAY LÚC TẠO (cột thật từ mục
+// 33, `on delete cascade`) — trước đó chỉ ghi "luồng gốc id <uuid>" dạng TEXT
+// trong notes (không có ràng buộc CSDL nào), y hệt bug mồ côi đã gặp ở mục 32.
+// Từ giờ xóa luồng thiết bị gốc thì mirror trung kế này tự xóa theo, không
+// cần code nhớ gọi đúng hàm (xem lib/mirrorTrunkCircuits.ts).
+//
 // TỰ RÀ SOÁT LẠI TỪ ĐẦU (không đọc từ file JSON cũ của audit) để chắc chắn
 // hành động trên dữ liệu SỐNG tại đúng lúc chạy, không phải ảnh chụp cũ.
 //
@@ -29,6 +35,7 @@
 //       npm run sync-missing-trunk-circuits -- --commit
 import * as path from "node:path";
 import { config as loadEnv } from "dotenv";
+import type { TrunkMirrorCandidate } from "../lib/mirrorTrunkCircuits";
 
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
@@ -36,26 +43,15 @@ const COMMIT = process.argv.includes("--commit");
 
 async function main() {
   const { supabase } = await import("../lib/supabase");
-  const { fetchAllOdfPorts, matchTrunkPosition } = await import("../lib/trunkPorts");
+  const { fetchAllOdfPorts } = await import("../lib/trunkPorts");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
-  const { splitOdfDeviceStructure } = await import("../lib/parsers/transit-text");
+  const { findTrunkMirrorCandidates } = await import("../lib/mirrorTrunkCircuits");
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
   type DeviceCircuitRow = Awaited<ReturnType<typeof fetchDeviceCircuits>>[number];
 
-  function odfPartOf(raw: string | null): string | null {
-    if (!raw) return null;
-    const split = splitOdfDeviceStructure(raw);
-    return split.matched ? split.odfPart ?? null : raw;
-  }
-
-  interface Candidate {
+  interface Candidate extends TrunkMirrorCandidate {
     sourceCircuit: DeviceCircuitRow;
-    field: "own" | "next";
-    rawText: string;
-    rackId: string;
-    rackCode: string;
-    portNumbers: number[]; // đã sắp theo đúng thứ tự gõ trong text (tx trước, rx sau)
   }
 
   console.log(`[sync-missing-trunk-circuits] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
@@ -66,38 +62,13 @@ async function main() {
   const rackIdByCode = new Map<string, string>();
   for (const p of trunkPorts) rackIdByCode.set(p.rackCode, p.rackId);
 
-  const candidates: Candidate[] = [];
-
-  // matchText: PHẦN ODF THUẦN dùng để so khớp (own vốn đã thuần; next phải
-  // tách qua odfPartOf trước — KHÔNG được đưa thẳng text gốc có thể ghép thêm
-  // "- Thiết bị (Trib)" vào matchTrunkPosition, nếu không chữ số trong tên/trib
-  // sẽ bị đọc nhầm thành port, y hệt lỗi "696 port mâu thuẫn" đã tự sửa ở
-  // architecture.md mục 13. rawText chỉ dùng để HIỂN THỊ/ghi chú, không dùng
-  // để so khớp.
-  function collect(circuit: DeviceCircuitRow, field: "own" | "next", matchText: string, rawText: string) {
-    const match = matchTrunkPosition(matchText, trunkPorts);
-    if (!match.matched || match.rackDomain !== "trunk" || !match.rackCode) return;
-    if (match.invalidPortNumbers && match.invalidPortNumbers.length > 0) return; // đã xác nhận 0 trường hợp, không xử lý ở đây
-    const ports = match.resolvedPorts ?? [];
-    if (ports.length === 0) return;
-    if (ports.every((p) => p.inUse)) return; // đã đồng bộ đầy đủ từ trước, không việc gì phải làm
-    const rackId = rackIdByCode.get(match.rackCode);
-    if (!rackId) return;
-    candidates.push({
-      sourceCircuit: circuit,
-      field,
-      rawText,
-      rackId,
-      rackCode: match.rackCode,
-      portNumbers: ports.map((p) => p.portNumber),
-    });
-  }
-
-  for (const c of circuits) {
-    if (c.devicePositionOwn) collect(c, "own", c.devicePositionOwn, c.devicePositionOwn);
-    const nextOdf = odfPartOf(c.devicePositionNext);
-    if (nextOdf) collect(c, "next", nextOdf, c.devicePositionNext ?? "");
-  }
+  // findTrunkMirrorCandidates() TÁI DÙNG NGUYÊN thuật toán dò khớp (cũng dùng
+  // cho autoCreateTrunkMirrorForCircuit() gọi trực tiếp từ UI, xem
+  // lib/mirrorTrunkCircuits.ts) — không viết lại ở đây, tránh lệch nhau (bài
+  // học architecture.md mục 34/35).
+  const candidates: Candidate[] = circuits.flatMap((c) =>
+    findTrunkMirrorCandidates(c, trunkPorts, rackIdByCode).map((cand) => ({ ...cand, sourceCircuit: c }))
+  );
 
   console.log(`Tìm thấy ${candidates.length} ứng viên cần tạo luồng trung kế (khớp lúc quét ban đầu).\n`);
 
@@ -167,6 +138,7 @@ async function main() {
         name: cand.sourceCircuit.name,
         interface_type: cand.sourceCircuit.interfaceType,
         counterpart_text: cand.sourceCircuit.counterpartText,
+        mirror_of_id: cand.sourceCircuit.id,
         notes: `Tự tạo từ luồng thiết bị "${cand.sourceCircuit.name}" (rà soát đồng bộ ODF 2026-07-28, script sync-missing-trunk-circuits.ts) — xem chi tiết ở "Sửa luồng thiết bị", luồng gốc id ${cand.sourceCircuit.id}.`,
       })
       .select("id")

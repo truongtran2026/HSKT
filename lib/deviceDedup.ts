@@ -13,9 +13,16 @@ import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 // định gộp bên nào vào bên nào hay bỏ qua — KHÔNG tự gộp, vì "gần giống" có
 // thể là 2 thiết bị thật khác nhau (vd "P1"/"P2" khác 1 ký tự). N=150 thiết
 // bị hiện tại nên so O(N^2) ở app layer (không cần bật pg_trgm) là đủ nhanh.
+// circuits: danh sách luồng CỤ THỂ đang gắn device_id này (id+name) — thêm
+// 2026-07-30 sau khi người dùng gặp khó: chỉ thấy "2 luồng" nhưng không biết
+// đó là luồng nào/nằm ở đâu để kiểm tra (luồng domain=device không gán port
+// nào nên KHÔNG nằm trong bất kỳ Rack ODF trung kế nào — dễ hiểu lầm đi tìm
+// sai chỗ). Hiện link nhảy thẳng tới đúng dòng ở "Hồ sơ đấu nối" (component
+// DeviceCircuitList.tsx đã có sẵn cơ chế cuộn-tới-dòng qua hash #dc-<id>, xem
+// rowAnchor()/useEffect đọc window.location.hash trong file đó).
 export interface DeviceDupCandidate {
-  deviceA: { id: string; name: string; circuitCount: number };
-  deviceB: { id: string; name: string; circuitCount: number };
+  deviceA: { id: string; name: string; circuitCount: number; circuits: { id: string; name: string }[] };
+  deviceB: { id: string; name: string; circuitCount: number; circuits: { id: string; name: string }[] };
   editDistance: number;
 }
 
@@ -58,10 +65,12 @@ export function findFuzzyDuplicateDevices(
   circuits: DeviceCircuitRow[],
   ignoredPairs: IgnoredDevicePair[]
 ): DeviceDupCandidate[] {
-  const circuitCountByDevice = new Map<string, number>();
+  const circuitsByDevice = new Map<string, { id: string; name: string }[]>();
   for (const c of circuits) {
     if (!c.deviceId) continue;
-    circuitCountByDevice.set(c.deviceId, (circuitCountByDevice.get(c.deviceId) ?? 0) + 1);
+    const list = circuitsByDevice.get(c.deviceId) ?? [];
+    list.push({ id: c.id, name: c.name });
+    circuitsByDevice.set(c.deviceId, list);
   }
   const ignoredKeys = new Set(ignoredPairs.map((p) => ignoredPairKey(p.deviceAId, p.deviceBId)));
 
@@ -76,9 +85,11 @@ export function findFuzzyDuplicateDevices(
       if (d > MAX_EDIT_DISTANCE) continue;
       if (looksLikeNumberedSiblings(a.key, b.key)) continue;
       if (ignoredKeys.has(ignoredPairKey(a.device.id, b.device.id))) continue;
+      const circuitsA = circuitsByDevice.get(a.device.id) ?? [];
+      const circuitsB = circuitsByDevice.get(b.device.id) ?? [];
       result.push({
-        deviceA: { id: a.device.id, name: a.device.name, circuitCount: circuitCountByDevice.get(a.device.id) ?? 0 },
-        deviceB: { id: b.device.id, name: b.device.name, circuitCount: circuitCountByDevice.get(b.device.id) ?? 0 },
+        deviceA: { id: a.device.id, name: a.device.name, circuitCount: circuitsA.length, circuits: circuitsA },
+        deviceB: { id: b.device.id, name: b.device.name, circuitCount: circuitsB.length, circuits: circuitsB },
         editDistance: d,
       });
     }

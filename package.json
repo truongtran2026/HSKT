@@ -20,7 +20,12 @@
     "fix-100g-label": "tsx scripts/fix-100g-label.ts",
     "add-missing-rack-odf1-15": "tsx scripts/add-missing-rack-odf1-15.ts",
     "audit-device-trunk-sync": "tsx scripts/audit-device-trunk-sync.ts",
-    "sync-missing-trunk-circuits": "tsx scripts/sync-missing-trunk-circuits.ts"
+    "sync-missing-trunk-circuits": "tsx scripts/sync-missing-trunk-circuits.ts",
+    "backfill-mirror-of-id": "tsx scripts/backfill-mirror-of-id.ts",
+    "audit-trunk-trunk-sync": "tsx scripts/audit-trunk-trunk-sync.ts",
+    "sync-missing-trunk-trunk-circuits": "tsx scripts/sync-missing-trunk-trunk-circuits.ts",
+    "audit-device-device-sync": "tsx scripts/audit-device-device-sync.ts",
+    "sync-missing-device-device-circuits": "tsx scripts/sync-missing-device-device-circuits.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

@@ -10,6 +10,7 @@ import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
 import { syncDevicePositionMapNames, deleteDevicePositionMapForNames } from "@/lib/devicePositionMap";
 import { mergeDeviceInto } from "@/lib/deviceDedup";
+import { findMirrorTrunkCircuits, cleanupAfterMirrorCascade, type MirrorTrunkMatch } from "@/lib/mirrorTrunkCircuits";
 import { formatLastUpdated } from "@/lib/format";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
@@ -296,15 +297,35 @@ export default function DeviceCategoryClient({
   // đụng racks/transit_links vì đã kiểm tra thực tế: không rack/transit_link
   // nào đang tham chiếu devices qua device_id/target_device_id (2 cột đó luôn
   // null với dữ liệu ADN1 hiện có).
+  //
+  // Bug thật gặp 2026-07-31 (xem architecture.md mục 32): cửa xóa này CŨNG
+  // xóa thẳng circuits.device_id, cùng lớp nguy cơ để lại mirror mồ côi bên
+  // trung kế như deleteCircuit() ở DeviceCircuitList.tsx. Từ migration
+  // `circuits_mirror_of`, xóa circuits ở đây tự cascade xóa mirror rồi
+  // (`mirror_of_id on delete cascade`, không phụ thuộc code này nữa) — chỉ
+  // còn cần dọn `ports.status`/`transit_links` sau đó (xem
+  // lib/mirrorTrunkCircuits.ts, không tự cascade được).
   async function deleteSelectedDevices() {
     if (selected.size === 0) return;
+    setError(null);
+    const circuitIdsToDelete = circuits.filter((c) => c.deviceId && selected.has(c.deviceId)).map((c) => c.id);
+    let mirrors: MirrorTrunkMatch[];
+    try {
+      mirrors = [...(await findMirrorTrunkCircuits(circuitIdsToDelete)).values()];
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
     const deviceLabel = selected.size === 1 ? "thiết bị này" : `${selected.size} thiết bị đã chọn`;
     const circuitWarning =
       selectedCircuitCount > 0 ? ` Toàn bộ ${selectedCircuitCount} luồng đang gán cho ${deviceLabel} sẽ bị xóa theo.` : "";
-    if (!confirm(`Xóa vĩnh viễn ${deviceLabel}?${circuitWarning} Không thể hoàn tác.`)) return;
+    const mirrorWarning =
+      mirrors.length > 0
+        ? ` Trong đó ${mirrors.length} luồng đã có "mirror" tự sinh bên Hồ sơ ODF Trung kế — sẽ bị xóa theo, (các) port trung kế tương ứng trở về trạng thái trống.`
+        : "";
+    if (!confirm(`Xóa vĩnh viễn ${deviceLabel}?${circuitWarning}${mirrorWarning} Không thể hoàn tác.`)) return;
 
     setBusy(true);
-    setError(null);
     try {
       const ids = [...selected];
       const names = selectedDevices.map((d) => d.name);
@@ -314,6 +335,18 @@ export default function DeviceCategoryClient({
         const batch = ids.slice(i, i + chunkSize);
         const { error: circErr } = await supabase.from("circuits").delete().in("device_id", batch);
         if (circErr) throw circErr;
+      }
+
+      if (mirrors.length > 0) {
+        try {
+          await cleanupAfterMirrorCascade(mirrors);
+        } catch (syncErr) {
+          setError(
+            `Đã xóa thiết bị xong (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
+              syncErr instanceof Error ? syncErr.message : String(syncErr)
+            }`
+          );
+        }
       }
 
       try {

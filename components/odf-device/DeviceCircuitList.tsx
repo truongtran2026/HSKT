@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -10,7 +10,7 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { isPlaceholderCircuitName, normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
-import { formatLastUpdated } from "@/lib/format";
+import { formatLastUpdated, isUpdatedToday } from "@/lib/format";
 import {
   parseTransitText,
   isManagedStationCode,
@@ -32,6 +32,13 @@ import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
+import {
+  findMirrorTrunkCircuits,
+  cleanupAfterMirrorCascade,
+  autoCreateTrunkMirrorForCircuit,
+  type MirrorTrunkMatch,
+} from "@/lib/mirrorTrunkCircuits";
+import { autoCreateMirrorForCircuit } from "@/lib/deviceDeviceSync";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 
@@ -318,6 +325,13 @@ export default function DeviceCircuitList({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  // Tô nền + đẩy lên đầu bảng cho MỌI luồng vừa thêm/sửa TRONG NGÀY HÔM NAY
+  // (yêu cầu người dùng 2026-07-31, thay cho cơ chế cũ chỉ ghim đúng 1 dòng
+  // vừa thêm trong 5 giây) — thuần dựa vào circuits[].updatedAt thật (đã có
+  // sẵn, tự cập nhật qua trigger DB), KHÔNG cần state/timer riêng: qua nửa
+  // đêm là tự "hết hạn" vì isUpdatedToday() so theo ngày thật lúc đó.
+  const [onlyUpdatedToday, setOnlyUpdatedToday] = useState(false);
+  const updatedTodayIds = useMemo(() => new Set(circuits.filter((c) => isUpdatedToday(c.updatedAt)).map((c) => c.id)), [circuits]);
   // Slide-over "xem nhanh port trung kế" (yêu cầu người dùng 2026-07-29,
   // "Giai đoạn 2") — renderCircuitFormFields() gọi từ CẢ form Sửa lẫn form
   // Thêm mới, nên đặt state dùng chung ở đây thay vì lặp lại 2 nơi. Lưu
@@ -329,10 +343,6 @@ export default function DeviceCircuitList({
     const portNumbers = new Set(quickViewTrunkMatch.resolvedPorts.map((p) => p.portNumber));
     return trunkPorts.filter((p) => p.rackCode === quickViewTrunkMatch.rackCode && portNumbers.has(p.portNumber));
   }, [quickViewTrunkMatch, trunkPorts]);
-  // Phân biệt highlightId đến từ "vừa thêm mới" (đẩy lên đầu bảng) với
-  // highlightId đến từ link "#dc-<id>" ngoài trang (chỉ tô sáng, giữ nguyên
-  // vị trí theo sắp xếp) — xem filtered (useMemo) và submitCreate() bên dưới.
-  const justCreatedIdRef = useRef<string | null>(null);
   // Tick chọn nhiều dòng để xóa cùng lúc (yêu cầu người dùng 2026-07-28) —
   // tập id độc lập với bộ lọc/sắp xếp đang hiển thị, cùng cách
   // DeviceCategoryClient.tsx đã làm cho bảng thiết bị (đổi bộ lọc không mất
@@ -522,6 +532,40 @@ export default function DeviceCircuitList({
     }
   }
 
+  // Gọi ngay sau khi 1 luồng thiết bị được lưu (thêm mới hoặc sửa) — tự tạo
+  // "mirror" phía đối diện nếu còn thiếu, CẢ 2 LOẠI: (1) đối diện là 1 thiết
+  // bị local khác (lib/deviceDeviceSync.ts, mục 38 — ca ASBR#2 (7/1/8)/(7/1/9)
+  // không tự đồng bộ bên PSS24X#3 BB1), (2) đối diện là 1 port ODF TRUNG KẾ
+  // thật (lib/mirrorTrunkCircuits.ts, mục 39 — ca ASBR#2 (7/1/2) không tự có
+  // luồng bên ODF1/10). Cả 2 cơ chế trước 2026-07-31 CHỈ chạy qua script dọn
+  // dữ liệu cũ 1 lần, chưa từng gắn vào form Thêm/Sửa trên UI — gọi cả 2 ở
+  // đây vì 1 luồng chỉ có thể khớp ĐÚNG 1 trong 2 loại (không match thì trả
+  // "no-gap", vô hại). Không chặn lưu luồng dù bước này lỗi — chỉ báo cho
+  // người dùng biết để tự xử lý tay, cùng tinh thần với
+  // maybeCreateCounterpartDevice/maybeCreateNextDevice ở trên.
+  async function autoMirrorAfterSave(circuitId: string) {
+    try {
+      const result = await autoCreateMirrorForCircuit(circuitId);
+      if (result.status === "mismatch") {
+        setError(
+          `Luồng đã lưu. Lưu ý: thiết bị "${result.targetDeviceName}" đã có luồng cùng tên nhưng Trib ghi "${result.existingTrib ?? "(trống)"}" khác với Trib mong đợi "${result.expectedTrib}" — vào Chất lượng dữ liệu > chạy npm run audit-device-device-sync để xem chi tiết, cần sửa tay.`
+        );
+      } else if (result.status === "error") {
+        setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${result.message}`);
+      }
+    } catch (e) {
+      setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const trunkResult = await autoCreateTrunkMirrorForCircuit(circuitId);
+      if (trunkResult.status === "error") {
+        setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${trunkResult.message}`);
+      }
+    } catch (e) {
+      setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   // Tính TRẠNG THÁI của "Vị trí ODF (tiếp theo)" (yêu cầu người dùng
   // 2026-07-27) — gọi lại mỗi lần render (từ giá trị HIỆN TẠI của Ô1/Ô3), có
   // 3 phần:
@@ -708,23 +752,25 @@ export default function DeviceCircuitList({
 
     list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k), filters[k])));
 
+    // Chỉ hiện luồng vừa thêm/sửa hôm nay (yêu cầu người dùng 2026-07-31,
+    // checkbox trong thanh công cụ) — lọc SAU các bộ lọc cột khác, cùng logic
+    // "AND" như mọi bộ lọc còn lại.
+    if (onlyUpdatedToday) {
+      list = list.filter((c) => updatedTodayIds.has(c.id));
+    }
+
     const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
     const sortedArr = sortDir === "desc" ? arr.reverse() : arr;
 
-    // Luồng vừa thêm mới (highlightId, xem submitCreate) luôn lên ĐẦU bảng,
-    // bất kể đang sắp xếp/lọc theo cột nào (yêu cầu người dùng 2026-07-28) —
-    // chỉ áp dụng đúng lượt vừa thêm, KHÔNG áp dụng cho highlightId đến từ
-    // link "#dc-<id>" ngoài trang (đã đứng đúng vị trí theo sắp xếp, không
-    // cần đẩy lên đầu, chỉ cần tô sáng).
-    if (highlightId && justCreatedIdRef.current === highlightId) {
-      const idx = sortedArr.findIndex((c) => c.id === highlightId);
-      if (idx > 0) {
-        const [item] = sortedArr.splice(idx, 1);
-        sortedArr.unshift(item);
-      }
-    }
-    return sortedArr;
-  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, highlightId]);
+    // Mọi luồng vừa thêm/sửa HÔM NAY luôn nổi lên ĐẦU bảng, bất kể đang sắp
+    // xếp/lọc theo cột nào (yêu cầu người dùng 2026-07-28, mở rộng 2026-07-31
+    // từ "chỉ 1 dòng vừa thêm trong 5s" thành "mọi dòng đổi trong ngày, giữ
+    // tới hết ngày") — trong nhóm này, dòng sửa gần nhất lên trước. Phần còn
+    // lại (không đổi hôm nay) giữ nguyên thứ tự theo sortKey/sortDir đã chọn.
+    const todayArr = sortedArr.filter((c) => updatedTodayIds.has(c.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const restArr = sortedArr.filter((c) => !updatedTodayIds.has(c.id));
+    return [...todayArr, ...restArr];
+  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, onlyUpdatedToday, updatedTodayIds]);
 
   // Chỉ ẩn cột "Thiết bị" khi đã lọc còn ĐÚNG 1 thiết bị cụ thể (dòng nào
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
@@ -829,19 +875,56 @@ export default function DeviceCircuitList({
 
   // Xóa nhanh 1 luồng thiết bị — luồng thiết bị không gắn port_circuit_links
   // (khác luồng trung kế, xem lib/deviceCircuits.ts) nên chỉ cần xóa đúng 1
-  // dòng circuits, không đụng gì khác. Luôn hỏi trước vì không thể hoàn tác.
+  // dòng circuits, không đụng gì khác CỦA CHÍNH NÓ. Luôn hỏi trước vì không
+  // thể hoàn tác.
+  //
+  // Bug thật gặp 2026-07-31: nếu luồng này từng được
+  // `scripts/sync-missing-trunk-circuits.ts` tự tạo 1 luồng "mirror" bên Hồ
+  // sơ ODF Trung kế (rack/port thật), xóa CHỈ luồng thiết bị để lại luồng
+  // mirror mồ côi — port trung kế báo "đang dùng" mãi dù luồng gốc không còn.
+  // Từ migration `circuits_mirror_of` (2026-07-31), `circuits.mirror_of_id
+  // on delete cascade` đã tự đảm bảo xóa luồng gốc là mirror tự xóa theo Ở
+  // TẦNG CSDL (không phụ thuộc code này) — chỉ còn cần: (1) tra trước để báo
+  // rõ trong confirm(), (2) dọn `ports.status`/`transit_links` sau khi xóa
+  // (2 việc KHÔNG tự cascade, xem lib/mirrorTrunkCircuits.ts).
   async function deleteCircuit(c: DeviceCircuitRow) {
-    if (!confirm(`Xóa luồng "${displayName(c) || "(chưa đặt tên)"}" (thiết bị: ${c.deviceName ?? "chưa xác định"})? Không thể hoàn tác.`)) {
+    setError(null);
+    let mirror: MirrorTrunkMatch | null = null;
+    try {
+      mirror = (await findMirrorTrunkCircuits([c.id])).get(c.id) ?? null;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const mirrorNote = mirror
+      ? `\n\nLƯU Ý: luồng này đã có 1 luồng "mirror" tự sinh bên Hồ sơ ODF Trung kế ("${mirror.circuitName}") — sẽ bị xóa theo, port trung kế tương ứng trở về trạng thái trống.`
+      : "";
+    if (
+      !confirm(
+        `Xóa luồng "${displayName(c) || "(chưa đặt tên)"}" (thiết bị: ${c.deviceName ?? "chưa xác định"})? Không thể hoàn tác.${mirrorNote}`
+      )
+    ) {
       return;
     }
     setBusy(true);
-    setError(null);
     const { error: err } = await supabase.from("circuits").delete().eq("id", c.id);
-    setBusy(false);
     if (err) {
+      setBusy(false);
       setError(err.message);
       return;
     }
+    if (mirror) {
+      try {
+        await cleanupAfterMirrorCascade([mirror]);
+      } catch (e) {
+        setError(
+          `Đã xóa luồng thiết bị (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      }
+    }
+    setBusy(false);
     if (edit?.id === c.id) setEdit(null);
     router.refresh();
   }
@@ -878,13 +961,25 @@ export default function DeviceCircuitList({
   // Xóa nhiều luồng thiết bị cùng lúc (yêu cầu người dùng 2026-07-28: "tick
   // chọn rồi bấm xóa") — cùng lý do an toàn như deleteCircuit() ở trên (luồng
   // thiết bị không gắn port_circuit_links nào), chỉ khác là xóa theo lô id đã
-  // tick thay vì đúng 1 dòng.
+  // tick thay vì đúng 1 dòng. Cùng cơ chế dọn "mirror" trung kế mồ côi như
+  // deleteCircuit() (xem comment ở đó + lib/mirrorTrunkCircuits.ts).
   async function deleteSelectedCircuits() {
     if (selected.size === 0) return;
-    if (!confirm(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.`)) return;
-    setBusy(true);
     setError(null);
     const ids = [...selected];
+    let mirrors: MirrorTrunkMatch[] = [];
+    try {
+      mirrors = [...(await findMirrorTrunkCircuits(ids)).values()];
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const mirrorNote =
+      mirrors.length > 0
+        ? `\n\nLƯU Ý: ${mirrors.length} luồng trong số này đã có luồng "mirror" tự sinh bên Hồ sơ ODF Trung kế — sẽ bị xóa theo, (các) port trung kế tương ứng trở về trạng thái trống.`
+        : "";
+    if (!confirm(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.${mirrorNote}`)) return;
+    setBusy(true);
     const chunkSize = 200;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const batch = ids.slice(i, i + chunkSize);
@@ -893,6 +988,17 @@ export default function DeviceCircuitList({
         setBusy(false);
         setError(err.message);
         return;
+      }
+    }
+    if (mirrors.length > 0) {
+      try {
+        await cleanupAfterMirrorCascade(mirrors);
+      } catch (e) {
+        setError(
+          `Đã xóa các luồng thiết bị (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
       }
     }
     setBusy(false);
@@ -944,6 +1050,7 @@ export default function DeviceCircuitList({
     if (!isCableMode) {
       await maybeGrowLibrary(edit.positionNextDevice || null, edit.positionNextTrib, edit.positionNextOdf);
       await maybeCreateNextDevice(edit.positionNextDevice);
+      await autoMirrorAfterSave(edit.id);
     }
     setBusy(false);
     setEdit(null);
@@ -1140,21 +1247,16 @@ export default function DeviceCircuitList({
     if (!isCableMode) {
       await maybeGrowLibrary(createDraft.positionNextDevice || null, createDraft.positionNextTrib, createDraft.positionNextOdf);
       await maybeCreateNextDevice(createDraft.positionNextDevice);
+      await autoMirrorAfterSave(inserted.id);
     }
     setBusy(false);
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);
     setNameTicks({ own: false, next: false, counterpart: false });
-    // Tái dùng CHÍNH CƠ CHẾ highlightId đã có sẵn cho "nhảy tới từ link ngoài"
-    // (xem useEffect applyHash phía trên) — cùng màu amber-100, cùng thời gian
-    // tự tắt 5s, và filtered (useMemo bên dưới) sẽ tự đẩy đúng id này lên đầu
-    // danh sách bất kể đang sắp xếp/lọc theo cột nào.
-    justCreatedIdRef.current = inserted.id;
-    setHighlightId(inserted.id);
-    setTimeout(() => {
-      setHighlightId(null);
-      justCreatedIdRef.current = null;
-    }, 5000);
+    // Không cần tự ghim/tô sáng thủ công nữa (2026-07-31) — router.refresh()
+    // nạp lại circuits với updated_at mới của dòng vừa tạo, updatedTodayIds/
+    // filtered (useMemo) tự đẩy nó lên đầu bảng + tô nền, giữ vậy tới hết
+    // ngày hôm nay, không cần setTimeout tắt sau vài giây như trước.
     router.refresh();
   }
 
@@ -1712,6 +1814,16 @@ export default function DeviceCircuitList({
             Xóa bộ lọc
           </button>
         )}
+        {updatedTodayIds.size > 0 && (
+          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={onlyUpdatedToday}
+              onChange={(e) => setOnlyUpdatedToday(e.target.checked)}
+            />
+            Chỉ hiện luồng sửa hôm nay ({updatedTodayIds.size})
+          </label>
+        )}
         <button type="button" className="text-xs text-primary-600 hover:underline" onClick={selectAllVisible}>
           Chọn tất cả đang hiện
         </button>
@@ -1875,7 +1987,9 @@ export default function DeviceCircuitList({
                         ? "bg-primary-50/60"
                         : inConflict
                           ? "bg-red-50 hover:bg-red-100"
-                          : "hover:bg-primary-50/50"
+                          : updatedTodayIds.has(c.id)
+                            ? "bg-yellow-50 hover:bg-yellow-100"
+                            : "hover:bg-primary-50/50"
                   }`}
                 >
                   <td className="px-2 py-2 align-top">

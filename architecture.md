@@ -1547,3 +1547,492 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       lại, đếm về "2035/2035". Trường hợp chip đang chọn SẴN LÀ "Chưa phân
       loại" (dòng mới lẽ ra vẫn lọt qua) → xác nhận banner KHÔNG hiện sai
       (không báo giả khi dòng thật ra vẫn nhìn thấy được).
+
+31. **Tab "Thiết bị trùng gần đúng" thêm link nhảy thẳng tới từng luồng**
+    (yêu cầu người dùng 2026-07-30, `lib/deviceDedup.ts` +
+    `components/data-quality/DataQualityClient.tsx`) — trước đó chỉ hiện số
+    đếm "X luồng" cho mỗi thiết bị trong cặp nghi trùng, không cho biết luồng
+    NÀO. Người dùng gặp thật: cặp "ADN1.MSSE3C (0 luồng) ↔ ADN1.TSSE3B (2
+    luồng)" — đã tưởng xóa hết luồng của TSSE3B (thiết bị tắt nguồn) ở "Hồ sơ
+    đấu nối" nhưng vẫn còn 2, không biết tìm ở đâu, còn nghi ngờ nhầm có thể
+    nằm trong 1 Rack ODF trung kế nào đó.
+    - **Làm rõ 1 điểm dễ nhầm về data model**: luồng domain=device (có
+      `device_id`, dùng để tính số đếm ở tab này) theo định nghĩa **KHÔNG bao
+      giờ gán port nào** (mục 3.4) — nên **không thể** nằm trong bất kỳ Rack
+      ODF trung kế nào, chỉ có thể tìm ở "Hồ sơ đấu nối" (`/odf-device/sua-luong`).
+      Đi tìm ở Hồ sơ ODF trung kế theo từng Rack là sai hướng, tốn công vô ích.
+    - **Nguyên nhân thật của ca cụ thể trên**: 2 luồng còn sót có
+      `device_position_own`/`device_position_next` gắn `TSSE3B` (qua
+      `device_id`) nhưng **tên luồng KHÔNG chứa chữ "TSSE3B"** (vd `"STM1
+      AĐN1.OMS3255 (2/5/6) - HNI (W)"`) — nếu người dùng lọc/xóa hàng loạt
+      bằng cách gõ "TSSE3B" vào ô lọc cột **Tên luồng** (thay vì cột/khung
+      chọn **Thiết bị**) thì 2 dòng này không khớp, bị bỏ sót. Kết luận: khi
+      dọn luồng theo 1 thiết bị, luôn lọc bằng cột/khung **Thiết bị** (khớp
+      chính xác `device_id`), không dùng ô lọc Tên luồng (chỉ khớp chữ, không
+      phản ánh đúng liên kết thật).
+    - **Sửa tận gốc**: `DeviceDupCandidate.deviceA/deviceB` (trước chỉ có
+      `circuitCount: number`) nay thêm `circuits: { id, name }[]` — build từ
+      `circuitsByDevice` (Map deviceId -> danh sách luồng) trong
+      `findFuzzyDuplicateDevices()`. `DataQualityClient.tsx` thêm component
+      `CircuitLinkList` hiện tên từng luồng dưới mỗi cặp, mỗi tên là link
+      `/odf-device/sua-luong#dc-<id>` (dùng lại `rowAnchor()` +
+      cơ chế cuộn-tới-dòng/tô sáng đã có sẵn trong `DeviceCircuitList.tsx`,
+      giống hệt cách tab "Xung đột vị trí" đã làm) — bấm vào tên luồng là
+      nhảy thẳng tới đúng dòng, không cần tự lọc/tìm tay nữa.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Chưa chạy Playwright (chỉ đổi hiển
+      thị + thêm field dữ liệu, không đổi logic ghi/xóa).
+
+32. **Bug: xóa luồng thiết bị không dọn "mirror" trung kế tự sinh → port
+    trung kế mồ côi báo "đang dùng" mãi** (người dùng phát hiện 2026-07-31,
+    `DeviceCircuitList.tsx`) — mục 15 đã tự tạo 60 luồng "mirror" bên Hồ sơ
+    ODF Trung kế (script `sync-missing-trunk-circuits.ts`, 2026-07-28) để
+    phản ánh đúng port đang dùng thật, mỗi mirror chỉ nhận ra luồng thiết bị
+    GỐC của nó qua text cố định trong `notes` ("...luồng gốc id `<uuid>`."),
+    KHÔNG có FK thật nối 2 dòng `circuits` này (đúng nguyên tắc CLAUDE.md #3
+    "liên kết bán cấu trúc"). Hệ quả: `deleteCircuit()`/`deleteSelectedCircuits()`
+    (xóa luồng thiết bị) chỉ xóa đúng 1 dòng `circuits` phía thiết bị, không
+    biết gì về mirror bên trung kế — xóa xong, port trung kế vẫn `in_use` +
+    hiện tên luồng cũ mãi dù luồng gốc không còn tồn tại. Ca cụ thể người dùng
+    báo: xóa luồng thiết bị `"10GE AĐN1.P2 (17/0/3) - DNG.MPE.06 (1/2/1)"`
+    (id `e4abf816...`), port 7,8 rack `ODF1/5` bên trung kế vẫn báo đang dùng.
+    - **Rà toàn hệ thống trước khi sửa**: quét cả 60 mirror hiện có (notes
+      chứa "luồng gốc id"), đối chiếu id gốc với `circuits` hiện tại — CHỈ
+      đúng 1 trường hợp orphan (ca người dùng báo), không có case tương tự
+      khác đang tồn đọng.
+    - **`lib/mirrorTrunkCircuits.ts`** (mới): `findMirrorTrunkCircuits(originIds)`
+      — quét `circuits` có `notes ilike '%luồng gốc id%'`, parse regex lấy id
+      gốc, trả `Map<originId, {circuitId, circuitName, portIds}>` (chỉ những
+      id có trong tập truyền vào, không load thừa). `deleteMirrorTrunkCircuits(matches)`
+      — xóa cascade đúng thứ tự: (1) `transit_links` của các port sắp giải
+      phóng (cùng lý do mục 16 — port trống thì "Chuyển tiếp" cũ vô nghĩa),
+      (2) xóa `circuits` mirror (tự cascade `port_circuit_links` qua FK
+      `on delete cascade` có sẵn từ `init_schema.sql`, không cần xóa tay),
+      (3) đưa `ports.status` các port đó về `unused`.
+    - **`DeviceCircuitList.tsx` — `deleteCircuit()`/`deleteSelectedCircuits()`**:
+      gọi `findMirrorTrunkCircuits()` TRƯỚC khi hỏi `confirm()` — nếu có
+      mirror, thêm dòng cảnh báo rõ trong hộp thoại xác nhận (luồng mirror
+      nào sẽ bị xóa theo, port nào sẽ về trống) để không bất ngờ; xóa xong
+      luồng thiết bị mới gọi `deleteMirrorTrunkCircuits()`. Lỗi ở bước dọn
+      mirror KHÔNG coi là lỗi toàn bộ thao tác (luồng thiết bị đã xóa xong
+      thật) — chỉ báo riêng, cùng tinh thần các chỗ đồng bộ phụ khác
+      (`syncDevicePositionMapNames`...).
+    - **Dọn ca orphan đã phát hiện**: chạy trực tiếp `deleteMirrorTrunkCircuits()`
+      qua script tạm 1 lần — xóa mirror `7d2c517b...`, port 7/8 rack `ODF1/5`
+      về `unused`, xác nhận lại `port_circuit_links` rỗng.
+    - **Kiểm chứng**: `tsc --noEmit` sạch; curl lại `/`, `/odf-trunk`,
+      `/odf-device/sua-luong`, `/data-quality`, `/devices` đều 200.
+    - **Người dùng phản biện đúng (2026-07-31)**: "hệ thống từng tự động tạo
+      mirror thì phải có liên kết thật chứ nhỉ" — đúng, bản vá trên chỉ chặn
+      2 hàm ở `DeviceCircuitList.tsx`. Rà lại phát hiện THÊM 1 cửa cũng xóa
+      thẳng `circuits.device_id` mà không qua 2 hàm đó: nút "Xóa hẳn thiết
+      bị" ở `/devices` (`DeviceCategoryClient.tsx` mục 14) — vá kiểu "nhớ gọi
+      hàm dọn dẹp ở từng nơi" luôn có nguy cơ sót cửa mới sau này. Đã hỏi
+      &amp; người dùng chọn hướng triệt để hơn: thêm ràng buộc THẬT ở tầng CSDL.
+
+33. **`circuits.mirror_of_id` — thay liên kết mirror trung kế từ text sang FK
+    thật `on delete cascade`** (yêu cầu người dùng 2026-07-31, tiếp nối mục
+    32) — migration `20260731000001_circuits_mirror_of.sql`: thêm cột
+    `mirror_of_id uuid references circuits(id) on delete cascade`, index kèm
+    theo. Từ nay xóa luồng thiết bị gốc ở **BẤT KỲ đâu** (`DeviceCircuitList.tsx`,
+    `DeviceCategoryClient.tsx`, hay 1 script quản trị nào đó sau này chưa
+    viết) đều được Postgres **tự xóa mirror theo**, không phụ thuộc code nhớ
+    gọi đúng hàm — đúng tinh thần "liên kết bán cấu trúc nên chuẩn hóa dần"
+    (CLAUDE.md #3), ở đây đã đủ dữ liệu ổn định (60 mirror cố định, không còn
+    tăng thêm qua UI sống) nên chuẩn hóa thành FK thật là hợp lý.
+    - **`scripts/backfill-mirror-of-id.ts`** (mới, DRY RUN/`--commit`,
+      `npm run backfill-mirror-of-id`) — chạy 1 LẦN sau khi migration được áp
+      dụng: parse lại đúng cụm text "luồng gốc id `<uuid>`" trong `notes` của
+      59 mirror còn lại (60 gốc trừ 1 đã dọn tay ở mục 32), điền vào
+      `mirror_of_id`. Sau lần chạy này, code app KHÔNG còn đọc `notes` để
+      nhận diện mirror nữa — chỉ còn script backfill này biết định dạng text
+      cũ (giữ lại trong repo làm tài liệu/có thể chạy lại nếu cần đối chiếu).
+    - **`lib/mirrorTrunkCircuits.ts` đổi cách nhận diện**: `findMirrorTrunkCircuits()`
+      giờ query thẳng `circuits.mirror_of_id in (...)` (có index) thay vì
+      quét + regex toàn bộ `notes` — nhanh và đáng tin cậy hơn. Đổi tên
+      `deleteMirrorTrunkCircuits()` → **`cleanupAfterMirrorCascade()`**: KHÔNG
+      còn tự xóa dòng `circuits` mirror nữa (đã tự cascade khi luồng gốc bị
+      xóa, xong trước khi hàm này được gọi) — chỉ còn lo phần KHÔNG tự cascade
+      được: xóa `transit_links` của các port giải phóng (cùng lý do mục 16) +
+      đưa `ports.status` về `unused`.
+    - **`DeviceCategoryClient.tsx` — `deleteSelectedDevices()` vá theo cùng
+      cơ chế**: tra `findMirrorTrunkCircuits()` theo danh sách `circuit.id`
+      của các thiết bị sắp xóa (từ prop `circuits` đã có sẵn) TRƯỚC `confirm()`
+      để thêm dòng cảnh báo rõ số luồng mirror sẽ bị xóa theo (giống cách
+      `DeviceCircuitList.tsx` đã làm) — xóa `circuits` xong (đã tự cascade
+      mirror) mới gọi `cleanupAfterMirrorCascade()`.
+    - **QUAN TRỌNG — cần người dùng tự chạy migration**: cùng lý do mục 25 —
+      môi trường này không có Postgres connection string/Supabase CLI, phải
+      copy nội dung `supabase/migrations/20260731000001_circuits_mirror_of.sql`
+      chạy tay qua Supabase Dashboard → SQL Editor, RỒI mới chạy
+      `npm run backfill-mirror-of-id -- --commit`. Trước khi làm xong cả 2
+      bước, các luồng gọi `findMirrorTrunkCircuits()` (nút Xóa ở
+      `/odf-device/sua-luong` và `/devices`) sẽ lỗi (cột `mirror_of_id` chưa
+      tồn tại) — đúng dự kiến, không phải bug code.
+    - **Kiểm chứng (đầy đủ, sau khi người dùng chạy migration 2026-07-31)**:
+      `tsc --noEmit` sạch. `npm run backfill-mirror-of-id -- --commit` ghi
+      đúng 59/59 dòng, chạy lại dry run xác nhận "0 cần cập nhật, 59 đã đúng
+      sẵn". Test cascade thật (tạo 2 dòng `circuits` test độc lập —
+      `__TEST_ORIGIN__`/`__TEST_MIRROR__` trỏ `mirror_of_id`, xóa origin, xác
+      nhận mirror biến mất theo, không đụng dữ liệu thật, đã dọn sạch dữ liệu
+      test ngay sau) → cascade hoạt động đúng ở tầng CSDL. Curl lại `/`,
+      `/odf-trunk`, `/odf-device/sua-luong`, `/data-quality`, `/devices` đều
+      200.
+
+34. **Lớp "chưa đồng bộ" thứ 2: luồng TRUNG KẾ trỏ "Chuyển tiếp" sang 1 port
+    trung kế KHÁC đang trống** (người dùng phát hiện 2026-07-31, ngay sau khi
+    tự thêm luồng "IDC3 - CMC" ở `ODF2/10(28)`, Chuyển tiếp ghi "ODF 6/1 (4)"
+    nhưng port 4 rack `ODF6/1` vẫn trống) — cùng LỚP vấn đề với mục 15
+    (luồng thiết bị thiếu mirror trung kế) nhưng khác HƯỚNG: ở đây nguồn đã
+    là 1 luồng trung kế thật (có `port_circuit_links`), "Chuyển tiếp" của nó
+    lại trỏ thẳng sang 1 port trung kế khác (không qua thiết bị nào — "form
+    2" đã công nhận ở `lib/transitLinks.ts`) nhưng port đích trống — thiếu
+    đúng nửa còn lại của cặp "2 dòng circuit mirror nhau cho 1 liên kết vật
+    lý" (jumper/patch nội bộ giữa 2 rack ODF).
+    - **`scripts/audit-trunk-trunk-sync.ts`** (mới, chỉ đọc, `npm run
+      audit-trunk-trunk-sync`) — quét toàn bộ `transit_links` có nguồn là
+      rack `domain='trunk'`, dùng `matchBareTrunkLink()` (đã có sẵn từ mục
+      29/`lib/trunkPorts.ts`) để nhận diện "form 2", kiểm tra
+      `resolvedPorts[].inUse` của port đích. **Kết quả rà lần đầu**: 513 dòng
+      `transit_links`, 91 dòng khớp "form 2", **25 port đích trống** thuộc
+      **14 luồng nguồn** (đúng có ca "IDC3 - CMC" người dùng báo, đánh dấu
+      trong danh sách trình bày cho người dùng xác nhận).
+    - **Đã hỏi & người dùng chọn hướng xử lý**: "Tự động tạo mirror cho cả
+      14" — giống hệt hướng đã chọn ở mục 15.
+    - **`scripts/sync-missing-trunk-trunk-circuits.ts`** (mới, DRY RUN/
+      `--commit`, `npm run sync-missing-trunk-trunk-circuits`) — cùng cấu
+      trúc với `sync-missing-trunk-circuits.ts` (rà soát SỐNG ngay trước khi
+      ghi từng dòng, tự bỏ qua cặp port đã "hết trống" do chính đợt chạy này
+      xử lý, xử lý đúng dạng PostgREST trả `port_circuit_links` là OBJECT
+      đơn không phải mảng) — nhưng **khác 1 điểm quan trọng**: gắn
+      `circuits.mirror_of_id` NGAY LÚC TẠO (cột thật từ mục 33) thay vì chỉ
+      ghi text "luồng gốc id..." vào `notes` — tránh lặp lại đúng bug mồ côi
+      đã gặp ở mục 32 cho chính lô mirror mới tạo này.
+    - **Kết quả (2026-07-31)**: **13/14 tạo thành công** (bao gồm đúng ca
+      "IDC3 - CMC" → `ODF6/1` port 4); **1 trường hợp xung đột thật cần rà
+      tay**: "3G BTS Vina" (`ODF6/4` port 1) ghi Chuyển tiếp "ODF 6/3/(6,7)"
+      nhưng port 6 tại `ODF6/3` **đã có sẵn** 1 luồng khác **cùng tên** "3G
+      BTS Vina" chiếm rồi (chỉ port 7 thật sự trống) — script tự phát hiện
+      xung đột (chặn ghi cả cặp thay vì tự đoán tạo 1 luồng lẻ port 7), không
+      tự đoán, để người dùng đối chiếu hồ sơ giấy rồi sửa tay. Chạy lại
+      `audit-trunk-trunk-sync.ts` xác nhận số "chưa đồng bộ" giảm đúng từ 25
+      xuống còn 1 (đúng trường hợp trên).
+    - **Kiểm chứng**: `tsc --noEmit` sạch; curl lại `/`, `/odf-trunk`,
+      `/odf-device/sua-luong`, `/data-quality`, `/devices`, `/search`,
+      `/dashboard` đều 200.
+
+35. **Lớp "chưa đồng bộ" thứ 3: luồng THIẾT BỊ ↔ THIẾT BỊ (cả 2 đầu đều local
+    ADN1) thiếu nửa mirror** (người dùng phát hiện 2026-07-31, ngay sau mục
+    34, khi tự thêm luồng "ADN1.ASBR#2-MX2020 (7/1/7) đi ADN1.P2 (16/1/9)" —
+    bên "ADN1.P2" không có luồng nào ở Trib "16/1/9"). Trợ lý AI lúc đầu
+    tưởng nhầm cần thêm dữ liệu vật lý bên ngoài mới tạo được mirror — **người
+    dùng chỉ ra ĐÚNG**: đối chiếu các cặp ASBR#2-MX2020↔P2 đã có sẵn xác nhận
+    quy luật cơ học — `device_position_own` của thiết bị B chính là PHẦN ODF
+    trong `device_position_next` của thiết bị A, và ngược lại — không cần
+    biết thêm gì về vật lý thật, suy được 100% từ dữ liệu đã có.
+    - **`lib/deviceDeviceSync.ts`** (mới) — `findMissingDeviceMirrors(circuits, devices)`
+      dùng chung cho cả audit lẫn sync (bài học mục 9 — không lặp thuật toán
+      2 nơi). Trả về **2 nhóm** tách riêng:
+      - `gaps`: thiết bị đích CHƯA có luồng nào khớp Trib mong đợi VÀ cũng
+        chưa có luồng nào TRÙNG TÊN — an toàn để tự tạo.
+      - `mismatches`: thiết bị đích ĐÃ CÓ 1 luồng **trùng tên hệt** luồng
+        nguồn (mirror thật luôn giữ nguyên tên ở cả 2 phía, xác nhận qua dữ
+        liệu) nhưng Trib ghi lệch — **KHÔNG tự tạo thêm** (sẽ tạo trùng luồng
+        đã có), chỉ báo cho người dùng tự sửa Trib bên nào đúng.
+      - Phát hiện nhóm `mismatches` này chính là bước tự kiểm chứng trước khi
+        ghi hàng loạt — nếu bỏ qua sẽ tạo trùng dữ liệu (xem 2 ca ADX/DWDM
+        FTI dưới).
+      `buildMirrorNextPosition()` ghép `device_position_next` cho dòng mirror
+      (own + tên + trib của luồng gốc, dùng lại `combinePositionNext()` có
+      sẵn).
+    - **`scripts/audit-device-device-sync.ts`** (mới, chỉ đọc, `npm run
+      audit-device-device-sync`) — rà 855 luồng có "Vị trí ODF tiếp theo"
+      trỏ tới 1 thiết bị local ADN1 đã biết: **41 ca ban đầu**, sau khi lọc
+      qua bước kiểm chứng "trùng tên" còn **37 ca thiếu hẳn** (an toàn tự
+      tạo) + **4 ca đã có mirror nhưng Trib lệch** (lỗi gõ dữ liệu gốc, vd
+      "ADX#16/LP1" bị ghi nhầm "ADX#15/LP1" — 2 dòng LP1/LP2 kề nhau dễ lẫn;
+      để người dùng tự sửa, không tự đoán bên nào đúng).
+    - **`scripts/sync-missing-device-device-circuits.ts`** (mới, DRY RUN/
+      `--commit`, `npm run sync-missing-device-device-circuits`) — KHÁC 2
+      script sync trước (không đụng `ports`/`port_circuit_links` gì cả, vì
+      domain=device không có bảng port thật — mục 7.2): chỉ INSERT 1 dòng
+      `circuits` mới với `device_id`/`trib_text`/`device_position_own/next`
+      suy cơ học từ dòng gốc, gắn `mirror_of_id` ngay lúc tạo (cột thật từ
+      mục 33 — áp dụng được cho cả domain=device, không chỉ trunk). Rà sống
+      lại ngay trước khi ghi từng dòng (tránh tạo trùng nếu 2 gap cùng đợt
+      chạy đụng nhau).
+    - **Đã hỏi & người dùng chọn hướng xử lý**: "Ghi thật cả 37". Kết quả:
+      **37/37 tạo thành công**, chạy lại audit xác nhận "0 thiếu hẳn", 4 ca
+      lệch Trib giữ nguyên để người dùng tự sửa tay.
+    - **Sự cố phát hiện NGAY SAU khi ghi (cùng ngày 2026-07-31, người dùng
+      báo)**: 1 trong 37 mirror ("100GE AĐN1.P2 (11/1/3)... Trib S47-1")
+      được tạo dưới thiết bị `ADN1.PSS64/BB330G` — nhưng thiết bị NÀY và
+      `ADN1.PSS64 BB1` (thiết bị chuẩn hóa thật, đã có 50 luồng từ lúc import
+      gốc) **là CÙNG 1 thiết bị vật lý thật** (`BB330G` là tên cũ, `BB1` là
+      tên mới chuẩn hóa) — người dùng xác nhận trực tiếp bằng kiến thức thực
+      tế trạm, đúng tinh thần [[feedback_defer_to_physical_domain_knowledge]].
+      2 tên này lệch nhau QUÁ NHIỀU ký tự ("BB330G" so "BB1") nên tab "Thiết
+      bị trùng gần đúng" (mục 27, ngưỡng edit-distance≤2) không bao giờ bắt
+      được — đây là giới hạn ĐÃ BIẾT của công cụ dedup tên gần đúng, không
+      phải lỗi mới.
+    - **Rà lại TOÀN BỘ 37 dòng vừa tạo** (so tên với dữ liệu CŨ hơn, loại trừ
+      đúng chính luồng GỐC mà mirror được tạo ra từ đó — lần đầu rà nhầm coi
+      cả luồng gốc là "trùng" nên báo sai 36/37, rà lại đúng cách chỉ còn
+      **16/37 là trùng THẬT**): toàn bộ 16 luồng nhắm vào thiết bị
+      `ADN1.PSS64/BB330G` đều trùng 100% (cùng tên VÀ cùng Trib) với luồng đã
+      có sẵn dưới `ADN1.PSS64 BB1` — vì bảng `deviceIdByKey` trong
+      `findMissingDeviceMirrors()` chỉ so khớp theo TEXT tên thiết bị xuất
+      hiện trong "Vị trí ODF tiếp theo", không biết `PSS64/BB330G` cần hiểu
+      là `PSS64 BB1`. 21 luồng còn lại (ASBR2↔PSS24X#3, ASBR2↔P2,
+      ADX↔OMS3255, MRSE3C↔OMS3255) đã kiểm tra riêng — các thiết bị đích đó
+      (`PSS24X#3 BB1`, `P2`, `OMS3255`, `MRSE3C`, `ADX`) đều chỉ có ĐÚNG 1
+      dòng `devices`, không có vấn đề tương tự.
+    - **Đã dọn (người dùng xác nhận trước khi xóa — bị auto-mode classifier
+      chặn hành động xóa hàng loạt, đúng quy trình an toàn, dừng lại hỏi rồi
+      mới làm)**: xóa 16 luồng trùng, dọn `device_position_map` theo tên, xóa
+      hẳn thiết bị `ADN1.PSS64/BB330G` (đúng thứ tự mục 14) — KHÔNG đụng gì
+      dữ liệu gốc bên `ADN1.PSS64 BB1`. Chạy lại `audit-device-device-sync`
+      xác nhận về đúng trạng thái trước sự cố ("0 thiếu hẳn", vẫn 4 ca lệch
+      Trib không đổi).
+    - **Bài học**: khi mirror-sync tự động chọn thiết bị đích qua tra cứu
+      theo TÊN TEXT (không phải theo id cố định), luôn có rủi ro chọn nhầm 1
+      thiết bị "trùng lặp gần-như-vô-hình" (đổi tên hoàn toàn, không phải lỗi
+      chính tả) mà công cụ dedup fuzzy-tên không bắt được — chỉ phát hiện
+      được qua kiểm tra chéo SAU KHI ghi (so khớp Trib+tên với TOÀN BỘ dữ
+      liệu, không chỉ trong phạm vi device_id vừa chọn) hoặc qua chính người
+      dùng biết lịch sử đổi tên thiết bị thật.
+    - **Kiểm chứng**: `tsc --noEmit` sạch; curl lại `/`, `/odf-trunk`,
+      `/odf-device/sua-luong`, `/data-quality`, `/devices`, `/search`,
+      `/dashboard` đều 200.
+
+36. **Sửa tiếp mục 35: quy tắc own/next SAI khi 2 vị trí ODF trùng nhau + dọn
+    dữ liệu ADX đã tắt nguồn** (người dùng chỉ ra ngay sau mục 35, cùng ngày
+    2026-07-31) — `buildMirrorNextPosition()` dùng thẳng `device_position_own`
+    của luồng GỐC để ghép vào "next" của mirror, nhưng nếu `own` của luồng gốc
+    lại TRÙNG với phần ODF đã tách ra làm `own` cho mirror (own == next-ODF
+    của chính luồng gốc) thì đó là **2 vị trí ODF không thể là 1** (người
+    dùng khẳng định) — dữ liệu gốc kiểu này (vd ADX các cổng ≤12) dùng cách
+    ghi CŨ để thể hiện "kết nối trực tiếp" (lặp lại tọa độ) thay vì ghi rõ
+    chữ "Kết nối trực tiếp" như các dòng đã chuẩn hóa (ADX#15/LP1, #16/LP1,
+    #16/LP2). Ca cụ thể: mirror OMS3255 tạo cho "ADX#11/LP1" bị ghi `next =
+    "ODF 4/6 (13,14) - ADX (ADX#11/LP1)"` (lặp đúng tọa độ own), lẽ ra phải
+    là `"Kết nối trực tiếp - ADN1.ADX (ADX#11/LP1)"`.
+    - **Phát hiện thêm nguyên nhân gốc của TOÀN BỘ nhóm ADX**: người dùng cho
+      biết thiết bị `ADN1.ADX` cổng **#13 trở lên (13/14/15/16) còn dùng**,
+      cổng **≤12 đã tắt nguồn** — 12 luồng phía ADX (cổng 2,3,4,6,11,12,
+      mỗi cổng 2 dòng LP1/LP2) là dữ liệu CŨ lẽ ra phải xóa từ trước, không
+      phải "thiếu mirror" thật.
+    - **Dọn dữ liệu (người dùng xác nhận trước khi xóa)**: xóa 12 luồng gốc
+      phía `ADN1.ADX` (cổng ≤12) — nhờ `mirror_of_id on delete cascade` (mục
+      33), 12 luồng mirror vừa tạo nhầm bên `ADN1.OMS3255` **tự động biến
+      mất theo**, không cần xóa tay 2 lần (đúng mục đích xây cột này từ đầu).
+      Không đụng cổng 13-16 (còn dùng).
+    - **Sửa thuật toán `lib/deviceDeviceSync.ts` — `buildMirrorNextPosition()`**:
+      thêm kiểm tra `ownKey === targetOwnKey` (chuẩn hóa qua
+      `normalizeDevicePositionKey`) — nếu trùng, dùng `"Kết nối trực tiếp"`
+      thay cho tọa độ lặp lại khi ghép phần ODF của "next" bên mirror (giữ
+      nguyên `own` của mirror — đó vẫn là tọa độ thật của thiết bị đích).
+      Sửa lại luôn 1 luồng còn sót đang dùng thật (mirror ADX#15/LP2 →
+      OMS3255, cổng 15 vẫn hoạt động nên không xóa, chỉ sửa field) từ `next
+      = "ODF 4/7 (01,02) - ADX (ADX#15/LP2)"` thành `"Kết nối trực tiếp -
+      ADX (ADX#15/LP2)"`.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Chạy lại `audit-device-device-sync`
+      xác nhận vẫn "0 thiếu hẳn", 4 ca lệch Trib không đổi. Curl lại `/`,
+      `/odf-trunk`, `/odf-device/sua-luong`, `/data-quality`, `/devices`,
+      `/search`, `/dashboard` đều 200.
+    - **Sửa tiếp lần 2 cùng ngày — dòng GỐC (không phải mirror) của
+      ADX#15/LP2 cũng sai `own`**: người dùng chỉ ra lý do vật lý cụ thể —
+      2 thiết bị `ADN1.ADX` và `ADN1.OMS3255` nối trực tiếp với nhau, nhưng
+      bản chất vật lý KHÔNG đối xứng: phía ADX ra cáp thẳng vào ODF của
+      OMS3255 luôn (mặt trước, không qua ODF riêng của ADX), còn OMS3255 ra
+      cáp ở ODF mặt sau cố định của chính nó. Vì vậy: dòng gốc phía
+      `ADN1.ADX` (id `d3795ced-f85e-4c83-8152-9da68e0ff896`, Trib
+      `ADX#15/LP2`) có `device_position_own = "ODF 4/7 (01,02)"` là SAI —
+      tọa độ đó thực ra là ODF thật của OMS3255, không phải của ADX — phải
+      sửa thành `"Kết nối trực tiếp"` (khớp với 3 dòng chị em cùng Trib
+      `ADX#15/LP1` đã chuẩn hóa sẵn kiểu này). `device_position_next` của
+      dòng gốc này (`"ODF 4/7 (01,02) - OMS3255 (2/4/9)"`) giữ nguyên — đã
+      đúng ngay từ đầu vì đó đúng là tọa độ ODF thật của OMS3255. Mirror bên
+      OMS3255 (đã tự tạo, mục 35) không đổi gì thêm — người dùng xác nhận
+      "OK". Đã rà toàn bộ 4 thiết bị `ADN1.ADX#13/14/15/16` (riêng biệt, hoá
+      ra không có luồng nào gắn trực tiếp — mọi luồng ADX vẫn đang nằm dưới
+      thiết bị chung `ADN1.ADX`) và toàn bộ Trib `ADX#15/LP1` — không còn
+      dòng nào khác lặp lại kiểu lỗi này. Đây là lỗi nhập liệu gốc một lần
+      (không phải bug thuật toán), sửa tay trực tiếp bằng script tạm, không
+      cần đổi code.
+
+37. **Tô màu + lọc + đẩy lên đầu bảng cho luồng vừa thêm/sửa TRONG NGÀY**
+    (`components/odf-device/DeviceCircuitList.tsx`, yêu cầu người dùng
+    2026-07-31) — thay cho cơ chế cũ chỉ ghim ĐÚNG 1 dòng vừa thêm lên đầu +
+    tô màu amber trong 5 giây rồi tự tắt (người dùng phản hồi: 5 giây quá
+    ngắn, không kịp thấy trước khi dòng "nhảy đi chỗ khác" về đúng vị trí sắp
+    xếp thật).
+    - **Cơ chế mới — thuần dựa vào dữ liệu thật, không dùng timer**: bảng
+      `circuits` đã có sẵn cột `updated_at` (tự cập nhật qua trigger DB, xem
+      migration `circuits_updated_at`, mục 27) cho MỌI lần thêm mới lẫn sửa.
+      Hàm mới `isUpdatedToday()` (`lib/format.ts`) so `updated_at` với ngày
+      hiện tại (giờ máy người dùng) — không cần lưu state/timer riêng, tự
+      "hết hạn" đúng lúc sang ngày mới vì lúc đó so sánh ngày sẽ không khớp
+      nữa.
+    - `DeviceCircuitList.tsx`: `updatedTodayIds` (useMemo từ `circuits`) —
+      MỌI luồng có `updated_at` = hôm nay được: (a) tô nền vàng nhạt
+      (`bg-yellow-50`, persistent, khác màu `bg-amber-100` tạm thời 5s vẫn
+      giữ riêng cho cơ chế "nhảy tới từ link ngoài #dc-<id>"), (b) đẩy lên
+      ĐẦU bảng bất kể đang sắp xếp/lọc cột nào, nhóm này tự sắp theo
+      `updated_at` mới nhất trước; phần còn lại giữ nguyên thứ tự theo cột
+      đang chọn.
+    - Checkbox mới trong thanh công cụ: "Chỉ hiện luồng sửa hôm nay (N)" —
+      lọc bảng chỉ còn các dòng trong `updatedTodayIds`, AND với mọi bộ lọc
+      cột khác đang có. Chỉ hiện khi có ít nhất 1 dòng thỏa. Bỏ tick =>
+      hiện lại tất cả (state React thường, tự reset khi F5 — không cần lưu
+      localStorage, đúng ý người dùng "chỉ hủy lọc khi refresh lại").
+    - Xóa hẳn cơ chế cũ trong `submitCreate()` (`justCreatedIdRef` +
+      `setTimeout(..., 5000)` ghim/tắt màu 1 dòng) — dư thừa vì dòng vừa tạo
+      giờ tự động nằm trong `updatedTodayIds` ngay khi `router.refresh()` nạp
+      lại dữ liệu, không cần code riêng nữa.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Curl `/` và `/odf-device/sua-luong`
+      đều 200.
+
+38. **Gắn tự động tạo mirror thiết bị-thiết bị THẲNG VÀO form Thêm/Sửa luồng**
+    (yêu cầu người dùng 2026-07-31, phát hiện ngay trong ngày làm mục 35/36) —
+    ca cụ thể: thêm 2 luồng `ADN1.ASBR#2-MX2020 (7/1/8)` và `(7/1/9)` (đi HKG)
+    xong, bên `ADN1.PSS24X#3 BB1 (1-4-1)`/`(1-4-5)` KHÔNG tự có luồng tương
+    ứng dù bản chất là 2 thiết bị local ADN1 nối nhau (đúng loại ca mục 35).
+    - **Nguyên nhân gốc**: toàn bộ cơ chế "tự tạo mirror" ở mục 35/36 (hàm
+      `findMissingDeviceMirrors`/`buildMirrorNextPosition` trong
+      `lib/deviceDeviceSync.ts`) **CHỈ từng chạy 1 LẦN dưới dạng script dọn
+      dữ liệu tồn đọng** (`npm run sync-missing-device-device-circuits --
+      --commit`) — **chưa bao giờ được gắn vào chính form Thêm/Sửa luồng
+      trên UI** (`DeviceCircuitList.tsx`). Vì vậy MỌI luồng thiết bị-thiết bị
+      MỚI thêm/sửa sau lần dọn đó lại tiếp tục thiếu mirror y hệt trước khi
+      dọn — không phải lỗi ngẫu nhiên mà là lỗ hổng cơ chế còn sót.
+    - **Backfill ngay 2 ca đã báo**: chạy lại `audit-device-device-sync`
+      (xác nhận đúng 2 ca "THIẾU HẲN, an toàn tự tạo") rồi
+      `sync-missing-device-device-circuits -- --commit` — tạo xong 2 luồng
+      mirror bên `ADN1.PSS24X#3 BB1`, audit lại còn "0 thiếu hẳn".
+    - **Sửa cơ chế triệt để**: thêm hàm mới `autoCreateMirrorForCircuit()`
+      (`lib/deviceDeviceSync.ts`) — TÁI DÙNG NGUYÊN `findMissingDeviceMirrors`
+      + `buildMirrorNextPosition` đã có (không viết lại thuật toán khác,
+      tránh lệch nhau như bài học mục 34/35), chỉ khác: tự
+      `fetchDeviceCircuits()`/`fetchDevices()` lấy dữ liệu MỚI NHẤT, tìm gap
+      của ĐÚNG luồng vừa lưu (so theo `sourceCircuitId`), rà sống lại 1 lần
+      nữa ngay trước khi ghi (tránh đụng độ), rồi `insert` mirror kèm
+      `mirror_of_id` — không cần DRY RUN vì đây là 1 luồng đơn lẻ người dùng
+      vừa chủ động lưu, không phải sửa hàng loạt. Nếu phát hiện case
+      "mismatch" (đã có luồng cùng tên nhưng Trib lệch, xem mục 35) thì KHÔNG
+      tự tạo — chỉ báo lỗi mềm cho người dùng biết vào Chất lượng dữ liệu tự
+      kiểm tra, cùng tinh thần "không đoán, để người dùng tự sửa".
+    - Gắn gọi `autoMirrorAfterSave()` (wrapper xử lý 3 trạng thái trả về,
+      không chặn việc lưu luồng dù bước này lỗi — giống
+      `maybeCreateCounterpartDevice`/`maybeCreateNextDevice` đã có) ngay sau
+      `maybeCreateNextDevice()` trong CẢ `submitCreate()` lẫn `saveEdit()` —
+      áp dụng cho cả thêm mới VÀ sửa (sửa `device_position_next` trỏ sang
+      thiết bị khác cũng cần đồng bộ lại).
+    - **Chưa làm** (ngoài phạm vi ca báo lần này, có thể cần làm tiếp nếu gặp
+      lại): device-trunk và trunk-trunk (mục 32/34) hiện cũng CHỈ có script
+      dọn 1 lần (`sync-missing-trunk-circuits.ts`,
+      `sync-missing-trunk-trunk-circuits.ts`), KHÔNG gắn vào form Thêm/Sửa
+      luồng bên `PortTable.tsx`/ODF trung kế — cùng loại lỗ hổng, nhưng CHƯA
+      sửa vì ca báo lần này chỉ ở phía thiết bị-thiết bị.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Curl `/`, `/odf-device/sua-luong`,
+      `/data-quality` đều 200.
+
+39. **Cùng lỗ hổng ở mục 38 nhưng phía đối diện là ODF TRUNG KẾ THẬT (không
+    phải thiết bị)** — ca cụ thể: thêm luồng `ADN1.ASBR#2-MX2020 (7/1/2)`
+    đấu qua `ODF1/10 (35,36)`, nhưng bên Hồ sơ ODF Trung kế port đó vẫn
+    "trống". Người dùng yêu cầu rõ: "đồng bộ lại chứ; cho cả việc thêm bớt
+    xóa sau này chứ" — vừa sửa dữ liệu hiện tại vừa sửa cơ chế cho lâu dài.
+    - **Nguyên nhân**: y hệt mục 38 — cơ chế tạo mirror trung kế
+      (`scripts/sync-missing-trunk-circuits.ts`, có từ 2026-07-28) chỉ từng
+      chạy dưới dạng script dọn dữ liệu, chưa gắn vào form Thêm/Sửa luồng.
+      Phát hiện thêm: script này CHƯA từng cập nhật để dùng `mirror_of_id`
+      (cột thật thêm ở mục 33) — vẫn ghi kiểu TEXT cũ "luồng gốc id
+      &lt;uuid&gt;" trong `notes`, nên nếu cứ backfill bằng script cũ thì sẽ tái
+      lặp đúng bug mồ côi mục 32 khi xóa luồng gốc sau này.
+    - **Backfill 2 ca đang tồn đọng** (audit `audit-device-trunk-sync` xác
+      nhận đúng 2 ca "chưa đồng bộ"): `ASBR#2 (7/1/2) -> ODF1/10 (35,36)` và
+      `BNG#1 (7/0/0) -> ODF6/5 (61,68)` — đã tạo xong qua
+      `sync-missing-trunk-circuits -- --commit` (đã sửa script gắn
+      `mirror_of_id` trước khi chạy), audit lại còn 0 ca.
+    - **Sửa cơ chế triệt để, tránh lệch thuật toán 2 nơi** (bài học mục
+      34/35): tách phần dò-khớp rack/port trung kế trống ra hàm dùng chung
+      `findTrunkMirrorCandidates()` (`lib/mirrorTrunkCircuits.ts`) — cả
+      `sync-missing-trunk-circuits.ts` (rà hàng loạt) LẪN hàm mới
+      `autoCreateTrunkMirrorForCircuit()` (tạo ngay lúc lưu form) đều gọi
+      chung hàm này, không viết lại 2 chỗ. `autoCreateTrunkMirrorForCircuit()`
+      tự fetch dữ liệu mới nhất, rà sống lại port ngay trước khi ghi (tránh
+      đụng độ), tạo `circuits` + `port_circuit_links` + cập nhật
+      `ports.status='in_use'`, gắn `mirror_of_id` — chiều XÓA đã tự động qua
+      cascade có sẵn từ mục 33 (`findMirrorTrunkCircuits`/
+      `cleanupAfterMirrorCascade`), không cần sửa thêm gì cho "xóa".
+    - Gắn gọi `autoCreateTrunkMirrorForCircuit()` NGAY TRONG
+      `autoMirrorAfterSave()` đã có ở mục 38 (cùng 1 wrapper, gọi CẢ 2 loại
+      mirror — thiết bị-thiết bị VÀ thiết bị-trung kế — cho mỗi luồng vừa
+      lưu; loại nào không khớp thì tự trả "no-gap", vô hại) trong CẢ
+      `submitCreate()` lẫn `saveEdit()`.
+    - Trunk-trunk qua `PortTable.tsx` **đã sửa luôn cùng lúc, không đợi ca
+      báo riêng** — xem mục 40 ngay dưới đây.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. `sync-missing-trunk-circuits` dry
+      run lại còn 0 ứng viên (xác nhận refactor không đổi hành vi). Curl
+      `/odf-device/sua-luong`, `/odf-trunk`, `/data-quality` đều 200.
+
+40. **Trunk-trunk (PortTable.tsx) — sửa luôn, không đợi "ca báo thật"** —
+    người dùng phản ứng thẳng khi thấy mục 39 vẫn ghi "chưa làm, để dành sửa
+    khi có ca báo thật": "khi nào thì mới sửa ca thật, chứ nói mới làm à".
+    Đúng — đây là CÙNG 1 bug đã xác nhận ở mục 38/39 (cơ chế tạo mirror chỉ
+    chạy qua script, chưa gắn UI), không cần đợi thêm 1 ca cụ thể mới sửa.
+    - Thêm `autoCreateTrunkTrunkMirrorForCircuit()`
+      (`lib/mirrorTrunkCircuits.ts`) — khác 2 hàm auto-mirror trước ở chỗ
+      NGUỒN là 1 luồng TRUNG KẾ đã có port thật (không phải luồng thiết bị):
+      tự tra `port_circuit_links` của circuit vừa lưu để biết (các) port
+      nguồn, đọc `transit_links.raw_text` tương ứng, khớp qua
+      `matchBareTrunkLink()` xem có trỏ sang 1 port trung kế THẬT khác đang
+      trống không — cùng tinh thần rà sống trước khi ghi + gắn `mirror_of_id`
+      như 2 hàm kia. Không đọc lại toàn bộ `transit_links` như
+      `sync-missing-trunk-trunk-circuits.ts` (script vẫn giữ để rà soát hàng
+      loạt/backfill dữ liệu cũ) — chỉ cần đúng port của 1 circuit vừa lưu,
+      đủ và nhanh cho 1 lượt lưu đơn lẻ.
+    - Gắn gọi hàm này ngay sau khi lưu "Chuyển tiếp" trong `saveEdit()`
+      (`PortTable.tsx`) — không chặn việc lưu dù bước này lỗi, chỉ báo lỗi
+      mềm, cùng tinh thần `maybeStandardizeTransitDevice()` đã có sẵn ngay
+      phía trên.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. `audit-trunk-trunk-sync` vẫn chỉ
+      còn đúng 1 ca "3G BTS Vina" đã biết từ trước (xung đột port 6/7, để
+      người dùng tự rà tay, không phải bug mới). Curl `/odf-trunk`,
+      `/odf-device/sua-luong` đều 200.
+
+41. **Tab mới "Trung kế thiếu bên thiết bị" ở Chất lượng dữ liệu — chiều
+    NGƯỢC của mục 38/39** (người dùng đặt câu hỏi giả định "trung kế đã đúng,
+    Hồ sơ đấu nối thiết bị chưa cập nhật thì xử lý sao", rồi yêu cầu xây
+    luôn ngay trong buổi, không đợi ca thật — xem hội thoại 2026-07-31).
+    - **Cách phát hiện** (`lib/reverseDeviceTrunkAudit.ts`,
+      `findTrunkCircuitsMissingDeviceMirror()`): dựa vào đúng 1 quy luật đã
+      xác nhận nhiều lần (mục 35) — mirror pair LUÔN giữ NGUYÊN tên luồng ở
+      cả 2 phía. Quét mọi luồng trung kế có tên chứa đoạn "ADN1.&lt;thiết bị&gt;
+      (&lt;trib&gt;)" (khả năng cao liên quan 1 thiết bị local), nếu KHÔNG có luồng
+      nào bên domain=device cùng tên CHÍNH XÁC → thiếu mirror.
+    - **CỐ Ý KHÔNG tự match/tạo thiết bị nào** (khác hẳn mục 38/39/40) —
+      người dùng chỉ rõ rủi ro thật: tên thiết bị ghi trong luồng trung kế có
+      thể sai FORMAT (vd "ADN1.MPE8" thay vì đúng chuẩn "ADN1.MPE#8"), tự
+      match/tạo sẽ lặp lại đúng bug tạo trùng thiết bị (mục 35,
+      PSS64/BB330G). Test trên dữ liệu thật: **268 luồng** rơi vào diện này
+      — nhìn sơ đa số là lệch format tên (vd "ASBR2" ghi thay cho
+      "ASBR#2-MX2020"), tồn đọng có sẵn từ trước, KHÔNG phải do các thay đổi
+      hôm nay gây ra.
+    - **UI mới** (`components/data-quality/TrunkMissingDeviceMirrorTab.tsx`,
+      tab "Trung kế thiếu bên thiết bị" trong `/data-quality`) — mỗi dòng có:
+      link nhảy tới đúng port ở `/odf-trunk`, tên luồng + đoạn thiết bị tách
+      được (chỉ để hiển thị/đối chiếu, KHÔNG dùng để match), 1 checkbox xác
+      nhận + nút "Xóa" (disabled nếu chưa tick). Đúng ý người dùng: KHÔNG
+      tick = "Phương án 2" (mặc định, không đụng gì, tự qua Hồ sơ đấu nối bổ
+      sung đúng); TICK rồi bấm Xóa = "Phương án 1" (xóa luồng trung kế cũ để
+      giải phóng port).
+    - **`deleteTrunkCircuitToResync()`** (`lib/mirrorTrunkCircuits.ts`) — CHỈ
+      xóa để giải phóng port, KHÔNG tự "tạo lại" gì cả: khi người dùng sau đó
+      tự bổ sung đúng bên Hồ sơ đấu nối (thiết bị chuẩn từ danh mục, đúng
+      Trib), `autoCreateTrunkMirrorForCircuit()` (mục 39, đã gắn sẵn ở
+      `submitCreate()`/`saveEdit()`) tự động tạo lại mirror trung kế đúng
+      chuẩn — không cần thêm code "tạo lại" ở tính năng này. Tái dùng
+      `findMirrorTrunkCircuits()`/`cleanupAfterMirrorCascade()` (mục 33) để
+      báo trước + dọn đúng các mirror khác (nếu có) sẽ mất theo cascade.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Curl `/data-quality` 200, tab mới
+      hiện đúng 268 luồng test trên dữ liệu thật.

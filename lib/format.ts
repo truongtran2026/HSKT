@@ -6,3 +6,15 @@ export function formatLastUpdated(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// So sánh theo NGÀY (giờ máy người dùng, đủ dùng vì đây là app single-user tại
+// VN) — dùng để tô màu/lọc các dòng vừa thêm/sửa HÔM NAY (yêu cầu người dùng
+// 2026-07-31, xem DeviceCircuitList.tsx). Thuần dựa vào updated_at thật trong
+// DB (tự cập nhật qua trigger, xem migration circuits_updated_at) — không cần
+// state/timer riêng, nên tự "hết hạn" đúng lúc sang ngày mới, không cần code
+// dọn dẹp gì thêm.
+export function isUpdatedToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
