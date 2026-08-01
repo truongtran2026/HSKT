@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
 
 // "Xem" và "Sửa" từng tách riêng ở giai đoạn skeleton (khi CRUD thật chưa
 // tồn tại) nhưng ODF trung kế đã gộp xem+sửa ngay tại chỗ từ lâu (PortTable
@@ -80,18 +81,32 @@ export default function Sidebar() {
     <>
       <div className="flex items-start justify-between gap-2 px-5 py-5 border-b border-primary-600">
         <span className="text-xl font-bold tracking-wide">Hồ sơ kỹ thuật</span>
-        <button
-          type="button"
-          onClick={togglePinned}
-          className="shrink-0 rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
-          title={
-            pinned
-              ? "Bỏ ghim — ẩn bớt khung này để tăng bề rộng cho nội dung chính, đưa chuột sát mép trái để hiện lại tạm thời"
-              : "Ghim cố định — luôn hiện khung này"
-          }
-        >
-          {pinned ? "Bỏ ghim" : "Ghim"}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Nút tìm kiếm luôn hiện (yêu cầu người dùng: không được để tính
+              năng Command Palette chỉ truy cập qua phím tắt Cmd/Ctrl+K, vd
+              trên máy không có bàn phím vật lý/mobile) — bắn CustomEvent cho
+              CommandPalette.tsx tự mở, xem giải thích ở file đó. */}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
+            className="rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
+            title="Tìm kiếm nhanh (Cmd/Ctrl + K)"
+          >
+            🔍
+          </button>
+          <button
+            type="button"
+            onClick={togglePinned}
+            className="rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
+            title={
+              pinned
+                ? "Bỏ ghim — ẩn bớt khung này để tăng bề rộng cho nội dung chính, đưa chuột sát mép trái để hiện lại tạm thời"
+                : "Ghim cố định — luôn hiện khung này"
+            }
+          >
+            {pinned ? "Bỏ ghim" : "Ghim"}
+          </button>
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3">

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import CommandPalette from "@/components/ui/CommandPalette";
 
 export const metadata: Metadata = {
   title: "Hồ sơ kỹ thuật",
@@ -25,6 +26,9 @@ export default function RootLayout({
               được tới). */}
           <main className="min-w-0 flex-1 p-8">{children}</main>
         </div>
+        {/* Mount 1 lần duy nhất ở đây để có mặt trên MỌI trang — Cmd/Ctrl+K
+            mở được dù đang ở trang nào, không phải thêm lại ở từng page.tsx. */}
+        <CommandPalette />
       </body>
     </html>
   );
