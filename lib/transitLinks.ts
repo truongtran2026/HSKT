@@ -52,19 +52,44 @@ function firstOf<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? v[0] ?? null : v;
 }
 
-export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[]): Promise<NonConformingTransitLink[]> {
+// Tham số `rackId` TÙY CHỌN (thêm 2026-08-01, Fix 2 tối ưu — trang chi tiết 1
+// rack trước đó kéo NGUYÊN bảng transit_links rồi lọc bằng .filter() ở JS,
+// dù chỉ cần đúng 1 rack) — có `rackId` thì lọc NGAY Ở POSTGRES theo
+// ports.rack_id (chỉ gửi về đúng dòng của rack đó); KHÔNG có (undefined) thì
+// giữ NGUYÊN hành vi cũ — quét cả bảng theo .range() — vì trang danh sách
+// (/odf-trunk) và trang Chất lượng dữ liệu (/data-quality) vẫn cần cảnh báo
+// TOÀN TRẠM, không được đổi.
+//
+// LƯU Ý: `trunkPorts` vẫn phải là TOÀN BỘ port trung kế dù có lọc theo
+// rackId — đây là "từ điển tra ngược" cho matchBareTrunkLink/matchTrunkPosition
+// bên dưới, vì 1 dòng "Chuyển tiếp" của rack A hoàn toàn có thể trỏ sang 1
+// port ở rack B. Thu nhỏ trunkPorts theo rackId sẽ làm sai kết quả đối chiếu.
+export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[], rackId?: string): Promise<NonConformingTransitLink[]> {
   const pageSize = 1000;
   const all: RawRow[] = [];
+
   for (let from = 0; ; from += pageSize) {
     // transit_links có 2 FK khác nhau tới ports (source_port_id VÀ
     // target_port_id) — phải chỉ đích danh tên ràng buộc
-    // "transit_links_source_port_id_fkey" thì PostgREST mới hết mơ hồ,
-    // nếu không sẽ báo lỗi PGRST201 "more than one relationship was found".
-    const { data, error } = await supabase
+    // "transit_links_source_port_id_fkey" thì PostgREST mới hết mơ hồ, nếu
+    // không sẽ báo lỗi PGRST201 "more than one relationship was found".
+    //
+    // Cách A (đã test thật trên dữ liệu sống, rack ODF1/1 -> đúng 30 dòng,
+    // khớp số liệu trước khi sửa) — đổi embed `ports` sang inner-join
+    // (`!inner`) rồi lọc thẳng `.eq("ports.rack_id", rackId)`: vì fkey đã
+    // được chỉ đích danh nên inner-join không còn mơ hồ, PostgREST lọc gọn
+    // ở 1 query duy nhất, không cần vòng lấy port.id riêng (Cách B, dự
+    // phòng) như đề xuất ban đầu.
+    let query = supabase
       .from("transit_links")
-      .select("id, raw_text, format_ack, ports:ports!transit_links_source_port_id_fkey(id, port_number, rack_id, racks(code, domain))")
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
+      .select(
+        rackId
+          ? "id, raw_text, format_ack, ports:ports!transit_links_source_port_id_fkey!inner(id, port_number, rack_id, racks(code, domain))"
+          : "id, raw_text, format_ack, ports:ports!transit_links_source_port_id_fkey(id, port_number, rack_id, racks(code, domain))"
+      )
+      .order("id", { ascending: true });
+    if (rackId) query = query.eq("ports.rack_id", rackId);
+    const { data, error } = await query.range(from, from + pageSize - 1);
     if (error) throw error;
     const page = (data ?? []) as unknown as RawRow[];
     all.push(...page);

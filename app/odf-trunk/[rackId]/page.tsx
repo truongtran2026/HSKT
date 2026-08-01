@@ -138,7 +138,13 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // báo "Chuyển tiếp chưa chuẩn form" cũng phải hiện ở trang chi tiết, không
   // chỉ ở danh sách rack) — rack domain='device' luôn ra mảng rỗng (transit_
   // links chỉ ghi cho rack trung kế), TransitFormatWarning tự ẩn khi rỗng.
-  const nonConformingTransit = (await fetchNonConformingTransitLinks(trunkPorts)).filter((item) => item.rackId === rack.id);
+  //
+  // Sửa 2026-08-01 (Fix 2 tối ưu): truyền rack.id để Postgres lọc sẵn theo
+  // rack (xem lib/transitLinks.ts) thay vì kéo NGUYÊN bảng transit_links rồi
+  // .filter() ở JS như trước — trunkPorts vẫn truyền ĐẦY ĐỦ toàn trạm (không
+  // thu nhỏ), vì hàm này cần nó làm từ điển tra ngược cho các "Chuyển tiếp"
+  // trỏ sang rack khác.
+  const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts, rack.id);
 
   return (
     <div>
