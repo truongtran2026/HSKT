@@ -2036,3 +2036,120 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       báo trước + dọn đúng các mirror khác (nếu có) sẽ mất theo cascade.
     - **Kiểm chứng**: `tsc --noEmit` sạch. Curl `/data-quality` 200, tab mới
       hiện đúng 268 luồng test trên dữ liệu thật.
+
+42. **Command Palette (Cmd/Ctrl + K)** (`components/ui/CommandPalette.tsx`,
+    yêu cầu người dùng 2026-08-01, brief chi tiết) — tìm nhanh nổi lên trên
+    mọi trang: gõ tên luồng/mã rack/port/thiết bị → Enter nhảy thẳng tới đúng
+    chỗ, không cần rời trang đang làm. Trang `/search` + `SearchClient.tsx`
+    giữ nguyên hoàn toàn, không đụng.
+    - Mount 1 lần ở `app/layout.tsx` (`<CommandPalette />` ngay dưới
+      `<Sidebar />`) — có mặt trên mọi trang.
+    - Mở bằng Cmd/Ctrl+K (global keydown, `e.preventDefault()`) HOẶC nút
+      "🔍" luôn hiện ở header `Sidebar.tsx` (yêu cầu: không được để tính năng
+      chỉ truy cập qua phím tắt) — nút bắn `CustomEvent`
+      (`COMMAND_PALETTE_OPEN_EVENT`, export từ chính CommandPalette.tsx) thay
+      vì lift state lên `app/layout.tsx` (Server Component, không giữ được
+      state) — tránh phải đổi layout.tsx thành "use client" chỉ để truyền 1
+      hàm mở giữa 2 Client Component anh em.
+    - **Không dùng thư viện `cmdk`** dù brief cho phép — tự viết tay để nhất
+      quán với toàn bộ codebase (FilterInput/SlideOverPanel/GroupedMultiSelect/
+      SearchableSelect đều tự viết, chưa có dependency UI ngoài nào). Điều
+      hướng bàn phím dồn hết vào Ô INPUT (role="combobox", ↑/↓/Enter xử lý ở
+      `onKeyDown` của input) thay vì focus rời sang từng dòng kết quả — cách
+      này tự nhiên "bẫy focus" trong panel (chỉ có đúng 1 phần tử focus được),
+      không cần code focus-trap riêng. Dòng kết quả `role="option"` +
+      `aria-activedescendant`/`aria-selected` cho a11y.
+    - **Nạp dữ liệu LƯỜI đúng yêu cầu**: `useEffect` chỉ gọi
+      `fetchAllTrunkPorts()` + `fetchDevices()` khi `open` LẦN ĐẦU (gate qua
+      `loadedOnceRef`), cache lại trong state cho các lần mở sau — không fetch
+      lúc tải trang. Chấp nhận dữ liệu có thể cũ nếu vừa sửa ở tab khác trong
+      CÙNG phiên (đúng brief, chưa làm nút "làm mới" ở v1).
+    - **Xếp hạng 2 tầng** (`fieldScore`/`bestScore`) — tái dùng `matchesFilter`
+      (mục lọc-có-khớp-không) rồi PHÂN HẠNG thêm qua `normalizeVN` (0=khớp
+      chính xác, 1=bắt đầu bằng query, 2=chứa ở đâu đó), tránh brief chỉ nói
+      "tận dụng matchesFilter" (vốn chỉ trả boolean, không đủ để xếp hạng).
+    - **4 loại kết quả**, gom từ `fetchAllTrunkPorts()` (đã có sẵn port+circuit
+      +rack) qua 1 lượt group-by (Map theo `rackId`/`circuit.id`, chỉ tính lại
+      khi data đổi, KHÔNG tính lại mỗi phím gõ):
+      - **Rack**: mỗi rack trung kế 1 dòng, khớp theo `rackCode`/`cableRouteName`.
+      - **Luồng**: gom các port CÙNG `circuit.id` (vd cặp tx/rx) thành 1 dòng,
+        khớp theo tên luồng/đối phương/rackCode/số port-sợi, hiện trạng thái
+        qua `derivePortStatus`.
+      - **Port**: CHỈ port TRỐNG (circuit=null) — port đã có luồng đã gom vào
+        loại "Luồng" ở trên, tránh 2 dòng cho cùng 1 port vật lý.
+      - **Thiết bị**: từ bảng `devices`, khớp theo tên.
+    - Điều hướng: Rack → `/odf-trunk/<rackId>`; Luồng/Port → `/odf-trunk/
+      <rackId>#port-<portId>` (tái dùng ĐÚNG cơ chế cuộn-tới-port đã có ở
+      `PortTable.tsx`); Thiết bị → `/devices` (chưa cuộn tới đúng dòng — khảo
+      sát `DeviceCategoryClient.tsx` chưa có anchor theo dòng như
+      `DeviceCircuitList.tsx` đã có, để dành làm sau nếu cần, đúng brief cho
+      phép "nếu không chắc thì cứ điều hướng, ghi chú lại").
+    - **Kiểm chứng**: `tsc --noEmit` sạch. `git status` xác nhận
+      `app/search/page.tsx`/`SearchClient.tsx`/`DeviceCategoryClient.tsx`
+      không hề bị đụng. Curl `/`, `/odf-trunk`, `/devices`, `/search` đều 200,
+      không lỗi compile khi mount CommandPalette toàn cục.
+
+43. **`device_aliases` — bảng mapping "nhiều cách gõ = 1 thiết bị"** (yêu cầu
+    người dùng 2026-08-01, Giai đoạn 1 trong 2 giai đoạn người dùng đề xuất) —
+    lỗ hổng thật: `maybeStandardizeTransitDevice()` và ô "Thiết bị" trong
+    `EditRow` (`PortTable.tsx`) trước đây chỉ so khớp CHÍNH XÁC sau chuẩn hóa
+    (`normalizeDeviceNameKey`), nên "ADN1.MPE8" và "ADN1.MPE#8" bị coi là 2
+    thiết bị khác nhau — gõ khác 1 chút là tạo trùng thiết bị ngay (đúng rủi
+    ro từng gặp thật với PSS64/BB330G, xem mục 31), không có gợi ý "có phải ý
+    bạn là..." nào cả.
+    - **Migration `20260801000001_device_aliases.sql`** — bảng
+      `device_aliases(id, device_id FK→devices on delete cascade, alias_text,
+      normalized_key unique, created_at)`. Mỗi dòng là 1 cách gõ đã được
+      NGƯỜI DÙNG xác nhận là cùng 1 thiết bị thật (không tự động suy luận ghi
+      vào bảng này).
+    - **`looseDeviceNameKey()` (mới, `lib/deviceNotes.ts`)** — khóa so khớp
+      "lỏng" hơn `normalizeDeviceNameKey()`, dùng RIÊNG cho gợi ý (không dùng
+      để tự động áp dụng). Thuật toán (theo đúng ví dụ người dùng cho): tách
+      chuỗi thành các đoạn CHỮ/SỐ liên tiếp bằng regex `/[a-z]+|[0-9]+/g`
+      TRƯỚC (mọi ký tự khác chữ/số — `#`, `-`, `/`, khoảng trắng — tự nhiên
+      thành ranh giới đoạn), RỒI MỚI bỏ số 0 thừa ở đầu mỗi đoạn số. Tách đoạn
+      trước khi bỏ số 0 là điểm mấu chốt an toàn: "PSS24#1" → `["pss","24","1"]`
+      còn "PSS241" (nếu có thật) → `["pss","241"]` — 2 khóa khác nhau, không
+      gộp nhầm 2 thiết bị có tên số liền nhau thật chỉ vì thiếu dấu phân cách.
+      Khớp đúng theo yêu cầu: "MPE#4" = "MPE4" = "MPE04" = "MPE#04";
+      "PSS24#1/BB1" = "PSS24#1 BB1" = "PSS24#01/BB1" = "PSS24#01 BB1".
+    - **`lib/deviceAliases.ts` (mới)** — `fetchDeviceAliases()` (tải 1 lần
+      cho cả trang, bảng nhỏ không cần lazy); `saveDeviceAlias(deviceId,
+      aliasText)` (upsert với `ignoreDuplicates:true` — KHÔNG âm thầm cướp 1
+      `normalized_key` đã trỏ sang thiết bị khác nếu chẳng may trùng, an toàn
+      hơn upsert ghi đè); `resolveDeviceByExactOrAlias()` (khớp chính xác rồi
+      tới alias đã biết — im lặng nhận ra ngay, KHÔNG hỏi lại); `find
+      LooseDeviceCandidate()` (chỉ trả gợi ý khi ra ĐÚNG 1 ứng viên — ≥2 ứng
+      viên nghĩa là mơ hồ, không tự đoán).
+    - **Tích hợp vào `PortTable.tsx`** (đúng phạm vi người dùng nêu — CHỈ ô
+      "Thiết bị" bên "Chuyển tiếp" trung kế, chưa đụng `DeviceCircuitList.tsx`):
+      - `app/odf-trunk/[rackId]/page.tsx` tải thêm `fetchDeviceAliases()`,
+        truyền prop `deviceAliases` xuống `PortTable`/`EditRow`.
+      - `matchedDevice` (ô "Thiết bị") đổi sang gọi `resolveDeviceByExactOrAlias()`
+        thay vì tự so khớp — 1 alias đã lưu tự nhận ra ngay từ lần gõ tiếp
+        theo, không còn hiện "chưa có" nữa.
+      - Khi KHÔNG khớp chính xác/alias (vẫn sẽ hiện "chưa có trong hồ sơ")
+        VÀ `findLooseDeviceCandidate()` ra đúng 1 ứng viên → hiện thêm nút
+        "💡 Có thể là thiết bị đã có: ... — bấm để dùng thiết bị này" ngay
+        trên dòng "chưa có". Bấm → áp tên thiết bị đã chọn + gọi
+        `saveDeviceAlias()` lưu lại cách gõ vừa rồi làm alias (không chặn UI
+        nếu lưu alias lỗi, chỉ ảnh hưởng lần gợi ý sau).
+      - `maybeStandardizeTransitDevice()` (chạy sau khi Lưu "Chuyển tiếp",
+        đúng cơ chế cũ) — thêm nhánh: nếu không khớp chính xác/alias, thử
+        `findLooseDeviceCandidate()` TRƯỚC khi hỏi "Tạo thiết bị mới?" — có
+        ứng viên thì đổi `confirm()` thành 2 lựa chọn (OK = dùng thiết bị đã
+        có + lưu alias, Cancel = tạo mới như cũ); không có ứng viên thì giữ
+        nguyên hành vi cũ 100%.
+    - **Chưa làm (Giai đoạn 2, để sau khi bảng có dữ liệu thật)**: gợi ý theo
+      alias đã biết ở khung "Chuyển tiếp"/`data-quality`, và 1 thao tác
+      "Đồng bộ" quét toàn bộ chỗ đang dùng đúng `alias_text` đó để tự cập
+      nhật về tên chuẩn (thay vì phải sửa từng luồng như hiện tại).
+    - **QUAN TRỌNG — cần người dùng tự chạy migration** (như mọi lần trước,
+      môi trường này không có Postgres connection string/Supabase CLI để tự
+      áp DDL): đã thử trước khi chạy migration, `/odf-trunk/<rackId>` lỗi 500
+      đúng dự kiến (`PGRST205 — Could not find the table 'public.device_aliases'`)
+      — hết ngay sau khi chạy xong SQL qua Supabase Dashboard.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Dev server xác nhận đúng lỗi
+      `PGRST205` (chưa chạy migration) khi mở trang rack chi tiết — đúng dự
+      kiến, chưa kiểm chứng được hành vi gợi ý thật trên dữ liệu (cần người
+      dùng chạy migration trước).

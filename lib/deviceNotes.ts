@@ -58,6 +58,23 @@ export function normalizeDeviceNameKey(name: string): string {
     .trim();
 }
 
+// Khóa so khớp "LỎNG" hơn normalizeDeviceNameKey() — dùng riêng cho gợi ý
+// "có thể trùng thiết bị đã có" khi KHÔNG khớp được chính xác (yêu cầu người
+// dùng 2026-08-01, xem architecture.md mục 43: "MPE#4" cần nhận ra trùng
+// "MPE4"/"MPE04"/"MPE#04"; "PSS24#1/BB1" cần trùng "PSS24#1 BB1"/"PSS24#01/BB1"/
+// "PSS24#01 BB1"). Tách chuỗi thành các đoạn CHỮ và đoạn SỐ liên tiếp trước
+// (mọi ký tự khác chữ/số — "#", "-", "/", khoảng trắng... — tự nhiên trở
+// thành ranh giới đoạn vì không khớp regex, không cần thay thế riêng), RỒI
+// MỚI bỏ số 0 thừa ở đầu mỗi đoạn số. Tách đoạn TRƯỚC khi bỏ số 0 là điểm
+// mấu chốt để an toàn: "PSS24#1" tách thành ["pss","24","1"], còn "PSS241"
+// (nếu có thật) tách thành ["pss","241"] — 2 khóa khác nhau, không bị gộp
+// nhầm chỉ vì thiếu dấu phân cách giữa 2 thiết bị có tên số liền nhau thật.
+export function looseDeviceNameKey(name: string): string {
+  const base = normalizeVN(name).replace(/^adn1\.\s*/, "");
+  const segments = base.match(/[a-z]+|[0-9]+/g) ?? [];
+  return segments.map((seg) => (/^[0-9]+$/.test(seg) ? String(parseInt(seg, 10)) : seg)).join(" ");
+}
+
 // Khóa so khớp vị trí DDF/ODF khi kiểm tra 1 vị trí không bị gán cho 2
 // thiết bị khác nhau — cùng cách chuẩn hóa với tên thiết bị để không lệch
 // nhau vì hoa/thường hoặc khoảng trắng thừa.

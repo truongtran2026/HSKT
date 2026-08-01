@@ -8,6 +8,7 @@ import { compareValues } from "@/lib/sort";
 import { useSort, type SortDir } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
+import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
@@ -297,6 +298,7 @@ export default function PortTable({
   initialPorts,
   options,
   devices,
+  deviceAliases,
   devicePositionMap,
   stationId,
   trunkPorts,
@@ -305,6 +307,7 @@ export default function PortTable({
   initialPorts: PortView[];
   options: CircuitOptions;
   devices: DeviceRow[];
+  deviceAliases: DeviceAliasRow[];
   devicePositionMap: DevicePositionMapRow[];
   stationId: string;
   trunkPorts: TrunkPortRow[];
@@ -533,18 +536,36 @@ export default function PortTable({
     const odf = split.odfPart.trim();
     if (!deviceName || !port) return;
 
-    const key = normalizeDeviceNameKey(deviceName);
-    const existing = devices.find((d) => normalizeDeviceNameKey(d.name) === key);
-    const canonicalName = existing?.name ?? `ADN1.${deviceName}`;
+    const existing = resolveDeviceByExactOrAlias(deviceName, devices, deviceAliases);
+    let canonicalName = existing?.name ?? null;
 
     try {
       if (!existing) {
-        if (!confirm(`Chưa có thiết bị "${canonicalName}" trong hệ thống (nhận diện từ ô Chuyển tiếp).\n\nTạo mới thiết bị này?`)) {
-          return;
+        // Không khớp chính xác/alias đã biết — thử gợi ý "so khớp lỏng" (yêu
+        // cầu người dùng 2026-08-01, xem architecture.md mục 43: bắt được vd
+        // "MPE#4" trùng thiết bị đã có "MPE04") TRƯỚC khi hỏi tạo mới, để
+        // không tạo trùng thiết bị chỉ vì gõ khác dấu/số 0 đầu.
+        const looseCandidate = findLooseDeviceCandidate(deviceName, devices);
+        if (looseCandidate) {
+          const useExisting = confirm(
+            `"${deviceName}" (nhận diện từ ô Chuyển tiếp) chưa khớp chính xác thiết bị nào, nhưng có thể là thiết bị đã có "${looseCandidate.name}".\n\n` +
+              `OK = dùng thiết bị đã có (ghi nhớ cách gõ này cho lần sau, không hỏi lại)\nCancel = tạo thiết bị MỚI tên "ADN1.${deviceName}"`
+          );
+          if (useExisting) {
+            canonicalName = looseCandidate.name;
+            await saveDeviceAlias(looseCandidate.id, deviceName);
+          }
         }
-        const { error: insErr } = await supabase.from("devices").insert({ station_id: stationId, name: canonicalName, source: "auto" });
-        if (insErr) throw insErr;
+        if (!canonicalName) {
+          canonicalName = `ADN1.${deviceName}`;
+          if (!confirm(`Chưa có thiết bị "${canonicalName}" trong hệ thống (nhận diện từ ô Chuyển tiếp).\n\nTạo mới thiết bị này?`)) {
+            return;
+          }
+          const { error: insErr } = await supabase.from("devices").insert({ station_id: stationId, name: canonicalName, source: "auto" });
+          if (insErr) throw insErr;
+        }
       }
+      if (!canonicalName) return; // không thể xảy ra (mọi nhánh trên đều gán), chỉ để TypeScript hẹp kiểu an toàn
       await growDevicePositionMapByTrib(canonicalName, port, odf);
     } catch (e) {
       setError(
@@ -1056,6 +1077,7 @@ export default function PortTable({
                     options={options}
                     trunkPorts={trunkPorts}
                     devices={devices}
+                    deviceAliases={deviceAliases}
                     devicePositionMap={devicePositionMap}
                     onChange={setEdit}
                     onToggleMerge={toggleMerge}
@@ -1223,6 +1245,7 @@ function EditRow({
   options,
   trunkPorts,
   devices,
+  deviceAliases,
   devicePositionMap,
   onChange,
   onToggleMerge,
@@ -1236,6 +1259,7 @@ function EditRow({
   options: CircuitOptions;
   trunkPorts: TrunkPortRow[];
   devices: DeviceRow[];
+  deviceAliases: DeviceAliasRow[];
   devicePositionMap: DevicePositionMapRow[];
   onChange: (e: EditState) => void;
   onToggleMerge: (checked: boolean) => void;
@@ -1342,11 +1366,13 @@ function EditRow({
   // tiền tố "ADN1."/dấu/khoảng trắng thừa nên so khớp được dù gõ khác kiểu
   // (xem lib/deviceNotes.ts).
   const deviceNameTrimmed = transitDeviceName.trim();
+  // Cấp 1+2 (khớp chính xác sau chuẩn hóa, rồi tới alias đã xác nhận từ
+  // trước — xem lib/deviceAliases.ts) — thay cho tìm trực tiếp qua
+  // normalizeDeviceNameKey() như trước, để 1 alias đã lưu tự nhận ra ngay,
+  // không hỏi lại nữa (yêu cầu người dùng 2026-08-01, architecture.md mục 43).
   const matchedDevice = useMemo(() => {
-    const key = normalizeDeviceNameKey(deviceNameTrimmed);
-    if (!key) return null;
-    return devices.find((d) => normalizeDeviceNameKey(d.name) === key) ?? null;
-  }, [deviceNameTrimmed, devices]);
+    return resolveDeviceByExactOrAlias(deviceNameTrimmed, devices, deviceAliases);
+  }, [deviceNameTrimmed, devices, deviceAliases]);
   const deviceNameSuggestion = matchedDevice && matchedDevice.name !== deviceNameTrimmed ? matchedDevice.name : null;
 
   function applyDeviceNameSuggestion() {
@@ -1364,6 +1390,28 @@ function EditRow({
   const deviceStationCode = deviceNameTrimmed.match(/^([^.\s(]+)\./)?.[1] ?? null;
   const isAdn1Device = deviceStationCode ? isManagedStationCode(deviceStationCode) : false;
   const showWillCreateDeviceHint = !!deviceNameTrimmed && !matchedDevice && isAdn1Device;
+
+  // Cấp 3 — chưa khớp chính xác/alias, thử gợi ý "có thể trùng thiết bị đã
+  // có" bằng so khớp lỏng (yêu cầu người dùng 2026-08-01, architecture.md mục
+  // 43) — CHỈ hiện khi lẽ ra sẽ báo "chưa có" (showWillCreateDeviceHint), và
+  // chỉ khi ra ĐÚNG 1 ứng viên (không tự đoán khi mơ hồ).
+  const looseDeviceCandidate = useMemo(() => {
+    if (!showWillCreateDeviceHint) return null;
+    return findLooseDeviceCandidate(deviceNameTrimmed, devices);
+  }, [showWillCreateDeviceHint, deviceNameTrimmed, devices]);
+
+  async function applyLooseDeviceCandidate() {
+    if (!looseDeviceCandidate) return;
+    const typedName = deviceNameTrimmed;
+    setTransitDeviceName(looseDeviceCandidate.name);
+    onChange({ ...edit, transitText: buildTransitText(transitOdfPart, looseDeviceCandidate.name, transitDevicePort) });
+    try {
+      await saveDeviceAlias(looseDeviceCandidate.id, typedName);
+    } catch {
+      // Không chặn UI nếu lưu alias lỗi — tên thiết bị đã áp dụng đúng rồi,
+      // chỉ là lần gõ SAU sẽ phải gợi ý lại (không mất dữ liệu luồng).
+    }
+  }
 
   // Ô "Port" (thiết bị) — KHÔNG tự đoán/chuẩn hóa định dạng (dữ liệu thật có
   // nhiều kiểu viết khác nhau cùng tồn tại cho 1 thiết bị: "1-23-10",
@@ -1475,8 +1523,22 @@ function EditRow({
                     💡 Gợi ý: {deviceNameSuggestion} — bấm để áp dụng
                   </button>
                 )}
+                {showWillCreateDeviceHint && looseDeviceCandidate && (
+                  <button
+                    type="button"
+                    className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
+                    onClick={applyLooseDeviceCandidate}
+                    title="Bấm nếu đúng là thiết bị này — ghi nhớ cách gõ để lần sau tự nhận ra, không hỏi lại"
+                  >
+                    💡 Có thể là thiết bị đã có: {looseDeviceCandidate.name} — bấm để dùng thiết bị này
+                  </button>
+                )}
                 {showWillCreateDeviceHint && (
-                  <p className="text-xs text-amber-600">Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu.</p>
+                  <p className="text-xs text-amber-600">
+                    {looseDeviceCandidate
+                      ? "Nếu không đúng thiết bị gợi ý trên, sẽ hỏi tạo mới khi bấm Lưu."
+                      : "Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu."}
+                  </p>
                 )}
                 {matchedDevice && (
                   <button

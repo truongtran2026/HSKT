@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { fetchCircuitOptions } from "@/lib/circuitOptions";
 import { fetchDevices } from "@/lib/devices";
+import { fetchDeviceAliases } from "@/lib/deviceAliases";
 import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
@@ -115,10 +116,11 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — "Chuyển tiếp" có thể
   // trỏ tới rack trung kế HOẶC ODF/DDF nội bộ (domain='device'), cần cả 2 để
   // nhận diện/chuẩn hóa đúng (yêu cầu người dùng 2026-07-27).
-  const [data, options, devices, devicePositionMap, trunkPorts] = await Promise.all([
+  const [data, options, devices, deviceAliases, devicePositionMap, trunkPorts] = await Promise.all([
     getRackAndPorts(params.rackId),
     fetchCircuitOptions(),
     fetchDevices(),
+    fetchDeviceAliases(),
     fetchDevicePositionMap(),
     fetchAllOdfPorts(),
   ]);
@@ -186,6 +188,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
             initialPorts={ports}
             options={options}
             devices={devices}
+            deviceAliases={deviceAliases}
             devicePositionMap={devicePositionMap}
             stationId={rack.station_id}
             trunkPorts={trunkPorts}
