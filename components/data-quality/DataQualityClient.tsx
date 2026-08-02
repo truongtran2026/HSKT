@@ -8,21 +8,44 @@ import { mergeDeviceInto, ignoreDevicePair, type DeviceDupCandidate } from "@/li
 import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import type { TrunkCircuitMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
+import type { UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
+import type { TransitPositionMismatch } from "@/lib/transitPositionMismatches";
+import type { CircuitPairDetail } from "@/lib/circuitPairSync";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
+import UnlinkedMirrorPairsTab from "@/components/data-quality/UnlinkedMirrorPairsTab";
+import UnlinkedDeviceMirrorPairsTab from "@/components/data-quality/UnlinkedDeviceMirrorPairsTab";
+import TransitPositionMismatchTab from "@/components/data-quality/TransitPositionMismatchTab";
+import MismatchedLinkedPairsTab from "@/components/data-quality/MismatchedLinkedPairsTab";
 
-type Tab = "transit" | "devices" | "positions" | "trunkMissingDevice";
+type Tab =
+  | "transit"
+  | "devices"
+  | "positions"
+  | "trunkMissingDevice"
+  | "unlinkedMirror"
+  | "unlinkedDeviceMirror"
+  | "transitPositionMismatch"
+  | "mismatchedLinked";
 
 export default function DataQualityClient({
   transitItems,
   dupCandidates,
   positionConflicts,
   trunkMissingDeviceItems,
+  unlinkedDeviceDevicePairs,
+  transitPositionMismatches,
+  unlinkedPairDetails,
+  mismatchedLinkedPairs,
 }: {
   transitItems: NonConformingTransitLink[];
   dupCandidates: DeviceDupCandidate[];
   positionConflicts: DevicePositionConflict[];
   trunkMissingDeviceItems: TrunkCircuitMissingDeviceMirror[];
+  unlinkedDeviceDevicePairs: UnlinkedDeviceDevicePair[];
+  transitPositionMismatches: TransitPositionMismatch[];
+  unlinkedPairDetails: CircuitPairDetail[];
+  mismatchedLinkedPairs: CircuitPairDetail[];
 }) {
   const [tab, setTab] = useState<Tab>(
     transitItems.length > 0
@@ -31,17 +54,29 @@ export default function DataQualityClient({
         ? "devices"
         : positionConflicts.length > 0
           ? "positions"
-          : "trunkMissingDevice"
+          : trunkMissingDeviceItems.length > 0
+            ? "trunkMissingDevice"
+            : unlinkedPairDetails.length > 0
+              ? "unlinkedMirror"
+              : mismatchedLinkedPairs.length > 0
+                ? "mismatchedLinked"
+                : unlinkedDeviceDevicePairs.length > 0
+                  ? "unlinkedDeviceMirror"
+                  : "transitPositionMismatch"
   );
 
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500">
         Tổng: {transitItems.length} chuyển tiếp chưa chuẩn · {dupCandidates.length} thiết bị nghi trùng ·{" "}
-        {positionConflicts.length} vị trí xung đột · {trunkMissingDeviceItems.length} luồng trung kế thiếu bên thiết bị
+        {positionConflicts.length} vị trí xung đột · {trunkMissingDeviceItems.length} luồng trung kế thiếu bên thiết bị ·{" "}
+        {unlinkedPairDetails.length} cặp luồng thiết bị-trung kế chưa liên kết ·{" "}
+        {mismatchedLinkedPairs.length} cặp đã liên kết nhưng lệch dữ liệu ·{" "}
+        {unlinkedDeviceDevicePairs.length} cặp luồng thiết bị-thiết bị chưa liên kết ·{" "}
+        {transitPositionMismatches.length} chuyển tiếp sai tọa độ ODF
       </p>
 
-      <div className="mb-4 flex gap-1 border-b border-slate-200">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
         <TabButton active={tab === "transit"} onClick={() => setTab("transit")} count={transitItems.length}>
           Chuyển tiếp chưa chuẩn
         </TabButton>
@@ -54,17 +89,37 @@ export default function DataQualityClient({
         <TabButton active={tab === "trunkMissingDevice"} onClick={() => setTab("trunkMissingDevice")} count={trunkMissingDeviceItems.length}>
           Trung kế thiếu bên thiết bị
         </TabButton>
+        <TabButton active={tab === "unlinkedMirror"} onClick={() => setTab("unlinkedMirror")} count={unlinkedPairDetails.length}>
+          Thiết bị-Trung kế chưa liên kết
+        </TabButton>
+        <TabButton active={tab === "mismatchedLinked"} onClick={() => setTab("mismatchedLinked")} count={mismatchedLinkedPairs.length}>
+          Đã liên kết nhưng lệch dữ liệu
+        </TabButton>
+        <TabButton active={tab === "unlinkedDeviceMirror"} onClick={() => setTab("unlinkedDeviceMirror")} count={unlinkedDeviceDevicePairs.length}>
+          Thiết bị-Thiết bị chưa liên kết
+        </TabButton>
+        <TabButton
+          active={tab === "transitPositionMismatch"}
+          onClick={() => setTab("transitPositionMismatch")}
+          count={transitPositionMismatches.length}
+        >
+          Chuyển tiếp sai tọa độ ODF
+        </TabButton>
       </div>
 
       {tab === "transit" &&
         (transitItems.length === 0 ? (
           <EmptyState text="Không có dòng &quot;Chuyển tiếp&quot; nào chưa chuẩn form." />
         ) : (
-          <TransitFormatWarning items={transitItems} />
+          <TransitFormatWarning items={transitItems} openInNewTab />
         ))}
       {tab === "devices" && <DeviceDupTab candidates={dupCandidates} />}
       {tab === "positions" && <PositionConflictsTab conflicts={positionConflicts} />}
       {tab === "trunkMissingDevice" && <TrunkMissingDeviceMirrorTab items={trunkMissingDeviceItems} />}
+      {tab === "unlinkedMirror" && <UnlinkedMirrorPairsTab items={unlinkedPairDetails} />}
+      {tab === "mismatchedLinked" && <MismatchedLinkedPairsTab items={mismatchedLinkedPairs} />}
+      {tab === "unlinkedDeviceMirror" && <UnlinkedDeviceMirrorPairsTab items={unlinkedDeviceDevicePairs} />}
+      {tab === "transitPositionMismatch" && <TransitPositionMismatchTab items={transitPositionMismatches} />}
     </div>
   );
 }
@@ -289,7 +344,12 @@ function CircuitLinkList({ label, circuits }: { label: string; circuits: { id: s
       {circuits.map((c, i) => (
         <span key={c.id}>
           {i > 0 && "; "}
-          <a href={`/odf-device/sua-luong#${rowAnchor(c.id)}`} className="underline hover:text-amber-900">
+          <a
+            href={`/odf-device/sua-luong#${rowAnchor(c.id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-amber-900"
+          >
             {c.name || "(chưa đặt tên)"}
           </a>
         </span>
@@ -374,7 +434,12 @@ function PositionConflictsTab({ conflicts }: { conflicts: DevicePositionConflict
               <span key={i}>
                 {i > 0 && "; "}
                 {e.deviceName} (
-                <a href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`} className="underline hover:text-red-900">
+                <a
+                  href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-red-900"
+                >
                   {e.circuitName}
                 </a>
                 )

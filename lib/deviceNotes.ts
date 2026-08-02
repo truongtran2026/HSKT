@@ -58,21 +58,43 @@ export function normalizeDeviceNameKey(name: string): string {
     .trim();
 }
 
-// Khóa so khớp "LỎNG" hơn normalizeDeviceNameKey() — dùng riêng cho gợi ý
-// "có thể trùng thiết bị đã có" khi KHÔNG khớp được chính xác (yêu cầu người
-// dùng 2026-08-01, xem architecture.md mục 43: "MPE#4" cần nhận ra trùng
-// "MPE4"/"MPE04"/"MPE#04"; "PSS24#1/BB1" cần trùng "PSS24#1 BB1"/"PSS24#01/BB1"/
-// "PSS24#01 BB1"). Tách chuỗi thành các đoạn CHỮ và đoạn SỐ liên tiếp trước
+// Đoạn hóa "LỎNG" tên thiết bị — dùng riêng cho gợi ý "có thể trùng thiết bị
+// đã có" khi KHÔNG khớp được chính xác (yêu cầu người dùng 2026-08-01, xem
+// architecture.md mục 43). Tách chuỗi thành các đoạn CHỮ và đoạn SỐ xen kẽ
 // (mọi ký tự khác chữ/số — "#", "-", "/", khoảng trắng... — tự nhiên trở
-// thành ranh giới đoạn vì không khớp regex, không cần thay thế riêng), RỒI
-// MỚI bỏ số 0 thừa ở đầu mỗi đoạn số. Tách đoạn TRƯỚC khi bỏ số 0 là điểm
-// mấu chốt để an toàn: "PSS24#1" tách thành ["pss","24","1"], còn "PSS241"
-// (nếu có thật) tách thành ["pss","241"] — 2 khóa khác nhau, không bị gộp
-// nhầm chỉ vì thiếu dấu phân cách giữa 2 thiết bị có tên số liền nhau thật.
-export function looseDeviceNameKey(name: string): string {
+// thành ranh giới vì không khớp regex, không cần thay thế riêng), rồi:
+// - Mỗi đoạn SỐ: bỏ số 0 thừa ở đầu (vd "01" -> "1") — GIỮ RIÊNG từng đoạn
+//   số, KHÔNG gộp 2 đoạn số liền nhau, dù chỉ cách nhau 1 ký tự phân cách —
+//   đây là điểm mấu chốt an toàn: "PSS24#1" -> ["pss","24","1"], còn
+//   "PSS241" (nếu có thật) -> ["pss","241"] — 2 khóa khác nhau, không bị gộp
+//   nhầm chỉ vì thiếu dấu phân cách giữa 2 thiết bị có tên số liền nhau thật.
+// - Các đoạn CHỮ liên tiếp (không có đoạn số nào chen giữa): GỘP lại thành 1
+//   đoạn (vd "OME"+"MSPP" -> "omemspp") — an toàn vì chữ không có nguy cơ
+//   nhầm giá trị số như trên, và cần thiết để nhận ra thiết bị viết tắt bỏ
+//   dấu "-" (vd người dùng gõ "OMEMSPP" thực ra là thiết bị đã lưu
+//   "OME-MSPP", phát hiện thật 2026-08-01: rack ODF1/1 port 31 ghi
+//   "ADN1.OMEMSPP#01" nhưng thiết bị thật lưu "ADN1.OME-MSPP#1 RMT2").
+export function looseDeviceNameSegments(name: string): string[] {
   const base = normalizeVN(name).replace(/^adn1\.\s*/, "");
-  const segments = base.match(/[a-z]+|[0-9]+/g) ?? [];
-  return segments.map((seg) => (/^[0-9]+$/.test(seg) ? String(parseInt(seg, 10)) : seg)).join(" ");
+  const tokens = base.match(/[a-z]+|[0-9]+/g) ?? [];
+  const segments: string[] = [];
+  let lastWasLetter = false;
+  for (const tok of tokens) {
+    if (/^[0-9]+$/.test(tok)) {
+      segments.push(String(parseInt(tok, 10)));
+      lastWasLetter = false;
+    } else if (lastWasLetter) {
+      segments[segments.length - 1] += tok;
+    } else {
+      segments.push(tok);
+      lastWasLetter = true;
+    }
+  }
+  return segments;
+}
+
+export function looseDeviceNameKey(name: string): string {
+  return looseDeviceNameSegments(name).join(" ");
 }
 
 // Khóa so khớp vị trí DDF/ODF khi kiểm tra 1 vị trí không bị gán cho 2

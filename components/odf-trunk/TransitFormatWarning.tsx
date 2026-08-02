@@ -15,7 +15,21 @@ import { compareRackCode } from "@/lib/rackCode";
 // chuẩn (không phải lỗi) — ghi transit_links.format_ack=true rồi
 // router.refresh() để Server Component (fetchNonConformingTransitLinks) tải
 // lại danh sách mới KHÔNG còn dòng đó (lib/transitLinks.ts đã lọc format_ack).
-export default function TransitFormatWarning({ items }: { items: NonConformingTransitLink[] }) {
+// openInNewTab (yêu cầu người dùng 2026-08-02, riêng khi dùng TRONG trang
+// "Chất lượng dữ liệu") — bấm 1 dòng ở đó mở tab trình duyệt MỚI để sửa, sửa
+// xong đóng tab là quay lại NGUYÊN trạng thái tab "Chất lượng dữ liệu" (đang
+// lọc/đang ở tab con nào vẫn giữ nguyên, không phải bấm lại "← Danh sách rack"
+// rồi chuyển tab thủ công như trước). CHỈ bật ở nơi gọi từ DataQualityClient —
+// 2 nơi gọi còn lại (`/odf-trunk`, `/odf-trunk/[rackId]`) giữ hành vi cũ
+// (điều hướng cùng tab) vì ở đó bấm vào là đang xem ĐÚNG rack/danh sách liên
+// quan, mở thêm tab mới không cần thiết.
+export default function TransitFormatWarning({
+  items,
+  openInNewTab,
+}: {
+  items: NonConformingTransitLink[];
+  openInNewTab?: boolean;
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(5);
@@ -99,7 +113,12 @@ export default function TransitFormatWarning({ items }: { items: NonConformingTr
       <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-amber-800">
         {paged.map((it) => (
           <li key={it.id} className="flex items-start justify-between gap-2">
-            <Link href={`/odf-trunk/${it.rackId}#port-${it.portId}`} className="min-w-0 flex-1 break-words hover:underline">
+            <Link
+              href={`/odf-trunk/${it.rackId}#port-${it.portId}`}
+              target={openInNewTab ? "_blank" : undefined}
+              rel={openInNewTab ? "noopener noreferrer" : undefined}
+              className="min-w-0 flex-1 break-words hover:underline"
+            >
               <span className="font-medium">
                 {it.rackCode} port {it.portNumber}:
               </span>{" "}

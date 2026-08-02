@@ -31,6 +31,10 @@ import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
+import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import type { MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
+import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import {
   findMirrorTrunkCircuits,
@@ -297,11 +301,15 @@ export default function DeviceCircuitList({
   devices,
   devicePositionMap,
   trunkPorts,
+  mirrorLinkStatuses,
+  circuitPairDetails,
 }: {
   circuits: DeviceCircuitRow[];
   devices: DeviceRow[];
   devicePositionMap: DevicePositionMapRow[];
   trunkPorts: TrunkPortRow[];
+  mirrorLinkStatuses?: Record<string, MirrorLinkStatus>;
+  circuitPairDetails?: CircuitPairDetail[];
 }) {
   const router = useRouter();
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
@@ -322,6 +330,12 @@ export default function DeviceCircuitList({
     notes: "",
   });
   const [edit, setEdit] = useState<EditState | null>(null);
+  // Toggle panel "Kiểm tra đồng bộ" (yêu cầu người dùng 2026-08-02) — reset
+  // về ẩn mỗi khi ĐỔI DÒNG đang sửa (key theo edit.id) để không lỡ hiện panel
+  // của dòng cũ khi mở sửa dòng khác.
+  const [showSyncCheck, setShowSyncCheck] = useState(false);
+  const editId = edit?.id ?? null;
+  useEffect(() => setShowSyncCheck(false), [editId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -862,6 +876,7 @@ export default function DeviceCircuitList({
       counterpartText: c.counterpartText ?? "",
       notes: c.notes ?? "",
     });
+    setNameTicks({ own: false, next: false, counterpart: false });
     setError(null);
     requestAnimationFrame(() => {
       document.getElementById(EDIT_BOX_ID)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1052,6 +1067,46 @@ export default function DeviceCircuitList({
       await maybeCreateNextDevice(edit.positionNextDevice);
       await autoMirrorAfterSave(edit.id);
     }
+
+    // Tự đồng bộ liên tục sang luồng trung kế ĐÃ liên kết (yêu cầu người dùng
+    // 2026-08-02 — xem chú thích đối xứng ở PortTable.tsx saveEdit()). Chỉ
+    // hỏi khi thật sự có gì đổi.
+    const pairDetail = circuitPairDetails?.find((d) => d.deviceCircuitId === edit.id && d.isLinked);
+    if (pairDetail) {
+      const newDeviceName = edit.name.trim() || "(chưa đặt tên)";
+      const newOwnPosition = edit.positionOwn.trim() || null;
+      const newTrib = edit.tribText.trim() || null;
+      const diffs: string[] = [];
+      if (newDeviceName !== pairDetail.trunkName.trim()) {
+        diffs.push(`Tên luồng: "${pairDetail.trunkName}" -> "${newDeviceName}"`);
+      }
+      if (hasPositionChanged(pairDetail.trunkTransitOdfPart, newOwnPosition)) {
+        diffs.push(`Chuyển tiếp bên trung kế (phần ODF): "${pairDetail.trunkTransitOdfPart ?? "(trống)"}" -> "${newOwnPosition ?? "(trống)"}"`);
+      }
+      if (hasTribChanged(pairDetail.trunkTransitTrib, newTrib)) {
+        diffs.push(`Trib trong Chuyển tiếp bên trung kế: "${pairDetail.trunkTransitTrib ?? "(trống)"}" -> "${newTrib ?? "(trống)"}"`);
+      }
+      if (diffs.length > 0) {
+        const ok = confirm(
+          `Luồng này đã liên kết với luồng trung kế "${pairDetail.trunkName}" (${pairDetail.rackCode} port ${pairDetail.portNumbers.join(
+            ","
+          )}). Đồng bộ sang bên đó:\n\n${diffs.join("\n")}\n\nTiếp tục?`
+        );
+        if (ok) {
+          try {
+            await applySyncFromDevice({
+              ...pairDetail,
+              deviceName: newDeviceName,
+              deviceOwnPosition: newOwnPosition,
+              deviceTrib: edit.tribText.trim() || null,
+            });
+          } catch (e) {
+            setError(`Đã lưu luồng, nhưng đồng bộ sang trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
+    }
+
     setBusy(false);
     setEdit(null);
     router.refresh();
@@ -1120,8 +1175,15 @@ export default function DeviceCircuitList({
 
   // Bấm tick — tối đa 2 mục cùng lúc (yêu cầu người dùng 2026-07-27): bấm mục
   // thứ 3 khi đã có 2 mục -> chặn + báo, giữ nguyên trạng thái tick cũ. Tick
-  // vừa đổi xong mà ĐỦ 2 mục thì tính tên ngay bằng dữ liệu hiện có trong
-  // createDraft (không cần đợi người dùng gõ thêm gì mới thấy tên xuất hiện).
+  // vừa đổi xong mà ĐỦ 2 mục thì tính tên ngay bằng dữ liệu hiện có (không
+  // cần đợi người dùng gõ thêm gì mới thấy tên xuất hiện).
+  //
+  // Dùng CHUNG cho cả form Thêm mới lẫn form Sửa (yêu cầu người dùng
+  // 2026-08-02: "hai form phải giống nhau về mặt nhập liệu chứ; những gì có ở
+  // bên thêm mới thì bên sửa cũng phải có" — trước đó tick này chỉ có ở Thêm
+  // mới) — an toàn dùng chung 1 state `nameTicks` vì 2 khung KHÓA LẪN NHAU
+  // (đang Sửa thì không Thêm được và ngược lại, xem `edit`/`creating`), không
+  // bao giờ cả 2 cùng mở nên không lo tick của khung này lẫn sang khung kia.
   function toggleNameTick(key: "own" | "next" | "counterpart") {
     setNameTicks((prev) => {
       const next = { ...prev, [key]: !prev[key] };
@@ -1130,18 +1192,54 @@ export default function DeviceCircuitList({
         alert("Chỉ được tick tối đa 2 mục để tự đặt tên luồng — bỏ tick 1 mục trước đã.");
         return prev;
       }
-      const auto = computeAutoName(
-        next,
-        createDraft.interfaceType,
-        createDeviceName,
-        createDraft.tribText,
-        createDraft.positionNextDevice,
-        createDraft.positionNextTrib,
-        createDraft.counterpartText
-      );
-      if (auto !== null) setCreateDraft((prevDraft) => ({ ...prevDraft, name: auto }));
+      if (edit) {
+        const auto = computeAutoName(
+          next,
+          edit.interfaceType,
+          edit.deviceName,
+          edit.tribText,
+          edit.positionNextDevice,
+          edit.positionNextTrib,
+          edit.counterpartText
+        );
+        if (auto !== null) setEdit((prevEdit) => (prevEdit ? { ...prevEdit, name: auto } : prevEdit));
+      } else {
+        const auto = computeAutoName(
+          next,
+          createDraft.interfaceType,
+          createDeviceName,
+          createDraft.tribText,
+          createDraft.positionNextDevice,
+          createDraft.positionNextTrib,
+          createDraft.counterpartText
+        );
+        if (auto !== null) setCreateDraft((prevDraft) => ({ ...prevDraft, name: auto }));
+      }
       return next;
     });
+  }
+
+  // onChange DÙNG CHUNG cho các trường trong form Sửa — đối xứng với
+  // handleCreateChange bên dưới (yêu cầu người dùng 2026-08-02, xem chú
+  // thích ở toggleNameTick). Không có phần suy Lĩnh vực từ deviceId vì Sửa
+  // không cho đổi thiết bị.
+  function handleEditChange(patch: Partial<EditState>) {
+    if (!edit) return;
+    const merged = { ...edit, ...patch };
+    const activeCount = Object.values(nameTicks).filter(Boolean).length;
+    if (activeCount === 2 && !("name" in patch)) {
+      const auto = computeAutoName(
+        nameTicks,
+        merged.interfaceType,
+        merged.deviceName,
+        merged.tribText,
+        merged.positionNextDevice,
+        merged.positionNextTrib,
+        merged.counterpartText
+      );
+      if (auto !== null) merged.name = auto;
+    }
+    setEdit(merged);
   }
 
   // onChange DÙNG CHUNG cho các trường trong form Thêm mới — nếu đang tick
@@ -1651,20 +1749,53 @@ export default function DeviceCircuitList({
             <p className="text-sm font-medium text-primary-800">Sửa luồng thiết bị</p>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-slate-500">
-              Thiết bị
+            <div className="text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={nameTicks.own}
+                  onChange={() => toggleNameTick("own")}
+                  title="Dùng thiết bị này để tự đặt tên luồng (tối đa 2 mục)"
+                />
+                Thiết bị
+              </span>
               <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">{edit.deviceName ?? "(chưa xác định)"}</div>
               <div className="mt-1 text-[11px] text-slate-400">(sửa tên thiết bị ở Danh mục thiết bị)</div>
-            </label>
+            </div>
             {renderCircuitFormFields(
               edit,
-              (patch) => setEdit({ ...edit, ...patch }),
+              handleEditChange,
               edit.deviceName,
               "dc-trib-options-edit",
               "dc-trib-options-next-edit",
-              false
+              true
             )}
           </div>
+          {(() => {
+            // Nút "Kiểm tra đồng bộ với hồ sơ ODF trung kế" (yêu cầu người
+            // dùng 2026-08-02, "kiểm tra 01 luồng" ngay tại chỗ đang sửa) —
+            // chỉ hiện khi tìm được đúng 1 cặp tương ứng trong
+            // circuitPairDetails (xem lib/circuitPairSync.ts), y hệt cơ chế
+            // bên PortTable.tsx EditRow.
+            const pairDetail = circuitPairDetails?.find((d) => d.deviceCircuitId === edit.id) ?? null;
+            if (!pairDetail) return null;
+            return (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  className="text-xs text-primary-600 hover:underline"
+                  onClick={() => setShowSyncCheck((v) => !v)}
+                >
+                  {showSyncCheck ? "▲ Ẩn" : "🔎 Kiểm tra đồng bộ với hồ sơ ODF trung kế"}
+                </button>
+                {showSyncCheck && (
+                  <div className="mt-1">
+                    <CircuitPairSyncPanel detail={pairDetail} onApplied={() => setShowSyncCheck(false)} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="mt-3 flex gap-2">
             <button className="btn-primary" onClick={saveEdit} disabled={busy}>
               Lưu
@@ -1997,6 +2128,7 @@ export default function DeviceCircuitList({
                   </td>
                   <td className="px-4 py-2 text-slate-700 break-words">
                     {displayName(c) || "—"}
+                    <MirrorLinkBadge status={mirrorLinkStatuses?.[c.id]} />
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
                   <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>

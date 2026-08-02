@@ -21,6 +21,10 @@ import { formatLastUpdated } from "@/lib/format";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import FilterInput from "@/components/ui/FilterInput";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
+import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import type { MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
+import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 
 export interface PortView {
   id: string;
@@ -302,6 +306,8 @@ export default function PortTable({
   devicePositionMap,
   stationId,
   trunkPorts,
+  mirrorLinkStatuses,
+  circuitPairDetails,
 }: {
   rackId: string;
   initialPorts: PortView[];
@@ -311,6 +317,8 @@ export default function PortTable({
   devicePositionMap: DevicePositionMapRow[];
   stationId: string;
   trunkPorts: TrunkPortRow[];
+  mirrorLinkStatuses?: Record<string, MirrorLinkStatus>;
+  circuitPairDetails?: CircuitPairDetail[];
 }) {
   const router = useRouter();
   // KHÔNG dùng useState(initialPorts) — router.refresh() (gọi sau mỗi lần
@@ -738,6 +746,55 @@ export default function PortTable({
         setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
       }
 
+      // Tự đồng bộ liên tục sang luồng thiết bị ĐÃ liên kết (yêu cầu người
+      // dùng 2026-08-02: "sau khi đã liên kết được luồng rồi thì khi tôi sửa
+      // ở 1 bên hồ sơ thì hồ sơ bên còn lại tự đồng bộ luôn" — nhưng phải
+      // "hiện cảnh báo xác nhận, đồng thời đưa ra số liệu ánh xạ 1-1... cho
+      // từng trường" — KHÔNG âm thầm). Chỉ hỏi khi thật sự có gì đổi (so bằng
+      // hasPositionChanged, không phải string thô — tránh hỏi thừa vì lệch
+      // định dạng "ODF7/9(41,42)" vs "ODF 7/9 (41,42)").
+      const pairDetail = circuitPairDetails?.find((d) => d.trunkCircuitId === circuitId && d.isLinked);
+      if (pairDetail) {
+        const newTrunkName = circuitFields.name;
+        const transitSplitNow = splitOdfDeviceStructure(transitText);
+        const newTrunkTransitOdfPart = transitSplitNow.matched ? transitSplitNow.odfPart ?? null : null;
+        const newTrunkTransitTrib = transitSplitNow.matched ? transitSplitNow.port ?? null : null;
+        const newTrunkTransitDevicePortText = transitSplitNow.matched
+          ? transitSplitNow.devicePortText ?? null
+          : pairDetail.trunkTransitDevicePortText;
+
+        const diffs: string[] = [];
+        if (newTrunkName.trim() !== pairDetail.deviceName.trim()) {
+          diffs.push(`Tên luồng: "${pairDetail.deviceName}" -> "${newTrunkName}"`);
+        }
+        if (hasPositionChanged(pairDetail.deviceOwnPosition, newTrunkTransitOdfPart)) {
+          diffs.push(`Vị trí ODF (thiết bị): "${pairDetail.deviceOwnPosition ?? "(trống)"}" -> "${newTrunkTransitOdfPart ?? "(trống)"}"`);
+        }
+        if (hasTribChanged(pairDetail.deviceTrib, newTrunkTransitTrib)) {
+          diffs.push(`Trib: "${pairDetail.deviceTrib ?? "(trống)"}" -> "${newTrunkTransitTrib ?? "(trống)"}"`);
+        }
+        if (diffs.length > 0) {
+          const ok = confirm(
+            `Luồng này đã liên kết với luồng thiết bị "${pairDetail.deviceName}". Đồng bộ sang bên đó:\n\n${diffs.join(
+              "\n"
+            )}\n\nTiếp tục?`
+          );
+          if (ok) {
+            try {
+              await applySyncFromTrunk({
+                ...pairDetail,
+                trunkName: newTrunkName,
+                trunkTransitOdfPart: newTrunkTransitOdfPart,
+                trunkTransitTrib: newTrunkTransitTrib,
+                trunkTransitDevicePortText: newTrunkTransitDevicePortText,
+              });
+            } catch (e) {
+              setError(`Đã lưu luồng, nhưng đồng bộ sang thiết bị thất bại: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        }
+      }
+
       refreshAndThen(() => setEdit(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1079,6 +1136,7 @@ export default function PortTable({
                     devices={devices}
                     deviceAliases={deviceAliases}
                     devicePositionMap={devicePositionMap}
+                    circuitPairDetails={circuitPairDetails}
                     onChange={setEdit}
                     onToggleMerge={toggleMerge}
                     onSecondPortNumberChange={changeSecondPortNumber}
@@ -1158,7 +1216,14 @@ export default function PortTable({
                   <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>
                   {idx === 0 && (
                     <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
-                      {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
+                      {circuit ? (
+                        <>
+                          {circuit.name}
+                          <MirrorLinkBadge status={mirrorLinkStatuses?.[circuit.id]} />
+                        </>
+                      ) : (
+                        <span className="text-slate-300">— trống —</span>
+                      )}
                     </td>
                   )}
                   {idx === 0 && (
@@ -1247,6 +1312,7 @@ function EditRow({
   devices,
   deviceAliases,
   devicePositionMap,
+  circuitPairDetails,
   onChange,
   onToggleMerge,
   onSecondPortNumberChange,
@@ -1261,6 +1327,7 @@ function EditRow({
   devices: DeviceRow[];
   deviceAliases: DeviceAliasRow[];
   devicePositionMap: DevicePositionMapRow[];
+  circuitPairDetails?: CircuitPairDetail[];
   onChange: (e: EditState) => void;
   onToggleMerge: (checked: boolean) => void;
   onSecondPortNumberChange: (text: string) => void;
@@ -1269,6 +1336,18 @@ function EditRow({
   busy: boolean;
   colSpan: number;
 }) {
+  // Nút "Kiểm tra đồng bộ với hồ sơ đấu nối" (yêu cầu người dùng 2026-08-02,
+  // "kiểm tra 01 luồng" ngay tại chỗ đang sửa) — chỉ có ý nghĩa với luồng ĐÃ
+  // lưu (edit.circuitId != null) và tìm được đúng 1 cặp thiết bị-trung kế
+  // tương ứng trong circuitPairDetails (đã tính sẵn ở trang cha, xem
+  // lib/circuitPairSync.ts) — không tìm được thì KHÔNG hiện nút (vd luồng
+  // này không có đối phương thiết bị nào, như trung kế-trung kế thuần túy).
+  const [showSyncCheck, setShowSyncCheck] = useState(false);
+  const pairDetail = useMemo(
+    () => circuitPairDetails?.find((d) => d.trunkCircuitId === edit.circuitId) ?? null,
+    [circuitPairDetails, edit.circuitId]
+  );
+
   // Cấu trúc 2 (yêu cầu người dùng 2026-07-27): nếu "Chuyển tiếp" khớp mẫu
   // "<ODF> - <thiết bị>(<port>)" lúc MỞ sửa, tách hiện 2 ô riêng cho dễ sửa.
   // Chỉ tính 1 LẦN lúc EditRow mount (mount lại mỗi khi đổi dòng đang sửa nhờ
@@ -1693,6 +1772,19 @@ function EditRow({
             )}
           </div>
         </div>
+
+        {pairDetail && (
+          <div className="mt-3">
+            <button type="button" className="text-xs text-primary-600 hover:underline" onClick={() => setShowSyncCheck((v) => !v)}>
+              {showSyncCheck ? "▲ Ẩn" : "🔎 Kiểm tra đồng bộ với hồ sơ đấu nối"}
+            </button>
+            {showSyncCheck && (
+              <div className="mt-1">
+                <CircuitPairSyncPanel detail={pairDetail} onApplied={() => setShowSyncCheck(false)} />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 flex gap-2">
           <button className="btn-primary" onClick={onSave} disabled={busy}>

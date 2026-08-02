@@ -11,12 +11,21 @@ export interface TrunkPortRow {
   rackCode: string;
   rackDomain: "trunk" | "device";
   cableRouteName: string | null;
+  /** transit_links.raw_text của CHÍNH port này (nếu có) — thêm 2026-08-02 cho
+   *  lib/circuitPairSync.ts (đối chiếu "Chuyển tiếp" trực tiếp với hồ sơ
+   *  thiết bị, không cần query riêng transit_links mỗi lần dùng). */
+  transitText: string | null;
+  transitLinkId: string | null;
   circuit: {
     id: string;
     name: string;
     interfaceType: string | null;
     counterpartText: string | null;
     responsePlanText: string | null;
+    /** Luồng gốc nếu CHÍNH nó là 1 mirror (xem lib/unlinkedMirrorPairs.ts,
+     *  lib/mirrorLinkStatus.ts) — thêm 2026-08-02 để tính huy hiệu "Đã liên
+     *  kết" mà không cần thêm 1 lượt query riêng như trước. */
+    mirrorOfId: string | null;
   } | null;
 }
 
@@ -32,6 +41,7 @@ interface RawRow {
   fiber_number: number | null;
   racks: RawRack | RawRack[] | null;
   port_circuit_links: RawLink | RawLink[] | null;
+  transit_links: { id: string; raw_text: string | null }[] | { id: string; raw_text: string | null } | null;
 }
 interface RawLink {
   link_role: "tx" | "rx" | "single";
@@ -43,6 +53,7 @@ interface RawCircuit {
   interface_type: string | null;
   counterpart_text: string | null;
   response_plan_text: string | null;
+  mirror_of_id: string | null;
 }
 
 function firstOf<T>(v: T | T[] | null | undefined): T | null {
@@ -70,7 +81,8 @@ async function fetchAllRawPorts(domainFilter?: "trunk" | "device"): Promise<RawR
       .select(
         `id, port_number, fiber_number,
          racks!inner ( id, code, cable_route_name, domain ),
-         port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text ) )`
+         port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text, mirror_of_id ) ),
+         transit_links!transit_links_source_port_id_fkey ( id, raw_text )`
       );
     if (domainFilter) query = query.eq("racks.domain", domainFilter);
     const { data, error } = await query
@@ -89,6 +101,7 @@ function toTrunkPortRow(row: RawRow): TrunkPortRow {
   const rack = firstOf(row.racks)!;
   const link = firstOf(row.port_circuit_links);
   const circuit = link ? firstOf(link.circuits) : null;
+  const transit = firstOf(row.transit_links);
   return {
     portId: row.id,
     portNumber: row.port_number,
@@ -97,6 +110,8 @@ function toTrunkPortRow(row: RawRow): TrunkPortRow {
     rackCode: rack.code,
     rackDomain: rack.domain,
     cableRouteName: rack.cable_route_name,
+    transitText: transit?.raw_text ?? null,
+    transitLinkId: transit?.id ?? null,
     circuit: circuit
       ? {
           id: circuit.id,
@@ -104,6 +119,7 @@ function toTrunkPortRow(row: RawRow): TrunkPortRow {
           interfaceType: circuit.interface_type,
           counterpartText: circuit.counterpart_text,
           responsePlanText: circuit.response_plan_text,
+          mirrorOfId: circuit.mirror_of_id,
         }
       : null,
   };

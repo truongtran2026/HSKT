@@ -2,8 +2,12 @@ import { fetchDevices } from "@/lib/devices";
 import { fetchDeviceCircuits, findDevicePositionConflicts } from "@/lib/deviceCircuits";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
+import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
+import { findTransitPositionMismatches } from "@/lib/transitPositionMismatches";
 import { findFuzzyDuplicateDevices, fetchIgnoredDevicePairs } from "@/lib/deviceDedup";
 import { findTrunkCircuitsMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
+import { findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
+import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import DataQualityClient from "@/components/data-quality/DataQualityClient";
 
 // Trang "Chất lượng dữ liệu" (yêu cầu người dùng 2026-07-29) — gộp 3 khung
@@ -15,18 +19,34 @@ import DataQualityClient from "@/components/data-quality/DataQualityClient";
 export const dynamic = "force-dynamic";
 
 export default async function DataQualityPage() {
-  const [devices, circuits, trunkPorts, ignoredPairs, trunkMissingDeviceItems] = await Promise.all([
+  const [devices, circuits, trunkPorts, ignoredPairs, trunkMissingDeviceItems, devicePositionMap] = await Promise.all([
     fetchDevices(),
     fetchDeviceCircuits(),
     fetchAllOdfPorts(),
     fetchIgnoredDevicePairs(),
     findTrunkCircuitsMissingDeviceMirror(),
+    fetchDevicePositionMap(),
   ]);
-  // fetchNonConformingTransitLinks cần trunkPorts đã tải xong (đối chiếu phần
-  // ODF bên trong, xem lib/transitLinks.ts) nên chờ riêng, không gộp Promise.all.
+  // fetchNonConformingTransitLinks/findUnlinkedMirrorPairs cần trunkPorts đã
+  // tải xong (đối chiếu phần ODF bên trong) nên chờ riêng, không gộp Promise.all.
   const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts);
+  const unlinkedDeviceDevicePairs = findUnlinkedDeviceDevicePairs(circuits, devices);
   const dupCandidates = findFuzzyDuplicateDevices(devices, circuits, ignoredPairs);
   const positionConflicts = findDevicePositionConflicts(circuits);
+  // Ô "Chuyển tiếp" ghi sai tọa độ ODF so với Vị trí thiết bị đã xác nhận
+  // (yêu cầu người dùng 2026-08-02, phát hiện từ ca thật ADN1.P2(2/1/2) — xem
+  // lib/transitPositionMismatches.ts).
+  const transitPositionMismatches = await findTransitPositionMismatches(devicePositionMap);
+  // "Kiểm tra 01 luồng" đúng ánh xạ vật lý (yêu cầu người dùng 2026-08-02, sau
+  // khi chỉ ra cách rà CŨ ở trên "không logic") — 1 lượt tính duy nhất cho CẢ
+  // cặp chưa liên kết (thay dữ liệu cho tab mục 44, đồng bộ ĐỦ 3 điểm thay vì
+  // chỉ tên) LẪN cặp đã liên kết nhưng lệch (tab mới, LOẠI 6) — xem
+  // lib/circuitPairSync.ts.
+  const allDeviceTrunkPairs = await findAllDeviceTrunkPairs(trunkPorts, circuits);
+  const unlinkedPairDetails = allDeviceTrunkPairs.filter((p) => !p.isLinked);
+  const mismatchedLinkedPairs = allDeviceTrunkPairs.filter(
+    (p) => p.isLinked && (!p.nameMatch || p.ownPositionMatch === false || p.nextPositionMatch === false)
+  );
 
   return (
     <div>
@@ -41,6 +61,10 @@ export default async function DataQualityPage() {
           dupCandidates={dupCandidates}
           positionConflicts={positionConflicts}
           trunkMissingDeviceItems={trunkMissingDeviceItems}
+          unlinkedDeviceDevicePairs={unlinkedDeviceDevicePairs}
+          transitPositionMismatches={transitPositionMismatches}
+          unlinkedPairDetails={unlinkedPairDetails}
+          mismatchedLinkedPairs={mismatchedLinkedPairs}
         />
       </div>
     </div>

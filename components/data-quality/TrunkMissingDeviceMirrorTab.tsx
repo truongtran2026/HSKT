@@ -136,8 +136,10 @@ export default function TrunkMissingDeviceMirrorTab({ items }: { items: TrunkCir
           <li key={item.trunkCircuitId} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 bg-white px-2 py-1.5">
             <a
               href={`/odf-trunk/${item.rackId}#port-${item.firstPortId}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="min-w-0 flex-1 break-words hover:underline"
-              title="Xem port này ở Hồ sơ ODF Trung kế"
+              title="Xem port này ở Hồ sơ ODF Trung kế (mở tab mới)"
             >
               <span className="font-medium">
                 {item.rackCode} port {item.portNumbers.join(",")}:

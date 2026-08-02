@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { normalizeDeviceNameKey, looseDeviceNameKey } from "@/lib/deviceNotes";
+import { normalizeDeviceNameKey, looseDeviceNameSegments } from "@/lib/deviceNotes";
 import type { DeviceRow } from "@/lib/devices";
 
 // Bảng device_aliases (migration 20260801000001) — mỗi dòng là 1 cách gõ đã
@@ -51,12 +51,29 @@ export function resolveDeviceByExactOrAlias(
   return devices.find((d) => d.id === aliasHit.deviceId) ?? null;
 }
 
-// Cấp 3: KHÔNG khớp chính xác/alias — thử so khớp lỏng (looseDeviceNameKey),
-// chỉ trả về gợi ý khi ra ĐÚNG 1 ứng viên (>=2 ứng viên nghĩa là mơ hồ, không
-// tự đoán — đúng triết lý "không tự đoán" xuyên suốt dự án).
+// true nếu `shorter` là TIỀN TỐ đúng thứ tự của `longer` (từng đoạn khớp
+// chính xác — so sánh mảng, KHÔNG so chuỗi đã join, để tránh lỗi biên "1" bị
+// coi là tiền tố chuỗi của "12"). Bắt được ca thật 2026-08-01: người dùng gõ
+// tắt "ADN1.OMEMSPP#01" (thiếu "-" + thiếu hậu tố "RMT2") cho thiết bị đã lưu
+// đầy đủ "ADN1.OME-MSPP#1 RMT2" — đoạn hóa 2 chuỗi này là ["omemspp","1"] và
+// ["omemspp","1","rmt","2"], vế đầu là tiền tố đúng thứ tự của vế sau.
+function isSegmentPrefix(shorter: string[], longer: string[]): boolean {
+  if (shorter.length === 0 || shorter.length >= longer.length) return false;
+  return shorter.every((seg, i) => seg === longer[i]);
+}
+
+// Cấp 3: KHÔNG khớp chính xác/alias — thử so khớp lỏng (khớp đủ HOẶC gõ tắt
+// là tiền tố của tên đầy đủ hơn), chỉ trả về gợi ý khi ra ĐÚNG 1 ứng viên
+// (>=2 ứng viên nghĩa là mơ hồ, không tự đoán — đúng triết lý "không tự
+// đoán" xuyên suốt dự án; vd gõ "PE2" ngắn/chung chung khớp tiền tố nhiều
+// thiết bị thì tự động KHÔNG gợi ý gì, an toàn).
 export function findLooseDeviceCandidate(typedName: string, devices: DeviceRow[]): DeviceRow | null {
-  const key = looseDeviceNameKey(typedName);
-  if (!key) return null;
-  const matches = devices.filter((d) => looseDeviceNameKey(d.name) === key);
+  const typedSegments = looseDeviceNameSegments(typedName);
+  if (typedSegments.length === 0) return null;
+  const typedKey = typedSegments.join(" ");
+  const matches = devices.filter((d) => {
+    const deviceSegments = looseDeviceNameSegments(d.name);
+    return deviceSegments.join(" ") === typedKey || isSegmentPrefix(typedSegments, deviceSegments);
+  });
   return matches.length === 1 ? matches[0] : null;
 }

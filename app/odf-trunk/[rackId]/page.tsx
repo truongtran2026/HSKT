@@ -8,6 +8,10 @@ import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
+import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
+import { findUnlinkedMirrorPairs, findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
+import { computeMirrorLinkStatuses } from "@/lib/mirrorLinkStatus";
+import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import DeviceRackPortView from "@/components/odf-device/DeviceRackPortView";
 import DeleteRackButton from "@/components/odf-device/DeleteRackButton";
@@ -116,15 +120,29 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — "Chuyển tiếp" có thể
   // trỏ tới rack trung kế HOẶC ODF/DDF nội bộ (domain='device'), cần cả 2 để
   // nhận diện/chuẩn hóa đúng (yêu cầu người dùng 2026-07-27).
-  const [data, options, devices, deviceAliases, devicePositionMap, trunkPorts] = await Promise.all([
+  const [data, options, devices, deviceAliases, devicePositionMap, trunkPorts, deviceCircuits] = await Promise.all([
     getRackAndPorts(params.rackId),
     fetchCircuitOptions(),
     fetchDevices(),
     fetchDeviceAliases(),
     fetchDevicePositionMap(),
     fetchAllOdfPorts(),
+    fetchDeviceCircuits(),
   ]);
   if (!data) notFound();
+  // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng port (yêu cầu người
+  // dùng 2026-08-02) — tái dùng ĐÚNG 2 hàm rà soát đã có ở /data-quality (mục
+  // 44/45), không viết thuật toán khác ở đây.
+  const [unlinkedMirrorPairs, unlinkedDeviceDevicePairs] = await Promise.all([
+    findUnlinkedMirrorPairs(trunkPorts, deviceCircuits),
+    findUnlinkedDeviceDevicePairs(deviceCircuits, devices),
+  ]);
+  const mirrorLinkStatuses = computeMirrorLinkStatuses(trunkPorts, deviceCircuits, unlinkedMirrorPairs, unlinkedDeviceDevicePairs);
+  // Nút "Kiểm tra đồng bộ" ngay trong form sửa 1 luồng (yêu cầu người dùng
+  // 2026-08-02, sau ca ADN1.P2(2/1/2) — xem lib/circuitPairSync.ts) — tính
+  // sẵn CẢ trạm (không chỉ rack đang xem) vì EditRow cần tra cứu theo đúng
+  // circuitId đang sửa, có thể là bất kỳ luồng trung kế nào.
+  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, deviceCircuits);
   const { rack, ports } = data;
   // Rack ODF/DDF nội bộ (domain='device') dùng lại NGUYÊN trang này (đúng
   // yêu cầu "dùng lại đúng bảng/nút bấm đã có" — RackHeader/RackAdminPanel
@@ -192,6 +210,8 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
             devicePositionMap={devicePositionMap}
             stationId={rack.station_id}
             trunkPorts={trunkPorts}
+            mirrorLinkStatuses={mirrorLinkStatuses}
+            circuitPairDetails={circuitPairDetails}
           />
         )}
       </div>

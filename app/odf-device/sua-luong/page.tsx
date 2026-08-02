@@ -3,6 +3,9 @@ import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 import { fetchDevices } from "@/lib/devices";
 import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
+import { findUnlinkedMirrorPairs, findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
+import { computeMirrorLinkStatuses } from "@/lib/mirrorLinkStatus";
+import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import DeviceCircuitList from "@/components/odf-device/DeviceCircuitList";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
@@ -25,6 +28,18 @@ export default async function SuaLuongThietBiPage() {
     fetchDevicePositionMap(),
     fetchAllOdfPorts(),
   ]);
+  // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng (yêu cầu người dùng
+  // 2026-08-02) — tái dùng ĐÚNG 2 hàm rà soát đã có ở /data-quality (mục
+  // 44/45), không viết thuật toán khác ở đây. Rẻ: không thêm round-trip
+  // Supabase nào (xem lib/mirrorLinkStatus.ts).
+  const [unlinkedMirrorPairs, unlinkedDeviceDevicePairs] = await Promise.all([
+    findUnlinkedMirrorPairs(trunkPorts, circuits),
+    findUnlinkedDeviceDevicePairs(circuits, devices),
+  ]);
+  const mirrorLinkStatuses = computeMirrorLinkStatuses(trunkPorts, circuits, unlinkedMirrorPairs, unlinkedDeviceDevicePairs);
+  // Nút "Kiểm tra đồng bộ" ngay trong form sửa 1 luồng (yêu cầu người dùng
+  // 2026-08-02 — xem lib/circuitPairSync.ts).
+  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, circuits);
   return (
     <div>
       <h1 className="text-2xl font-bold text-primary-800">Hồ sơ đấu nối</h1>
@@ -35,7 +50,14 @@ export default async function SuaLuongThietBiPage() {
         </Link>
       </p>
       <div className="mt-6">
-        <DeviceCircuitList circuits={circuits} devices={devices} devicePositionMap={devicePositionMap} trunkPorts={trunkPorts} />
+        <DeviceCircuitList
+          circuits={circuits}
+          devices={devices}
+          devicePositionMap={devicePositionMap}
+          trunkPorts={trunkPorts}
+          mirrorLinkStatuses={mirrorLinkStatuses}
+          circuitPairDetails={circuitPairDetails}
+        />
       </div>
     </div>
   );

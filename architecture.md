@@ -2148,8 +2148,535 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       môi trường này không có Postgres connection string/Supabase CLI để tự
       áp DDL): đã thử trước khi chạy migration, `/odf-trunk/<rackId>` lỗi 500
       đúng dự kiến (`PGRST205 — Could not find the table 'public.device_aliases'`)
-      — hết ngay sau khi chạy xong SQL qua Supabase Dashboard.
-    - **Kiểm chứng**: `tsc --noEmit` sạch. Dev server xác nhận đúng lỗi
-      `PGRST205` (chưa chạy migration) khi mở trang rack chi tiết — đúng dự
-      kiến, chưa kiểm chứng được hành vi gợi ý thật trên dữ liệu (cần người
-      dùng chạy migration trước).
+      — hết ngay sau khi chạy xong SQL qua Supabase Dashboard (người dùng đã
+      chạy 2026-08-02, xác nhận trang 200 trở lại).
+    - **Kiểm chứng lần 1**: `tsc --noEmit` sạch. Rà thật 138 devices: 0 nhóm
+      bị gộp sai, khớp đúng 100% trên 5 mẫu thiết bị thật gõ mô phỏng sai kiểu.
+    - **Theo dõi ngay sau đó (cùng ngày, người dùng tự test UI thật)**: gõ
+      "ADN1.OMEMSPP#01" ở rack ODF1/1 port 31 KHÔNG ra gợi ý, dù thiết bị thật
+      đã có sẵn là "ADN1.OME-MSPP#1 RMT2" — 2 lỗ hổng của thuật toán ban đầu:
+      (1) "OME"+"MSPP" bị tách rời do có dấu "-" trong tên thật nhưng KHÔNG có
+      dấu trong chữ gõ (2 đoạn CHỮ liên tiếp không được gộp lại); (2) tên thật
+      còn hậu tố "RMT2" mà chữ gõ tắt hoàn toàn không có (thiếu thông tin,
+      không phải sai định dạng).
+      - **Sửa `looseDeviceNameSegments()`** (đổi tên từ `looseDeviceNameKey`,
+        hàm cũ giữ lại dạng `.join(" ")` của hàm mới, không phá API cũ) — gộp
+        các đoạn CHỮ liên tiếp (không có đoạn số chen giữa) thành 1, CHỈ đoạn
+        chữ (đoạn số vẫn tách riêng như cũ, giữ nguyên an toàn PSS24#1 ≠
+        PSS241).
+      - **Thêm luật "tiền tố"** trong `findLooseDeviceCandidate()`
+        (`lib/deviceAliases.ts`) — nếu đoạn hóa chữ gõ là TIỀN TỐ đúng thứ tự
+        (so mảng, không so chuỗi — tránh lỗi biên "1" là tiền tố chuỗi của
+        "12") của 1 thiết bị có nhiều đoạn hơn, vẫn gợi ý được dù thiếu hậu
+        tố. An toàn: nếu ≥2 thiết bị cùng khớp tiền tố → tự động KHÔNG gợi ý
+        gì (mơ hồ).
+      - **Kiểm chứng lại trên dữ liệu thật**: ca thật "ADN1.OMEMSPP#01" nay
+        gợi ý đúng "ADN1.OME-MSPP#1 RMT2" (phân biệt đúng với thiết bị anh em
+        "ADN1.OME-MSPP#3 RMT1", không lẫn — vì đoạn số ngay sau tên gộp khác
+        nhau, 1 ≠ 3). Rà lại toàn bộ 136 thiết bị (giả lập gõ tắt = 2 đoạn đầu
+        liền không dấu cho MỖI thiết bị, kiểm tra có tự khớp đúng lại chính nó
+        không): 62 khớp đúng, 61 mơ hồ tự động không gợi ý (an toàn), **0 ca
+        khớp NHẦM sang thiết bị khác**.
+
+44. **Tab mới "Luồng chưa liên kết mirror" ở Chất lượng dữ liệu — LOẠI THỨ 3
+    của "chưa đồng bộ"** (người dùng hỏi cụ thể ca thật `ADN1.OMS3255(1/9/2)`
+    ↔ `ODF 1/1 (41,42)` 2026-08-02, "bản chất là cùng một luồng mà") — kiểm
+    tra xác nhận ĐÚNG là 1 luồng vật lý (own/next khớp gần như tuyệt đối 2
+    phía), nhưng `mirror_of_id` cả 2 dòng đều `null`.
+    - **Vì sao chưa từng được tự đồng bộ**: khác hẳn mục 38/39/40 (port đích
+      TRỐNG → tự tạo được ngay), ở đây CẢ 2 PHÍA đã có sẵn 1 luồng ĐỘC LẬP
+      (import từ Excel gốc, trước khi có cột `mirror_of_id`). `findTrunkMirror
+      Candidates()` (`lib/mirrorTrunkCircuits.ts`) đang coi "port đã bị chiếm
+      = đã đồng bộ", không kiểm tra xem luồng chiếm chỗ đó có ĐÚNG là mirror
+      của luồng thiết bị không — bỏ qua thẳng, không báo gì.
+    - **Rà thử toàn bộ dữ liệu (chỉ đọc)**: **207 cặp** thuộc loại này. Xem
+      mẫu thật: phần lớn tên 2 bên khớp gần tuyệt đối (chỉ khác dấu/định dạng,
+      giống hệt ca OMS3255) nhưng có 1 số cặp tên 2 bên **khác hẳn nhau** (vd
+      "100GE AĐN1.DPI#1 (Bypass...)" trùng port với 1 luồng tên hoàn toàn khác
+      không liên quan) — nhiều khả năng là port bị dùng lại/dữ liệu cũ, KHÔNG
+      phải cùng luồng thật. Gắn `mirror_of_id` nhầm sẽ khiến xóa 1 bên tự xóa
+      lây bên kia (`on delete cascade`, mục 33) dù 2 luồng không liên quan —
+      **rủi ro cao nếu tự động liên kết hàng loạt**.
+    - **Đã hỏi người dùng chọn hướng xử lý** (3 lựa chọn: tự động hết / tự
+      động phần khớp rất cao + để tay phần còn lại / chỉ sửa đúng ca vừa hỏi)
+      — người dùng chọn **"Xây tab rà + tick xác nhận từng cặp"**, cùng tinh
+      thần tab "Trung kế thiếu bên thiết bị" (mục 41): liệt kê hết, không tự
+      quyết định, người dùng tự soi rồi tick xác nhận TỪNG cặp.
+    - **`lib/unlinkedMirrorPairs.ts` (mới)**:
+      - `findUnlinkedMirrorPairs(trunkPorts, deviceCircuits)` — với mỗi luồng
+        thiết bị CHƯA phải là mirror của cái khác (`mirrorOfId` null, field
+        mới thêm vào `DeviceCircuitRow`/`fetchDeviceCircuits()` —
+        `lib/deviceCircuits.ts`), thử khớp own/next qua `matchTrunkPosition()`
+        y hệt `findTrunkMirrorCandidates()`, nhưng KHÔNG bỏ qua port đã
+        `inUse` (ngược lại, chỉ quan tâm port ĐANG bị chiếm) — tra 1 lượt
+        `mirror_of_id` thật của các luồng trung kế ứng viên (`TrunkPortRow`
+        không mang field này), loại cặp đã liên kết đúng hoặc liên kết sang
+        luồng khác.
+      - **% giống tên** (`fastest-levenshtein`, đã là dependency có sẵn từ
+        `lib/deviceDedup.ts`) — chuẩn hóa tên qua `normalizeVN` + bỏ hết ký tự
+        không phải chữ/số trước khi tính khoảng cách, ra % giống nhau
+        (0-100). **CHỈ để SẮP XẾP/gợi ý độ tin cậy cho người dùng tự soi**,
+        không phải ngưỡng tự động quyết định gì — sắp xếp cao xuống thấp.
+      - `linkMirrorPair(deviceCircuitId, trunkCircuitId)` — `UPDATE circuits
+        SET mirror_of_id = deviceCircuitId WHERE id = trunkCircuitId`, đúng
+        chiều "thiết bị = gốc, trung kế = mirror" như `autoCreateTrunkMirror
+        ForCircuit()` (mục 39). KHÔNG xóa/đổi gì khác — chỉ gắn 1 cột FK.
+    - **`components/data-quality/UnlinkedMirrorPairsTab.tsx` (mới)** — tab
+      thứ 5, cùng pattern tick-xác-nhận-rồi-mới-bấm-được của
+      `TrunkMissingDeviceMirrorTab.tsx` (mục 41): mỗi dòng hiện % giống tên
+      (huy hiệu màu — xanh lá ≥90%, vàng ≥60%, đỏ <60%), 2 tên đầy đủ để tự
+      đối chiếu, link nhảy tới đúng port trung kế, tick "Xác nhận là 1 luồng"
+      rồi mới bấm được "Liên kết". **Không có nút liên kết hàng loạt.**
+    - **`app/data-quality/page.tsx`/`DataQualityClient.tsx`**: gọi
+      `findUnlinkedMirrorPairs(trunkPorts, circuits)` (dùng lại đúng
+      `trunkPorts`/`circuits` đã tải sẵn cho các khung khác, không fetch
+      thêm), thêm tab thứ 5 "Luồng chưa liên kết mirror" vào thanh tab (đổi
+      `flex gap-1` → `flex flex-wrap gap-1` vì đủ 5 tab có thể tràn dòng ở
+      màn hình hẹp).
+    - **Kiểm chứng qua chính hàm thật** (không phải script rà thử sơ bộ ban
+      đầu): `tsc --noEmit` sạch. Chạy `findUnlinkedMirrorPairs()` trên dữ liệu
+      thật: đúng 207 cặp, ca OMS3255 hiện đúng similarity=100%. Phân bố: 40
+      cặp ≥90% (gần chắc chắn đúng), 102 cặp 60-89%, 65 cặp <60% (nhiều khả
+      năng port dùng lại, cần soi kỹ trước khi tick) — đúng dự kiến, xác nhận
+      thuật toán an toàn (không tự quyết định gì, chỉ xếp hạng).
+    - **Hạn chế đã biết, chưa xử lý**: % giống tên dựa Levenshtein theo THỨ TỰ
+      ký tự — 1 số cặp ĐÚNG là cùng luồng nhưng thứ tự "A - B" đảo thành "B -
+      A" (vd "GE AĐN1.PE#2 (4/3/5) - GIÁM SÁT NOC3" ↔ "GIÁM SÁT NOC3 -
+      ADN1.PE2(4/3/5)") bị tính % thấp dù đúng — không sửa vì UI đã nói rõ "%
+      chỉ để gợi ý", người dùng vẫn tự đọc được cả 2 tên đầy đủ để tự quyết
+      định dù % thấp.
+    - **Theo dõi ngay sau đó (cùng ngày)**: người dùng hỏi lại "Liên kết thì
+      có đẩy dữ liệu qua lại 2 đầu không?" — xác nhận KHÔNG, hành vi gốc chỉ
+      gắn `mirror_of_id`, không đụng nội dung. Người dùng xác nhận muốn thêm
+      lựa chọn đồng bộ. Đã thêm:
+      - `linkMirrorPair(deviceCircuitId, trunkCircuitId, syncNameFrom?:
+        "device"|"trunk")` — mặc định `undefined` (KHÔNG đồng bộ, giữ nguyên
+        hành vi gốc). Nếu truyền, đọc `name`+`interface_type` từ bên NGUỒN,
+        ghi đè sang bên CÒN LẠI. **Chỉ 2 trường này** — không đụng
+        `counterpart_text`/`response_plan_text`/`execution_station_text`/
+        `notes`/`trib_text`/`device_position_own`/`device_position_next` vì
+        các trường đó chỉ có nghĩa RIÊNG theo từng domain (vd
+        `device_position_own` bên thiết bị không có khái niệm tương ứng bên
+        trung kế), khác `name`/`interface_type` vốn mô tả CÙNG 1 khái niệm ở
+        cả 2 domain.
+      - `UnlinkedMirrorPairsTab.tsx` — thêm `deviceInterfaceType`/
+        `trunkInterfaceType` vào hiển thị (2 dòng tên nay kèm giao tiếp trong
+        ngoặc). CHỈ hiện 3 lựa chọn radio ("Không đồng bộ" mặc định / "Dùng
+        tên bên thiết bị" / "Dùng tên bên trung kế") khi 2 tên khác nhau —
+        giống hệt tên thì không cần hỏi. Lựa chọn đi kèm ngay khi bấm "Liên
+        kết", không phải bước riêng.
+    - **Kiểm chứng**: `tsc --noEmit` sạch, `/data-quality` vẫn 200.
+
+45. **Tab mới "Thiết bị-Thiết bị chưa liên kết" — LOẠI 4, cùng ngày** (người
+    dùng chỉ ra ngay sau khi xong mục 44: "Còn trường hợp đấu nối giữa 02
+    thiết bị nữa") — CÙNG BẢN CHẤT lỗ hổng nhưng cho cặp luồng THIẾT BỊ-THIẾT
+    BỊ (cả 2 đầu đều local ADN1, mục 38) thay vì thiết bị-trung kế.
+    - **Vì sao chưa từng được tự đồng bộ**: `findMissingDeviceMirrors()`
+      (`lib/deviceDeviceSync.ts`, mục 38) coi "thiết bị đích đã có luồng khớp
+      Trib" = "đã đồng bộ" (`if (targetOwnTribs.has(targetTribKey)) continue`),
+      không kiểm tra luồng khớp Trib đó có ĐÚNG là mirror (`mirror_of_id` trỏ
+      đúng) hay chỉ là 2 dòng độc lập từ Excel gốc tình cờ khớp thiết bị+Trib
+      — y hệt lý do mục 44, khác domain.
+    - **Rà thật trên toàn bộ dữ liệu**: **442 cặp DUY NHẤT** (quét 2 chiều —
+      mỗi luồng đều có thể là "nguồn" hướng sang thiết bị kia — khử trùng qua
+      cặp id đã sắp xếp, xác nhận đúng 442 không lệch). Phân bố % giống tên
+      **sạch hơn hẳn** loại device-trunk (mục 44): 439/442 cặp ≥90% (gần như
+      chắc chắn đúng), chỉ 2 cặp 60-89%, 1 cặp <60% — vì cả 2 domain đều LOCAL
+      ADN1 nên tên luồng ít bị format lại khác nhau như phía trung kế.
+    - **`lib/unlinkedMirrorPairs.ts` mở rộng** (không tạo file riêng — cùng
+      nhóm chức năng "liên kết mirror còn thiếu"):
+      - Tách `applyMirrorLink(originId, mirrorId, syncFrom?)` làm lõi DÙNG
+        CHUNG cho cả `linkMirrorPair()` (mục 44) lẫn `linkDeviceDevicePair()`
+        (mới) — tránh viết lại 2 lần cùng logic "gắn mirror_of_id + tùy chọn
+        đồng bộ tên/giao tiếp" rồi lệch nhau.
+      - `findUnlinkedDeviceDevicePairs(deviceCircuits, devices)` — THUẦN HÀM
+        (không query DB, khác `findUnlinkedMirrorPairs` cần 1 lượt tra riêng)
+        vì `DeviceCircuitRow.mirrorOfId` đã có sẵn cho CẢ 2 phía. Logic dò y
+        hệt `findMissingDeviceMirrors()` (dùng lại `splitOdfDeviceStructure`/
+        `normalizeDeviceNameKey`/`normalizeDevicePositionKey`) nhưng KHÔNG bỏ
+        qua khi đã có luồng chiếm Trib — ngược lại chỉ quan tâm ca đó, rồi lọc
+        tiếp bằng `occupant.mirrorOfId` (đã liên kết thì bỏ qua).
+      - `linkDeviceDevicePair(circuitAId, circuitBId, syncNameFrom?: "a"|"b")`.
+    - **`components/data-quality/UnlinkedDeviceMirrorPairsTab.tsx` (mới)** —
+      y hệt `UnlinkedMirrorPairsTab.tsx` (huy hiệu % giống tên, tick-xác-nhận-
+      rồi-mới-Liên-kết, 3 lựa chọn đồng bộ tên khi 2 tên khác nhau) nhưng cả 2
+      cột đều link tới `/odf-device/sua-luong#${rowAnchor(circuitId)}` (không
+      có rack/port như bên trung kế).
+    - **`app/data-quality/page.tsx`/`DataQualityClient.tsx`**: tab thứ 6
+      "Thiết bị-Thiết bị chưa liên kết" (đổi tên tab mục 44 thành "Thiết bị-
+      Trung kế chưa liên kết" cho rõ phân biệt 2 tab).
+    - **Kiểm chứng qua chính hàm thật**: `tsc --noEmit` sạch. Chạy
+      `findUnlinkedDeviceDevicePairs()` trên dữ liệu thật: đúng 442 cặp, xác
+      nhận KHÔNG có cặp id nào bị đếm trùng theo 2 chiều (442 cặp id duy nhất
+      = 442 kết quả). `/data-quality` vẫn 200.
+    - **Theo dõi ngay sau đó (cùng ngày)**: người dùng chỉ ra bấm link ở BẤT
+      KỲ tab con nào trong "Chất lượng dữ liệu" đều điều hướng CÙNG TAB trình
+      duyệt sang `/odf-trunk/<rackId>` hoặc `/odf-device/sua-luong` — sửa xong
+      phải bấm "← Danh sách rack" rồi tự chuyển lại đúng tab con đang rà, rất
+      mất công khi rà nhiều dòng liên tiếp. Đổi TẤT CẢ link trong các khung
+      con của trang này (`TrunkMissingDeviceMirrorTab`, `UnlinkedMirrorPairsTab`,
+      `UnlinkedDeviceMirrorPairsTab`, `CircuitLinkList`/`PositionConflictsTab`
+      trong `DataQualityClient.tsx`) thành `target="_blank"` — bấm mở TAB
+      TRÌNH DUYỆT MỚI để sửa, đóng tab đó là quay lại nguyên trạng thái tab
+      "Chất lượng dữ liệu" (đang lọc gì/đang xem tab con nào vẫn giữ nguyên,
+      vì tab gốc chưa từng điều hướng đi đâu).
+      - **`TransitFormatWarning.tsx`** (dùng chung 3 nơi: `/odf-trunk`,
+        `/odf-trunk/[rackId]`, VÀ trong `DataQualityClient.tsx`) — thêm prop
+        `openInNewTab?: boolean` (mặc định `undefined`/tắt) thay vì đổi cứng
+        hành vi chung, vì 2 nơi gọi kia đang xem ĐÚNG rack/danh sách liên quan
+        rồi, mở thêm tab mới ở đó không cần thiết (thậm chí hơi thừa). CHỈ
+        `DataQualityClient.tsx` truyền `openInNewTab` (giá trị `true`).
+      - **Kiểm chứng**: `tsc --noEmit` sạch. Curl cả 3 trang dùng
+        `TransitFormatWarning` (`/odf-trunk`, `/odf-trunk/<rackId>`,
+        `/data-quality`) đều 200 — xác nhận prop mặc định tắt không phá 2 nơi
+        gọi cũ.
+    - **Ca thật nhân tiện phát hiện + sửa luôn**: người dùng hỏi cụ thể ca
+      `ADN1.CGNAT#2 (5/1/2)` ↔ `ODF1/10 (21,22)` — hóa ra KHÔNG thuộc loại
+      "chưa liên kết" (mục 44/45, cần cả 2 bên đã tồn tại) mà thuộc loại
+      "THIẾU HẲN" (mục 39, port đích đang TRỐNG) — luồng thiết bị này chưa
+      từng được lưu lại kể từ khi cơ chế tự tạo mirror ra đời. Chạy
+      `npm run audit-device-trunk-sync`/`audit-trunk-trunk-sync`/`audit-
+      device-device-sync` xác nhận đây là **ca DUY NHẤT** còn thiếu loại
+      device-trunk (1/1) trong toàn bộ dữ liệu (2 audit kia vẫn còn đúng 1
+      ca trunk-trunk "3G BTS Vina" + 4 ca Trib-lệch đã biết từ trước, chưa
+      đụng — để dành người dùng tự sửa tay như đã thống nhất). Chạy `npm run
+      sync-missing-trunk-circuits -- --commit` tạo đúng 1 luồng còn thiếu,
+      audit lại xác nhận 0 lượt.
+
+46. **Huy hiệu "🔗 Đã liên kết"/"⚠️ Chưa liên kết" NGAY trên từng dòng port/
+    luồng** (yêu cầu người dùng 2026-08-02, sau ca CGNAT#2 ở trên: "làm sao
+    biết được 02 bên này là 01 luồng; đã liên kết hay chưa hay vẫn rời rạc")
+    — trước đó chỉ biết được qua 2 tab riêng ở `/data-quality`, phải rời
+    trang đang xem mới tra được.
+    - **`lib/trunkPorts.ts`**: `TrunkPortRow.circuit` thêm field
+      `mirrorOfId` (select thêm `circuits.mirror_of_id`) — dùng chung cho cả
+      huy hiệu mới lẫn ĐƠN GIẢN HÓA `findUnlinkedMirrorPairs()` (mục 44):
+      hàm đó trước phải tự query riêng `mirror_of_id` của luồng trung kế ứng
+      viên (vì `TrunkPortRow` chưa mang field này) — giờ đọc thẳng từ
+      `trunkPorts` đã tải sẵn, bớt hẳn 1 round-trip Supabase mỗi lần tính (áp
+      dụng luôn cho cả 2 nơi đang gọi hàm này: `/data-quality` và trang rack
+      chi tiết mới thêm ở mục này).
+    - **`lib/mirrorLinkStatus.ts` (mới)** — `computeMirrorLinkStatuses()`
+      THUẦN HÀM (không query DB gì thêm): tính tập "id được tham chiếu làm
+      gốc" từ `mirrorOfId` có sẵn trên CẢ `trunkPorts` lẫn `deviceCircuits`,
+      rồi gán "linked" cho luồng nào tự có `mirrorOfId` HOẶC nằm trong tập
+      đó (là gốc); gán "candidate" cho luồng nằm trong kết quả
+      `findUnlinkedMirrorPairs`/`findUnlinkedDeviceDevicePairs` (mục 44/45)
+      mà chưa được gán "linked". Trả `Record<string, MirrorLinkStatus>`
+      (không phải `Map`) vì phải truyền qua ranh giới Server Component ->
+      Client Component (props phải serialize được).
+    - **`components/ui/MirrorLinkBadge.tsx` (mới)** — huy hiệu nhỏ dùng
+      chung, nhận `status: "linked"|"candidate"|undefined`, không hiện gì
+      nếu `undefined` (không phải lỗi, chỉ là không có vị trí liên quan để
+      đối chiếu).
+    - **Gắn vào 2 nơi**:
+      - `app/odf-trunk/[rackId]/page.tsx` — thêm `fetchDeviceCircuits()`
+        (trước đây trang này KHÔNG tải), chạy `findUnlinkedMirrorPairs`/
+        `findUnlinkedDeviceDevicePairs`/`computeMirrorLinkStatuses`, truyền
+        `mirrorLinkStatuses` xuống `PortTable.tsx` — hiện ngay dưới tên
+        luồng ở cột "Tên luồng" (bảng danh sách, không phải form Sửa).
+      - `app/odf-device/sua-luong/page.tsx` → `DeviceCircuitList.tsx` — y
+        hệt, mọi dữ liệu cần (`circuits`/`devices`/`trunkPorts`) ĐÃ tải sẵn
+        từ trước cho mục đích khác, chỉ thêm bước tính. Hiện ngay dưới tên
+        luồng ở cột "Tên luồng".
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Curl `/odf-trunk/<rackId>` và
+      `/odf-device/sua-luong` đều 200, thời gian tải không lệch đáng kể so
+      với `/data-quality` (trang đã làm việc tương đương từ trước) — không
+      thêm round-trip Supabase nào ngoài 1 lượt tải `deviceCircuits` mới ở
+      trang rack (trang kia đã tải sẵn). Xác nhận trên dữ liệu thật: port
+      CGNAT#2 vừa liên kết ở mục 45 hiện đúng "🔗 Đã liên kết", các port khác
+      trong cùng rack hiện đúng "⚠️ Chưa liên kết" khớp với danh sách candidate
+      thật.
+
+47. **Tab mới "Chuyển tiếp sai tọa độ ODF" ở Chất lượng dữ liệu — LOẠI THỨ 5
+    của "chưa đồng bộ"** (báo lỗi + xây 2026-08-02, sau khi người dùng chỉ ra
+    ca thật ADN1.P2(2/1/2): "từ thiết bị ... -> ODF 9/14 (25,26) -> ODF 1/13
+    (11,12) còn từ phía trung kế thì ODF 1/13 (11,12) -> ODF 9/12/21,22 ->
+    ADN1.P2 (2/1/2) ==> Không đúng").
+    - **Gốc rễ (xác nhận bằng dữ liệu thật, không phải bug cơ chế liên kết)**:
+      khác 4 loại "chưa đồng bộ" trước (mục 38/39/40 = thiếu hẳn tự sinh khi
+      trống; mục 44/45 = cả 2 bên đã có nhưng chưa gắn `mirror_of_id`) — đây
+      là loại hoàn toàn khác: bản thân **ô "Chuyển tiếp" (`transit_links.
+      raw_text`) ghi SAI phần tọa độ ODF**, dù phần tên thiết bị/trib đúng.
+      Ca P2: luồng thiết bị (`circuits.device_position_own`/`_next`) ghi đúng
+      "ODF 9/14 (25,26)" (khớp `device_position_map`, và đúng bằng vị trí vật
+      lý luồng trung kế thật đang chiếm ODF1/13(11,12)) — nhưng
+      `transit_links.raw_text` tại chính port ODF1/13(11) lại ghi "ODF
+      9/12/21,22 - AĐN1.P2 (2/1/2)": "ODF9/12(21,22)" hóa ra là tọa độ của
+      **1 trib KHÁC của chính P2** (3/1/6, theo `device_position_map`) — gần
+      như chắc chắn gõ nhầm/copy nhầm dòng lúc nhập liệu gốc từ Excel (các số
+      lệch nhẹ, không phải nhầm hẳn sang thiết bị khác).
+    - **`lib/transitPositionMismatches.ts` (mới)**:
+      - `findTransitPositionMismatches(devicePositionMap)` — quét TOÀN BỘ
+        `transit_links` (rack nguồn phải domain='trunk', dùng lại đúng cách
+        phân trang/embed FK như `fetchNonConformingTransitLinks`), tách bằng
+        `splitOdfDeviceStructure()` (đã có), so khớp thiết bị+trib với
+        `device_position_map` qua `looseDeviceNameSegments` (thuật toán mục
+        43, xử lý được mọi biến thể gõ tên) + `normalizeDevicePositionKey`
+        cho trib. CHỈ báo khi khớp được **ĐÚNG 1** dòng thư viện cho thiết
+        bị+trib đó và tọa độ ODF trong `raw_text` (so bằng dãy số trích ra,
+        bỏ qua khác biệt định dạng "/" vs "()") KHÁC tọa độ thư viện — nếu
+        khớp nhiều dòng có tọa độ khác nhau (mơ hồ) hoặc không khớp dòng nào
+        thì bỏ qua, không đoán đại (đúng nguyên tắc đã dùng ở mục 44/45).
+        `device_position_map` có 1952 dòng — **phải phân trang** (`.range()`,
+        1000 dòng/lần) khi tải hết bảng, quên bước này lúc viết script rà thử
+        ban đầu khiến âm thầm bỏ sót phần lớn kết quả đối chiếu (bài học thực
+        tế trong lúc điều tra, xem thêm mục lỗi tương tự "PostgREST giới hạn
+        1000 dòng/query" đã gặp ở nơi khác).
+      - `fixTransitLinkPosition(transitLinkId, newRawText)` — ghi đè thẳng
+        `raw_text` bằng bản đề xuất (giữ NGUYÊN phần thiết bị/trib, chỉ thay
+        phần tọa độ ODF phía trước bằng giá trị `device_position_map` nói
+        đúng).
+    - **`components/data-quality/TransitPositionMismatchTab.tsx` (mới)** —
+      y hệt khuôn tick-xác-nhận-rồi-mới-sửa của mục 44/45 (KHÔNG có nút sửa
+      hàng loạt — ghi đè trực tiếp dữ liệu thật của luồng đang chạy, rủi ro
+      tương đương): mỗi dòng hiện song song "Đang ghi: ODF9/12(21,22) -
+      AĐN1.P2(2/1/2)" (đỏ) vs "Đúng theo Vị trí thiết bị: ODF9/14(25,26) -
+      AĐN1.P2(2/1/2)" (xanh), tick "Xác nhận đúng là lỗi" mới bấm được "Sửa
+      lại"; link rack/port mở tab mới (`target="_blank"`, đúng yêu cầu mục 46
+      "không muốn mất tab đang rà").
+    - **Gắn vào `/data-quality`**: `app/data-quality/page.tsx` tải thêm
+      `fetchDevicePositionMap()` (đã có sẵn cho trang `/odf-device/vi-tri-
+      thiet-bi`, chỉ gọi lại), truyền vào `findTransitPositionMismatches()`;
+      `DataQualityClient.tsx` thêm tab thứ 7 "Chuyển tiếp sai tọa độ ODF".
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Rà toàn bộ 287 dòng `transit_links`
+      dạng "ODF... - Thiết bị (trib)" trên dữ liệu thật: 163 dòng không đối
+      chiếu được (trib chưa có trong thư viện), **13 dòng sai tọa độ thật**
+      (gồm đúng ca P2(2/1/2) người dùng chỉ ra), còn lại khớp đúng. Curl
+      `/data-quality` → tab mới hiện đúng "13 chuyển tiếp sai tọa độ ODF".
+      **Chưa bấm "Sửa lại" cho dòng nào** — theo đúng lựa chọn người dùng
+      "xây tab rà + tick xác nhận từng dòng", việc sửa thật để người dùng tự
+      làm qua UI, không tự động thay họ dù đã xác định rõ ca P2.
+    - **SỬA NGAY SAU ĐÓ, cùng ngày** — người dùng hỏi thẳng ca BNG#1(4/0/1):
+      "tại sao bạn viết đúng theo vị trí, rồi bạn lấy số liệu này ở đâu ???".
+      Truy ngược xác nhận `device_position_map` đến từ đợt import 126 file
+      Excel thiết bị gốc (`created_at` khớp mili-giây với batch 2026-07-25,
+      KHÔNG suy vòng từ chính transit_links đang xét — dòng transit_links đó
+      là dòng DUY NHẤT nhắc tới thiết bị+trib này, giá trị lại khác hẳn thư
+      viện) — nhưng người dùng phản hồi đúng: "chưa chắc là device_position_
+      map đúng đâu; đúng ra bạn phải để tôi chọn chứ sao áp đặt như vậy được.
+      thậm chí cả 2 đều sai và nhập cho đúng lại nữa kia". Bỏ hẳn nhãn "đúng"/
+      "sai" (`correctOdfPosition`/`wrongOdfPart` đổi tên trung lập thành
+      `libraryOdfPosition`/`transitOdfPart`) — đổi từ 1 nút "Sửa lại" tự động
+      ghi đè Chuyển tiếp theo thư viện, sang 3 lựa chọn ngang hàng (radio, ô
+      thứ 3 có input tự gõ): (1) Chuyển tiếp đúng → ghi đè NGƯỢC LẠI vào thư
+      viện (`applyLibraryFromTransit`, hàm MỚI — trước đây chưa từng có chiều
+      này); (2) Vị trí thiết bị đúng → ghi đè Chuyển tiếp (`applyTransitFromLibrary`,
+      giữ lại hành vi cũ nhưng không còn tự động); (3) cả 2 đều sai → người
+      dùng gõ tọa độ đúng, ghi vào CẢ 2 nơi cho khớp lại (`applyCustomPosition`,
+      hàm MỚI). `tsc --noEmit` sạch, curl `/data-quality` vẫn 200 sau khi đổi.
+
+48. **"Kiểm tra 01 luồng" đúng ánh xạ vật lý — thay hẳn cách rà CŨ bị người
+    dùng chỉ ra là "không logic"** (yêu cầu người dùng 2026-08-02, ngay sau
+    mục 47, dựa trên chính ca ADN1.P2(2/1/2)): cách rà trước đó ở mục 44 (chỉ
+    đồng bộ TÊN khi liên kết) và mục 47 (chỉ so 1 CHIỀU giữa Chuyển tiếp với
+    thư viện `device_position_map`) đều không đối chiếu TRỰC TIẾP giữa 2 hồ
+    sơ theo đúng 3 điểm dữ liệu và đúng ánh xạ vật lý. Người dùng viết rõ ánh
+    xạ:
+    ```
+    [Thiết bị @ trib] --(Vị trí ODF thiết bị = phần ODF trong Chuyển tiếp)-->
+    [ODF thiết bị]    --(Vị trí ODF tiếp theo = vị trí port THẬT bên trung kế)-->
+    [ODF trung kế, nơi luồng trung kế thật sự nằm]
+    ```
+    tức Tên luồng so trực tiếp; `device_position_own` so với PHẦN ODF tách từ
+    Chuyển tiếp (KHÔNG so cả chuỗi, phần "Thiết bị (port)" trong Chuyển tiếp
+    chỉ dùng để XÁC ĐỊNH đúng cặp, không đưa vào Tên luồng); `device_position_
+    next` so với vị trí port THẬT (không phải text lưu riêng — luôn suy được
+    từ chính vị trí luồng trung kế đang nằm). Áp dụng cho CẢ cặp CHƯA liên kết
+    lẫn ĐÃ liên kết (chọn "cả 2" qua AskUserQuestion) — cặp đã liên kết vẫn có
+    thể LỆCH nếu 1 bên bị sửa tay sau đó, chưa từng có cơ chế nào bắt được.
+    - **`lib/circuitPairSync.ts` (mới)** — lõi dùng chung cho MỌI nơi hiện
+      tính năng này:
+      - `TrunkPortRow` (`lib/trunkPorts.ts`) thêm `transitText`/`transitLinkId`
+        (join thêm `transit_links` vào `fetchAllRawPorts()`) — cần đọc trực
+        tiếp Chuyển tiếp của port mà không query riêng.
+      - `CircuitPairDetail` — 1 cặp đầy đủ: cả dữ liệu 2 bên (tên, own/next
+        thiết bị, tên+trib thiết bị riêng để dựng lại Chuyển tiếp, phần ODF
+        tách từ Chuyển tiếp, vị trí port thật dạng chuẩn, id để ghi) LẪN 3 cờ
+        diff (`nameMatch`/`ownPositionMatch`/`nextPositionMatch`, `null` =
+        không đủ dữ liệu 1 trong 2 bên để so, KHÔNG phải lỗi).
+      - `findLinkedDeviceTrunkPairs()` — cặp ĐÃ liên kết (gom port trung kế
+        theo `circuit.id`, tra `mirror_of_id` để nối sang đúng luồng thiết bị).
+      - `findAllDeviceTrunkPairs()` — gộp CẢ cặp đã liên kết LẪN cặp chưa liên
+        kết (tái dùng `findUnlinkedMirrorPairs()` — mục 44 — cho nửa sau,
+        KHÔNG viết lại thuật toán khớp vị trí, tránh phân kỳ 2 nơi).
+      - `findMismatchedLinkedPairs()` — lọc riêng cặp ĐÃ liên kết nhưng có ≥1
+        cờ diff `false` — LOẠI THỨ 6 hoàn toàn mới (đã liên kết vẫn có thể sai).
+      - `applySyncFromTrunk(detail)` / `applySyncFromDevice(detail)` — áp dụng
+        thật: chiều trung kế đúng → ghi `name`+`device_position_next` (= vị
+        trí port thật) +`device_position_own` (= phần ODF trong Chuyển tiếp,
+        nếu có) cho luồng thiết bị; chiều thiết bị đúng → ghi `name` cho luồng
+        trung kế + build lại `transit_links.raw_text` = `"<device_position_
+        own> - <Tên thiết bị> (<Trib>)"` (update nếu đã có dòng transit_link,
+        insert dòng mới nếu chưa — port chưa từng có Chuyển tiếp trước đó vẫn
+        xử lý được). Cặp CHƯA liên kết thì CẢ 2 chiều đều tự gắn luôn
+        `mirror_of_id` (chọn 1 bên làm chuẩn tức đã xác nhận đây là 1 luồng).
+      - **Bẫy phát hiện lúc verify bằng dữ liệu thật** (không phải giả định):
+        so số trực tiếp trên NGUYÊN chuỗi `device_position_next` báo SAI khi
+        cột này có dạng ghép "ODF x/y (a,b) - Tên tuyến cáp (n,m)" (hợp lệ,
+        xem `combinePositionNext()` mục 6) — số trong phần tên tuyến cáp phía
+        sau (vd "144FO#1 ADN1-2T9 (131,132)") lẫn vào phép so khiến báo lệch
+        dù phần tọa độ ODF thực ra khớp đúng. Sửa bằng `odfPartOnly()` — tách
+        lấy ĐÚNG phần ODF qua `splitOdfDeviceStructure()` trước khi so số,
+        rơi về nguyên chuỗi nếu không tách được (đã là tọa độ trơn). Sau khi
+        sửa, số cặp "đã liên kết nhưng lệch" giảm đúng từ 3 xuống 2 (1 ca vừa
+        nêu là báo nhầm, xóa đi; 2 ca còn lại xác nhận lệch THẬT bằng tay).
+    - **`components/data-quality/CircuitPairSyncPanel.tsx` (mới)** — panel
+      dùng CHUNG cho MỌI nơi (bảng 3 hàng "Bên thiết bị"/"Bên trung kế" tô đỏ/
+      xanh theo từng cờ diff; nếu có lệch → 2 radio "Trung kế đúng"/"Thiết bị
+      đúng" (bắt buộc chọn mới bấm được "Áp dụng đồng bộ" — cùng tinh thần
+      tick-xác-nhận-trước-khi-sửa mục 44/45/47); nếu khớp đủ cả 3 mà CHƯA liên
+      kết → nút "Liên kết (giữ nguyên dữ liệu)" (gọi `applySyncFromTrunk` với
+      dữ liệu 2 bên vốn đã giống hệt nhau, chỉ để gắn `mirror_of_id`).
+    - **Nâng cấp `UnlinkedMirrorPairsTab.tsx` (mục 44)** — đổi hẳn prop từ
+      `UnlinkedMirrorPair[]` sang `CircuitPairDetail[]`, bỏ 3-radio "đồng bộ
+      tên" cũ, dùng `CircuitPairSyncPanel` thay thế (đồng bộ ĐỦ 3 điểm thay vì
+      chỉ tên, đúng đúng yêu cầu người dùng).
+    - **`MismatchedLinkedPairsTab.tsx` (mới)** — tab thứ 8 ở `/data-quality`
+      ("Đã liên kết nhưng lệch dữ liệu"), cùng khuôn danh sách/lọc/phân trang
+      như các tab trước, item = `CircuitPairSyncPanel`.
+    - **Nút "🔎 Kiểm tra đồng bộ" ngay trong form sửa 1 luồng** (đúng tinh thần
+      "kiểm tra 01 luồng" người dùng dùng làm tên yêu cầu) — gắn ở CẢ 2 nơi,
+      chỉ hiện khi tìm được đúng 1 cặp tương ứng trong `circuitPairDetails`
+      (im lặng không hiện gì nếu không tìm được, giống các nút "Xem nhanh" mục
+      29 — không phải lỗi, chỉ là không có đối phương thiết bị nào):
+      - `PortTable.tsx` `EditRow` — tra theo `circuitPairDetails.find(d =>
+        d.trunkCircuitId === edit.circuitId)`; trang `app/odf-trunk/[rackId]/
+        page.tsx` tính `circuitPairDetails` cho TOÀN TRẠM (không chỉ rack đang
+        xem) vì có thể đang sửa bất kỳ luồng nào.
+      - `DeviceCircuitList.tsx` khung "Sửa" — tra theo `deviceCircuitId ===
+        edit.id`; `app/odf-device/sua-luong/page.tsx` tính tương tự. Toggle
+        ẩn/hiện panel dùng `useState` riêng, `useEffect` reset về ẩn mỗi khi
+        đổi dòng đang sửa (`edit.id` đổi) — component này KHÔNG remount theo
+        dòng như `PortTable.tsx EditRow` (đã có `key` riêng ở nơi gọi), phải
+        tự reset tay tránh lộ nhầm panel của dòng cũ.
+    - **Kiểm chứng**: `tsc --noEmit` sạch mỗi bước. Trên dữ liệu thật:
+      - Ca P2(2/1/2) hiện đúng trong tab "chưa liên kết" với `ownPositionMatch:
+        false` (ODF9/14(25,26) thật vs ODF9/12/21,22 sai trong Chuyển tiếp),
+        `nextPositionMatch: true`, `nameMatch: true`, `similarity: 100` —
+        đúng NGUYÊN VĂN phát hiện ban đầu của người dùng, giờ hiện tự nhiên
+        qua UI thay vì phải tự tra tay như lúc đầu.
+      - Tổng "chưa liên kết" 207 (mục 44) → 203 (giảm đúng 4, do các ca đã xử
+        lý/liên kết rải rác trước đó trong phiên, không phải lỗi đếm).
+      - "Đã liên kết nhưng lệch" phát hiện đúng 2 ca thật (sau khi sửa bẫy
+        `odfPartOnly` ở trên) — 1 ca thiếu hẳn Chuyển tiếp bên trung kế
+        (`ownPositionMatch: null`, không đủ dữ liệu so) nhưng `nextPositionMatch:
+        false` thật (device_position_next trỏ ODF9/8(23,24), trung kế thật
+        nằm ở ODF2/8(43,44) — 2 vị trí khác hẳn nhau).
+      - Curl toàn bộ route chính (`/`, `/odf-trunk`, `/odf-trunk/<rackId>`,
+        `/odf-device`, `/odf-device/sua-luong`, `/data-quality`, `/devices`,
+        `/search`) đều 200. **Chưa áp dụng đồng bộ/liên kết cho cặp nào** —
+        tính năng mới build xong, để người dùng tự thử trên UI trước.
+
+49. **Sửa mục 47 — bỏ nhãn "đúng"/"sai" áp đặt, cho người dùng tự chọn (+ tự
+    đồng bộ liên tục sau khi đã liên kết)** (yêu cầu người dùng 2026-08-02,
+    ngay sau mục 48):
+    - **Phản hồi 1**: người dùng hỏi thẳng ca BNG#1(4/0/1) ở tab mục 47 "tại
+      sao bạn viết đúng theo vị trí, rồi bạn lấy số liệu này ở đâu ??? rồi bạn
+      biết khi bấm xác nhận rồi sửa lại lấy theo cái nào là đúng". Truy ngược
+      xác nhận `device_position_map` đến từ đợt import 126 file Excel thiết bị
+      gốc (`created_at` khớp mili-giây với batch 2026-07-25, KHÔNG suy vòng từ
+      chính transit_links đang xét), nhưng người dùng phản hồi đúng: "chưa
+      chắc là device_position_map đúng đâu; đúng ra bạn phải để tôi chọn chứ
+      sao áp đặt như vậy được. thậm chí cả 2 đều sai và nhập cho đúng lại nữa
+      kia". **`lib/transitPositionMismatches.ts`** — bỏ hẳn
+      `correctOdfPosition`/`wrongOdfPart` (đổi tên trung lập
+      `libraryOdfPosition`/`transitOdfPart`), bỏ 1 nút "Sửa lại" tự động, thay
+      bằng 3 hàm: `applyLibraryFromTransit()` (Chuyển tiếp đúng → ghi NGƯỢC
+      vào thư viện — hàm MỚI, trước đây chưa từng có chiều này),
+      `applyTransitFromLibrary()` (Vị trí thiết bị đúng → ghi Chuyển tiếp,
+      giữ hành vi cũ nhưng hết tự động), `applyCustomPosition()` (cả 2 sai →
+      người dùng gõ tọa độ đúng, ghi vào CẢ 2 nơi — hàm MỚI). UI đổi thành 3
+      radio (không cái nào chọn sẵn) + 1 ô nhập tay cho lựa chọn thứ 3.
+    - **Phản hồi 2** (cùng lượt, câu hỏi tiếp theo): "sau khi đã liên kết được
+      luồng được rồi thì khi tôi sửa ở 1 bên hồ sơ thì hồ sơ bên còn lại tự
+      đồng bộ luôn (từ tên, odf, cho chuẩn luôn...)" — muốn continuous sync
+      sau khi liên kết, không chỉ công cụ "Kiểm tra đồng bộ" bấm tay (mục 48).
+      Hỏi lại qua AskUserQuestion mức độ tự động: chọn **"hiện cảnh báo xác
+      nhận, đồng thời đưa ra số liệu ánh xạ 1-1... cho từng trường"** (không
+      phải 1 trong 2 lựa chọn gợi ý sẵn — câu trả lời tự do, mức an toàn hơn
+      cả 2 gợi ý: có xác nhận VÀ hiện rõ số liệu). Riêng ví dụ "port 1/24/9 ghi
+      thành S24-9" — xác nhận là ô Trib (không phải tọa độ ODF), nên VẪN giữ
+      nguyên giới hạn đã có từ trước (không có thuật toán an toàn để tự quy
+      đổi giữa các kiểu viết Trib khác nhau, xem `distinctPositionsForDevice`)
+      — KHÔNG đưa Trib vào phạm vi tự đồng bộ này.
+    - **`lib/circuitPairSync.ts`** — thêm `hasPositionChanged(oldValue,
+      newValue)`: so theo dãy số (như `numbersEqual` nội bộ dùng cho rà bứn)
+      thay vì so chuỗi thô, để KHÔNG hỏi xác nhận thừa khi chỉ lệch định dạng
+      ("ODF7/9(41,42)" vs "ODF 7/9 (41,42)" — cùng 1 giá trị). Khi không đủ số
+      để so, coi là "có khác" (thà hỏi thừa còn hơn bỏ lỡ 1 thay đổi thật).
+    - **`PortTable.tsx` `saveEdit()`** — sau khi lưu xong "Chuyển tiếp" (và
+      auto-tạo mirror trung kế-trung kế nếu có, mục 40), tra `circuitPairDetails`
+      xem luồng vừa lưu có ĐÃ liên kết với 1 luồng thiết bị không; nếu có VÀ
+      Tên luồng hoặc phần ODF trong Chuyển tiếp vừa đổi thật (qua
+      `hasPositionChanged`) → `confirm()` liệt kê CHÍNH XÁC từng trường đổi
+      (`"Tên luồng: A -> B"`, `"Vị trí ODF (thiết bị): X -> Y"`) → đồng ý mới
+      gọi `applySyncFromTrunk()` (tái dùng nguyên hàm mục 48, không viết lại).
+    - **`DeviceCircuitList.tsx` `saveEdit()`** — đối xứng, gọi
+      `applySyncFromDevice()` khi luồng đã liên kết với 1 luồng trung kế và
+      Tên luồng hoặc Vị trí ODF (thiết bị) vừa đổi thật.
+    - **Kiểm chứng**: `tsc --noEmit` sạch, curl toàn bộ route chính vẫn 200.
+      KHÔNG có công cụ trình duyệt (Playwright) trong phiên này để tự bấm thử
+      luồng lưu+confirm() thật — đã rà code kỹ (đường mã nguồn dùng LẠI đúng
+      2 hàm `applySyncFromTrunk`/`applySyncFromDevice` đã kiểm chứng ở mục 48,
+      chỉ thêm bước tính diff + `confirm()` bọc ngoài), báo rõ với người dùng
+      để họ tự thử trên UI trước khi tin tưởng hoàn toàn.
+    - **CHƯA làm**: câu hỏi riêng "tick tự đặt tên luồng có nên thêm vào form
+      Sửa (hiện chỉ có ở Thêm luồng mới, từ commit gốc `5a603ef` 2026-07-27,
+      không phải lỗi mới)" — người dùng chưa trả lời câu này, để ngỏ.
+
+50. **Form Sửa PHẢI đủ mọi ô nhập liệu như Thêm mới; Trib cũng là 1 trường
+    đồng bộ, không phải ngoại lệ** (yêu cầu người dùng 2026-08-02, trả lời câu
+    hỏi để ngỏ ở mục 49 + phản đối giới hạn Trib tôi đưa ra): "hai form phải
+    giống nhau về mặt nhập liệu chứ; những gì có ở bên thêm mới thì bên sửa
+    cũng phải có; bên sửa thì sẽ có nhiều trường, nút hơn do các tính năng
+    khác như đồng bộ...; rồi port trib cũng phải đồng bộ luôn chứ; làm gì có
+    chuyện mà ở bên thiết bị thì port trib này mà sang hồ sơ khác lại port
+    ghi kiểu khác được. thống nhất 1 tên thôi".
+    - **Tick "tự đặt tên luồng" ở form Sửa** (`components/odf-device/
+      DeviceCircuitList.tsx`) — trước đó `enableNameTicks=false` cứng cho
+      Sửa, tick+logic tính tên (`toggleNameTick`/`computeAutoName`) chỉ nối
+      dây tới `createDraft`. Generalize: `toggleNameTick` giờ rẽ theo `edit ?
+      ... : ...` (an toàn dùng CHUNG 1 state `nameTicks` cho cả 2 form vì
+      Thêm/Sửa khóa lẫn nhau, không bao giờ cùng mở — xem `creating`/`edit`);
+      thêm `handleEditChange()` đối xứng với `handleCreateChange()` (tính lại
+      tên khi ĐỦ 2 tick và 1 trường liên quan đổi); `openEdit()` reset
+      `nameTicks` về rỗng (giống `openCreate()`); thêm checkbox "Thiết bị"
+      ngay cạnh ô tên thiết bị TĨNH trong khung Sửa (trước đây khung Sửa
+      không có checkbox nào ở đây, chỉ hiện text); đổi `enableNameTicks` ->
+      `true` + `onChange` -> `handleEditChange` ở lệnh gọi
+      `renderCircuitFormFields()` cho khung Sửa.
+    - **Trib trở thành điểm dữ liệu thứ 4 trong `lib/circuitPairSync.ts`**
+      (trước mục 48/49 chỉ có Tên luồng/Vị trí ODF thiết bị/Vị trí ODF tiếp
+      theo — Trib bị bỏ sót hoàn toàn khỏi việc SO SÁNH dù đã được dùng để
+      DỰNG LẠI Chuyển tiếp lúc đồng bộ chiều thiết bị->trung kế):
+      - `CircuitPairDetail` thêm `trunkTransitTrib` (tách từ Chuyển tiếp qua
+        `splitOdfDeviceStructure().port`, đã có sẵn, trước đây chỉ chưa lưu
+        lại) và `tribMatch: boolean | null`.
+      - So Trib KHÔNG dùng `numbersEqual` (đúng cho tọa độ ODF, sai cho Trib —
+        "S24-9" chỉ có 1 số tách được là sai) mà so CHUỖI đã chuẩn hóa qua
+        `normalizeDevicePositionKey` (hoa/thường, khoảng trắng) — **cố ý
+        KHÔNG cố quy đổi giữa các hệ ký hiệu khác nhau** (vd "1/24/9" vs
+        "S24-9" vẫn báo khác nhau thật, đúng giới hạn đã xác nhận từ trước,
+        `distinctPositionsForDevice`). Người dùng làm rõ: đây là 2 bài toán
+        KHÁC NHAU — "tự phát hiện 2 cách viết là cùng 1 port khi CHƯA biết gì"
+        (vẫn không có thuật toán an toàn, giữ nguyên giới hạn) khác với "đã
+        XÁC ĐỊNH đây là 1 cặp liên kết rồi thì đồng bộ Trib y hệt kiểu bên
+        nguồn" (chỉ là copy chuỗi, không cần đoán gì — làm được, không có gì
+        khó).
+      - `applySyncFromTrunk()` — thêm ghi `trib_text` (chiều trung kế đúng,
+        trước đây bỏ sót); `applySyncFromDevice()` không cần sửa (đã ghi Trib
+        vào Chuyển tiếp từ trước, chỉ chưa được coi là 1 điểm so sánh riêng).
+      - `findMismatchedLinkedPairs()` thêm điều kiện `tribMatch === false`.
+      - `hasTribChanged()` (mới, dùng CHUNG với `hasPositionChanged` cho tự
+        đồng bộ liên tục mục 49) — so chuẩn hóa, không so số.
+      - `CircuitPairSyncPanel.tsx` thêm hàng "Trib" vào bảng đối chiếu (hàng
+        thứ 4, sau Tên luồng/Vị trí ODF thiết bị/Vị trí ODF tiếp theo).
+      - `PortTable.tsx`/`DeviceCircuitList.tsx` `saveEdit()` (tự đồng bộ liên
+        tục, mục 49) — thêm dòng "Trib: ... -> ..." vào `confirm()` khi Trib
+        đổi thật, đẩy kèm trong cùng 1 lượt `applySyncFromTrunk`/
+        `applySyncFromDevice`.
+    - **Kiểm chứng**: `tsc --noEmit` sạch. Curl toàn bộ route chính vẫn 200.
+      Tổng "đã liên kết nhưng lệch dữ liệu" đổi theo dữ liệu thật đang sống
+      (người dùng đang tự sửa qua UI song song) — không dùng số tuyệt đối để
+      kiểm chứng đợt này, chỉ xác nhận code path chạy không lỗi.
