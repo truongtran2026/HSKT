@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
+import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
 
 // Tra cứu "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" — xem migration
 // 20260724000001_device_position_map.sql. Bảng độc lập, KHÔNG đụng
@@ -169,4 +169,49 @@ export function distinctPositionsForDevice(deviceName: string, all: DevicePositi
     if (r.devicePosition && normalizeDeviceNameKey(r.deviceName) === key) set.add(r.devicePosition);
   }
   return [...set].sort();
+}
+
+export interface LibraryOwnPositionDuplicate {
+  deviceName: string;
+  positionText: string;
+  entries: { id: string; devicePosition: string }[];
+}
+
+// Rà soát DỮ LIỆU CŨ trong chính thư viện theo cùng rule uniqueness vừa thêm
+// ở validate Thêm/Sửa tay (DevicePositionMapClient.tsx, yêu cầu người dùng
+// 2026-08-03): 1 thiết bị không được có 2 Trib khác nhau cùng chung 1 vị trí
+// ODF/DDF thật (trừ "Kết nối trực tiếp"). Group theo device_name (KHÔNG theo
+// deviceId như findDeviceOwnPositionDuplicates ở lib/deviceCircuits.ts — bảng
+// này không có FK thật tới devices, chỉ khớp bằng tên chuẩn hóa) — chỉ liệt
+// kê để người dùng tự sửa, validate mới chỉ chặn được dữ liệu THÊM SAU này.
+export function findLibraryOwnPositionDuplicates(rows: DevicePositionMapRow[]): LibraryOwnPositionDuplicate[] {
+  const byDevice = new Map<string, DevicePositionMapRow[]>();
+  for (const r of rows) {
+    const key = normalizeDeviceNameKey(r.deviceName);
+    if (!key) continue;
+    const list = byDevice.get(key) ?? [];
+    list.push(r);
+    byDevice.set(key, list);
+  }
+  const result: LibraryOwnPositionDuplicate[] = [];
+  for (const list of byDevice.values()) {
+    const byPosition = new Map<string, { positionText: string; entries: LibraryOwnPositionDuplicate["entries"]; tribKeys: Set<string> }>();
+    for (const r of list) {
+      const pos = r.odfPosition;
+      if (!pos || !looksLikeRealPositionText(pos)) continue;
+      const posKey = normalizeDevicePositionKey(pos);
+      if (!posKey) continue;
+      const tribKey = normalizeDevicePositionKey(r.devicePosition ?? "");
+      const entry = byPosition.get(posKey) ?? { positionText: pos, entries: [], tribKeys: new Set<string>() };
+      entry.entries.push({ id: r.id, devicePosition: r.devicePosition ?? "(trống)" });
+      if (tribKey) entry.tribKeys.add(tribKey);
+      byPosition.set(posKey, entry);
+    }
+    for (const entry of byPosition.values()) {
+      if (entry.tribKeys.size > 1) {
+        result.push({ deviceName: list[0].deviceName, positionText: entry.positionText, entries: entry.entries });
+      }
+    }
+  }
+  return result;
 }

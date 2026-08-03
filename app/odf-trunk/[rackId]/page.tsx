@@ -58,6 +58,7 @@ interface RawCircuit {
   execution_station_text: string | null;
   notes: string | null;
   circuit_role: string;
+  mirror_of_id: string | null;
 }
 
 function firstOf<T>(v: T | T[] | null | undefined): T | null {
@@ -85,6 +86,7 @@ function normalizePort(raw: RawPort): PortView {
           executionStationText: circuit.execution_station_text,
           notes: circuit.notes,
           circuitRole: circuit.circuit_role,
+          mirrorOfId: circuit.mirror_of_id,
         }
       : null,
     transitText: transit?.raw_text ?? null,
@@ -105,7 +107,7 @@ async function getRackAndPorts(rackId: string) {
     .from("ports")
     .select(
       `id, port_number, fiber_number, status,
-       port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text, execution_station_text, notes, circuit_role ) ),
+       port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text, execution_station_text, notes, circuit_role, mirror_of_id ) ),
        transit_links!transit_links_source_port_id_fkey ( id, raw_text )`
     )
     .eq("rack_id", rackId)

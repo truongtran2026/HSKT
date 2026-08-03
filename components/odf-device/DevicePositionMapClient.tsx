@@ -7,10 +7,11 @@ import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
-import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
+import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
+import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -49,10 +50,12 @@ export default function DevicePositionMapClient({
   rows,
   devices,
   trunkPorts,
+  deviceAliases,
 }: {
   rows: DevicePositionMapRow[];
   devices: DeviceRow[];
   trunkPorts: TrunkPortRow[];
+  deviceAliases: DeviceAliasRow[];
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
@@ -271,17 +274,60 @@ export default function DevicePositionMapClient({
     return sortDir === "desc" ? arr.reverse() : arr;
   }, [rows, filters, categoryFilter, categoryByDeviceKey, sortKey, sortDir]);
 
+  // Validate CHUNG cho cả Thêm dòng mới lẫn Sửa inline (yêu cầu người dùng
+  // 2026-08-03): (1) tên thiết bị PHẢI khớp đúng 1 thiết bị thật đã chuẩn
+  // hóa (không cho gõ tự do — trước đây đây là nguồn gây lệch tên với
+  // /devices); (2) Vị trí thiết bị (Trib)/Vị trí ODF/DDF bắt buộc không
+  // rỗng (trước đây optional); (3) trong CÙNG 1 thiết bị, 2 Trib khác nhau
+  // không được cùng 1 Vị trí ODF/DDF THẬT — trừ "Kết nối trực tiếp" (dùng
+  // chung hợp lệ cho nhiều Trib, xem looksLikeRealPositionText loại trừ).
+  function validateLibraryDraft(d: Draft, excludeId: string | null): { canonicalDeviceName: string } | { error: string } {
+    const deviceNameTrimmed = d.deviceName.trim();
+    const devicePositionTrimmed = d.devicePosition.trim();
+    const odfPositionTrimmed = d.odfPosition.trim();
+    if (!deviceNameTrimmed) return { error: "Tên thiết bị không được để trống." };
+    if (!devicePositionTrimmed) return { error: "Vị trí thiết bị (Trib/port) không được để trống." };
+    if (!odfPositionTrimmed) return { error: "Vị trí ODF/DDF không được để trống." };
+
+    const matched = resolveDeviceByExactOrAlias(deviceNameTrimmed, devices, deviceAliases);
+    if (!matched) {
+      return {
+        error: `"${deviceNameTrimmed}" chưa khớp đúng 1 thiết bị nào trong Danh mục thiết bị — chọn đúng tên có sẵn trong gợi ý (hoặc vào /devices tạo thiết bị mới trước).`,
+      };
+    }
+
+    const nameKey = normalizeDeviceNameKey(matched.name);
+    const tribKey = normalizeDevicePositionKey(devicePositionTrimmed);
+    if (looksLikeRealPositionText(odfPositionTrimmed)) {
+      const odfKey = normalizeDevicePositionKey(odfPositionTrimmed);
+      const conflict = rows.find(
+        (r) =>
+          r.id !== excludeId &&
+          normalizeDeviceNameKey(r.deviceName) === nameKey &&
+          normalizeDevicePositionKey(r.devicePosition ?? "") !== tribKey &&
+          normalizeDevicePositionKey(r.odfPosition ?? "") === odfKey
+      );
+      if (conflict) {
+        return {
+          error: `Vị trí "${odfPositionTrimmed}" đã được dùng cho "${matched.name}" ở Trib "${conflict.devicePosition ?? ""}" (dòng khác) — 1 vị trí ODF/DDF chỉ được gán cho ĐÚNG 1 Trib của thiết bị này (trừ "Kết nối trực tiếp").`,
+        };
+      }
+    }
+    return { canonicalDeviceName: matched.name };
+  }
+
   async function addRow() {
-    if (!draft.deviceName.trim()) {
-      setError("Tên thiết bị không được để trống.");
+    setError(null);
+    const validated = validateLibraryDraft(draft, null);
+    if ("error" in validated) {
+      setError(validated.error);
       return;
     }
     setBusy(true);
-    setError(null);
     setAddHiddenNotice(null);
-    const deviceName = draft.deviceName.trim();
-    const devicePosition = draft.devicePosition.trim() || null;
-    const odfPosition = draft.odfPosition.trim() || null;
+    const deviceName = validated.canonicalDeviceName;
+    const devicePosition = draft.devicePosition.trim();
+    const odfPosition = draft.odfPosition.trim();
     const { error: err } = await supabase.from("device_position_map").insert({
       device_name: deviceName,
       device_position: devicePosition,
@@ -322,18 +368,19 @@ export default function DevicePositionMapClient({
 
   async function saveEdit() {
     if (!editId) return;
-    if (!editDraft.deviceName.trim()) {
-      setError("Tên thiết bị không được để trống.");
+    setError(null);
+    const validated = validateLibraryDraft(editDraft, editId); // excludeId = chính dòng đang sửa, không tự đụng với chính nó
+    if ("error" in validated) {
+      setError(validated.error);
       return;
     }
     setBusy(true);
-    setError(null);
     const { error: err } = await supabase
       .from("device_position_map")
       .update({
-        device_name: editDraft.deviceName.trim(),
-        device_position: editDraft.devicePosition.trim() || null,
-        odf_position: editDraft.odfPosition.trim() || null,
+        device_name: validated.canonicalDeviceName,
+        device_position: editDraft.devicePosition.trim(),
+        odf_position: editDraft.odfPosition.trim(),
       })
       .eq("id", editId);
     setBusy(false);

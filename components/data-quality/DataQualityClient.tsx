@@ -1,125 +1,375 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { NonConformingTransitLink } from "@/lib/transitLinks";
-import type { DevicePositionConflict } from "@/lib/deviceCircuits";
+import type { DevicePositionConflict, DeviceOwnPositionDuplicate } from "@/lib/deviceCircuits";
 import { mergeDeviceInto, ignoreDevicePair, type DeviceDupCandidate } from "@/lib/deviceDedup";
-import { syncDevicePositionMapNames } from "@/lib/devicePositionMap";
+import { syncDevicePositionMapNames, type LibraryOwnPositionDuplicate } from "@/lib/devicePositionMap";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import type { TrunkCircuitMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
 import type { UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
 import type { TransitPositionMismatch } from "@/lib/transitPositionMismatches";
+import type { DeviceCircuitLibraryMismatch } from "@/lib/devicePositionMismatches";
 import type { CircuitPairDetail } from "@/lib/circuitPairSync";
+import {
+  syncAllTrunkMirrorGaps,
+  syncAllTrunkTrunkMirrorGaps,
+  type MirrorGapScanSummary,
+  type MirrorScanScope,
+} from "@/lib/mirrorTrunkCircuits";
+import { syncAllDeviceMirrorGaps } from "@/lib/deviceDeviceSync";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
 import UnlinkedMirrorPairsTab from "@/components/data-quality/UnlinkedMirrorPairsTab";
 import UnlinkedDeviceMirrorPairsTab from "@/components/data-quality/UnlinkedDeviceMirrorPairsTab";
 import TransitPositionMismatchTab from "@/components/data-quality/TransitPositionMismatchTab";
+import DeviceLibraryMismatchTab from "@/components/data-quality/DeviceLibraryMismatchTab";
 import MismatchedLinkedPairsTab from "@/components/data-quality/MismatchedLinkedPairsTab";
 
-type Tab =
-  | "transit"
-  | "devices"
-  | "positions"
-  | "trunkMissingDevice"
-  | "unlinkedMirror"
-  | "unlinkedDeviceMirror"
-  | "transitPositionMismatch"
-  | "mismatchedLinked";
+// Gộp 8 tab cũ xuống còn 3 khung (mục 60, người dùng 2026-08-03: "xem việc
+// điều chỉnh ở các khung khác có vấn đề gì với nội dung gộp các khung...
+// còn lại 2-3 khung thôi", chốt tách riêng "Xung đột vị trí" thành khung 3
+// thay vì gộp chung). CHỈ gộp lớp HIỂN THỊ/ĐIỀU HƯỚNG (bar tab + phần chọn
+// tab) — 8 component con bên dưới GIỮ NGUYÊN logic/nút bấm/phân trang đã
+// test kỹ, không viết lại, tránh rủi ro hỏng chỗ đang chạy đúng chỉ để gộp
+// giao diện. "sync" gộp 4 tab vốn CÙNG BẢN CHẤT "thiếu liên kết/lệch dữ liệu
+// 2 bên" (khác nhau ở việc tính bằng hàm cũ riêng lẻ có trước so với
+// syncAllTrunkMirrorGaps.../mục 56-58) — đặt NGAY DƯỚI ScanFillGapsPanel vì
+// cùng 1 chủ đề. "format" gộp 3 tab về định dạng/trùng tên, bản chất khác
+// hẳn "sync" (không liên quan liên kết 2 bên). "positions" (xung đột vị trí
+// — nhiều luồng tranh 1 vị trí) giữ riêng vì bản chất khác cả 2 khung kia.
+type Tab = "sync" | "format" | "positions";
 
 export default function DataQualityClient({
   transitItems,
   dupCandidates,
   positionConflicts,
+  ownPositionDuplicates,
+  libraryOwnPositionDuplicates,
   trunkMissingDeviceItems,
   unlinkedDeviceDevicePairs,
   transitPositionMismatches,
+  deviceCircuitLibraryMismatches,
   unlinkedPairDetails,
   mismatchedLinkedPairs,
+  trunkRackCodes,
+  deviceRackCodes,
+  deviceNames,
 }: {
   transitItems: NonConformingTransitLink[];
   dupCandidates: DeviceDupCandidate[];
   positionConflicts: DevicePositionConflict[];
+  ownPositionDuplicates: DeviceOwnPositionDuplicate[];
+  libraryOwnPositionDuplicates: LibraryOwnPositionDuplicate[];
   trunkMissingDeviceItems: TrunkCircuitMissingDeviceMirror[];
   unlinkedDeviceDevicePairs: UnlinkedDeviceDevicePair[];
   transitPositionMismatches: TransitPositionMismatch[];
+  deviceCircuitLibraryMismatches: DeviceCircuitLibraryMismatch[];
   unlinkedPairDetails: CircuitPairDetail[];
   mismatchedLinkedPairs: CircuitPairDetail[];
+  trunkRackCodes: string[];
+  deviceRackCodes: string[];
+  deviceNames: string[];
 }) {
-  const [tab, setTab] = useState<Tab>(
-    transitItems.length > 0
-      ? "transit"
-      : dupCandidates.length > 0
-        ? "devices"
-        : positionConflicts.length > 0
-          ? "positions"
-          : trunkMissingDeviceItems.length > 0
-            ? "trunkMissingDevice"
-            : unlinkedPairDetails.length > 0
-              ? "unlinkedMirror"
-              : mismatchedLinkedPairs.length > 0
-                ? "mismatchedLinked"
-                : unlinkedDeviceDevicePairs.length > 0
-                  ? "unlinkedDeviceMirror"
-                  : "transitPositionMismatch"
-  );
+  const syncCount = trunkMissingDeviceItems.length + unlinkedPairDetails.length + mismatchedLinkedPairs.length + unlinkedDeviceDevicePairs.length;
+  const formatCount = transitItems.length + transitPositionMismatches.length + deviceCircuitLibraryMismatches.length + dupCandidates.length;
+  const positionsCount = positionConflicts.length + ownPositionDuplicates.length + libraryOwnPositionDuplicates.length;
+
+  const [tab, setTab] = useState<Tab>(syncCount > 0 ? "sync" : formatCount > 0 ? "format" : "positions");
 
   return (
     <div>
       <p className="mb-3 text-sm text-slate-500">
         Tổng: {transitItems.length} chuyển tiếp chưa chuẩn · {dupCandidates.length} thiết bị nghi trùng ·{" "}
-        {positionConflicts.length} vị trí xung đột · {trunkMissingDeviceItems.length} luồng trung kế thiếu bên thiết bị ·{" "}
+        {positionConflicts.length} vị trí xung đột · {ownPositionDuplicates.length + libraryOwnPositionDuplicates.length} thiết
+        bị trùng vị trí giữa 2 Trib · {trunkMissingDeviceItems.length} luồng trung kế thiếu bên thiết bị ·{" "}
         {unlinkedPairDetails.length} cặp luồng thiết bị-trung kế chưa liên kết ·{" "}
         {mismatchedLinkedPairs.length} cặp đã liên kết nhưng lệch dữ liệu ·{" "}
         {unlinkedDeviceDevicePairs.length} cặp luồng thiết bị-thiết bị chưa liên kết ·{" "}
-        {transitPositionMismatches.length} chuyển tiếp sai tọa độ ODF
+        {transitPositionMismatches.length} chuyển tiếp sai tọa độ ODF ·{" "}
+        {deviceCircuitLibraryMismatches.length} luồng thiết bị sai tọa độ ODF so với thư viện
       </p>
 
+      <ScanFillGapsPanel trunkRackCodes={trunkRackCodes} deviceRackCodes={deviceRackCodes} deviceNames={deviceNames} />
+
       <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
-        <TabButton active={tab === "transit"} onClick={() => setTab("transit")} count={transitItems.length}>
-          Chuyển tiếp chưa chuẩn
+        <TabButton active={tab === "sync"} onClick={() => setTab("sync")} count={syncCount}>
+          Liên kết &amp; đồng bộ 2 chiều
         </TabButton>
-        <TabButton active={tab === "devices"} onClick={() => setTab("devices")} count={dupCandidates.length}>
-          Thiết bị trùng gần đúng
+        <TabButton active={tab === "format"} onClick={() => setTab("format")} count={formatCount}>
+          Định dạng &amp; trùng lặp dữ liệu
         </TabButton>
-        <TabButton active={tab === "positions"} onClick={() => setTab("positions")} count={positionConflicts.length}>
+        <TabButton active={tab === "positions"} onClick={() => setTab("positions")} count={positionsCount}>
           Xung đột vị trí
-        </TabButton>
-        <TabButton active={tab === "trunkMissingDevice"} onClick={() => setTab("trunkMissingDevice")} count={trunkMissingDeviceItems.length}>
-          Trung kế thiếu bên thiết bị
-        </TabButton>
-        <TabButton active={tab === "unlinkedMirror"} onClick={() => setTab("unlinkedMirror")} count={unlinkedPairDetails.length}>
-          Thiết bị-Trung kế chưa liên kết
-        </TabButton>
-        <TabButton active={tab === "mismatchedLinked"} onClick={() => setTab("mismatchedLinked")} count={mismatchedLinkedPairs.length}>
-          Đã liên kết nhưng lệch dữ liệu
-        </TabButton>
-        <TabButton active={tab === "unlinkedDeviceMirror"} onClick={() => setTab("unlinkedDeviceMirror")} count={unlinkedDeviceDevicePairs.length}>
-          Thiết bị-Thiết bị chưa liên kết
-        </TabButton>
-        <TabButton
-          active={tab === "transitPositionMismatch"}
-          onClick={() => setTab("transitPositionMismatch")}
-          count={transitPositionMismatches.length}
-        >
-          Chuyển tiếp sai tọa độ ODF
         </TabButton>
       </div>
 
-      {tab === "transit" &&
-        (transitItems.length === 0 ? (
-          <EmptyState text="Không có dòng &quot;Chuyển tiếp&quot; nào chưa chuẩn form." />
+      {tab === "sync" &&
+        (syncCount === 0 ? (
+          <EmptyState text="Không phát hiện chỗ thiếu liên kết hoặc lệch dữ liệu 2 chiều nào." />
         ) : (
-          <TransitFormatWarning items={transitItems} openInNewTab />
+          <div className="space-y-4">
+            <TrunkMissingDeviceMirrorTab items={trunkMissingDeviceItems} />
+            <UnlinkedMirrorPairsTab items={unlinkedPairDetails} />
+            <MismatchedLinkedPairsTab items={mismatchedLinkedPairs} />
+            <UnlinkedDeviceMirrorPairsTab items={unlinkedDeviceDevicePairs} />
+          </div>
         ))}
-      {tab === "devices" && <DeviceDupTab candidates={dupCandidates} />}
-      {tab === "positions" && <PositionConflictsTab conflicts={positionConflicts} />}
-      {tab === "trunkMissingDevice" && <TrunkMissingDeviceMirrorTab items={trunkMissingDeviceItems} />}
-      {tab === "unlinkedMirror" && <UnlinkedMirrorPairsTab items={unlinkedPairDetails} />}
-      {tab === "mismatchedLinked" && <MismatchedLinkedPairsTab items={mismatchedLinkedPairs} />}
-      {tab === "unlinkedDeviceMirror" && <UnlinkedDeviceMirrorPairsTab items={unlinkedDeviceDevicePairs} />}
-      {tab === "transitPositionMismatch" && <TransitPositionMismatchTab items={transitPositionMismatches} />}
+      {tab === "format" &&
+        (formatCount === 0 ? (
+          <EmptyState text="Không phát hiện vấn đề định dạng hoặc thiết bị trùng lặp nào." />
+        ) : (
+          <div className="space-y-4">
+            {transitItems.length === 0 ? (
+              <EmptyState text="Không có dòng &quot;Chuyển tiếp&quot; nào chưa chuẩn form." />
+            ) : (
+              <TransitFormatWarning items={transitItems} openInNewTab />
+            )}
+            <TransitPositionMismatchTab items={transitPositionMismatches} />
+            <DeviceLibraryMismatchTab items={deviceCircuitLibraryMismatches} />
+            <DeviceDupTab candidates={dupCandidates} />
+          </div>
+        ))}
+      {tab === "positions" && (
+        <div className="space-y-4">
+          <PositionConflictsTab conflicts={positionConflicts} />
+          <OwnPositionDuplicatesTab circuitDuplicates={ownPositionDuplicates} libraryDuplicates={libraryOwnPositionDuplicates} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "Nếu bên hồ sơ còn lại đang trống thì sync luôn chứ sao phải đợi sửa lại
+// bên hồ sơ đúng 1 chút gì đó (ví dụ ghi thêm ghi chú) rồi mới kích hoạt chế
+// độ sync qua bên hồ sơ kia" (yêu cầu người dùng 2026-08-02, sau khi tự thử
+// xóa 1 bên trung kế và thấy tồn đọng CŨ không có gì tự kích hoạt) —
+// autoCreateXForCircuit (mục 38-40/54) CHỈ chạy khi LƯU đúng 1 luồng cụ thể,
+// dữ liệu cũ có sẵn từ trước (chưa ai sửa/lưu lại) không có gì tự kích hoạt.
+// Nút này quét TOÀN BỘ 3 loại cặp 1 lượt (tái dùng đúng
+// syncAllTrunkMirrorGaps/syncAllTrunkTrunkMirrorGaps/syncAllDeviceMirrorGaps,
+// cùng thuật toán CLI script sync-missing-*.ts, không viết lại) — CHỈ tạo
+// mới/liên kết chỗ TRỐNG (an toàn, không đụng dữ liệu có sẵn); chỗ đã có dữ
+// liệu KHÁC (xung đột thật) chỉ liệt kê ra để tự vào từng luồng xử lý qua
+// "Gỡ liên kết"/"Kiểm tra đồng bộ", KHÔNG tự xóa hàng loạt (quá rủi ro khi
+// chạy không giám sát từng dòng).
+// localStorage key lưu lại lần quét cuối (yêu cầu người dùng 2026-08-03: "quét
+// nhân công, lưu lại lần quét cuối cùng mình quét" — trước đây kết quả chỉ là
+// state trong RAM, tải lại trang là mất sạch, phải quét lại từ đầu kể cả khi
+// không đổi phạm vi gì). Chỉ là tiện ích hiển thị trên máy/trình duyệt đang
+// dùng, KHÔNG phải nguồn dữ liệu thật (nguồn thật vẫn luôn là Supabase).
+const SCAN_STORAGE_KEY = "hskt:dataQuality:scanFillGaps:last";
+
+interface PersistedScan {
+  scope: MirrorScanScope;
+  result: MirrorGapScanSummary;
+  scannedAt: string;
+}
+
+function ScanFillGapsPanel({
+  trunkRackCodes,
+  deviceRackCodes,
+  deviceNames,
+}: {
+  trunkRackCodes: string[];
+  deviceRackCodes: string[];
+  deviceNames: string[];
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<MirrorGapScanSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Phạm vi quét (yêu cầu người dùng 2026-08-02: "quét toàn bộ thì sẽ bị
+  // chồng lấp đang đúng tự nhiên ở đâu nhập thêm vào thành sai" — thu hẹp lại
+  // để giảm rủi ro/blast radius, thay vì luôn quét cả trạm). "" = không giới
+  // hạn theo chiều đó; để trống CẢ 3 ô = quét toàn trạm như trước.
+  const [trunkRackCode, setTrunkRackCode] = useState("");
+  const [deviceRackCode, setDeviceRackCode] = useState("");
+  const [deviceName, setDeviceName] = useState("");
+  // Phạm vi CỦA LẦN QUÉT GẦN NHẤT — cố ý tách riêng khỏi 3 ô chọn ở trên, vì
+  // nút "Làm mới" phải lặp lại đúng lựa chọn lần trước, KHÔNG bị ảnh hưởng
+  // nếu người dùng đang gõ dở/đổi ô chọn nhưng chưa bấm "Quét & lấp đầy" (yêu
+  // cầu người dùng: "việc refresh là lựa chọn của lần trước đó, làm tươi mới
+  // mà" — đổi phạm vi thật sự thì phải chủ động bấm "Quét & lấp đầy" lại).
+  const [lastScope, setLastScope] = useState<MirrorScanScope | null>(null);
+  const [scannedAt, setScannedAt] = useState<string | null>(null);
+
+  // Khôi phục lần quét gần nhất khi mở lại trang (kể cả sau F5) — đúng yêu
+  // cầu người dùng, để không phải quét lại từ đầu chỉ vì tải lại trang.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SCAN_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: PersistedScan = JSON.parse(raw);
+      setLastScope(parsed.scope);
+      setResult(parsed.result);
+      setScannedAt(parsed.scannedAt);
+      setTrunkRackCode(parsed.scope.trunkRackCode ?? "");
+      setDeviceRackCode(parsed.scope.deviceRackCode ?? "");
+      setDeviceName(parsed.scope.deviceName ?? "");
+    } catch {
+      // localStorage hỏng/bị chặn (vd chế độ ẩn danh) — coi như chưa quét lần nào, không chặn trang chạy tiếp.
+    }
+  }, []);
+
+  async function runScanWithScope(scope: MirrorScanScope) {
+    setBusy(true);
+    setError(null);
+    try {
+      const [trunk, trunkTrunk, device] = await Promise.all([
+        syncAllTrunkMirrorGaps(scope),
+        syncAllTrunkTrunkMirrorGaps(scope),
+        syncAllDeviceMirrorGaps(scope),
+      ]);
+      const merged: MirrorGapScanSummary = {
+        created: trunk.created + trunkTrunk.created + device.created,
+        linked: trunk.linked + trunkTrunk.linked + device.linked,
+        conflicts: [...trunk.conflicts, ...trunkTrunk.conflicts, ...device.conflicts],
+        errors: [...trunk.errors, ...trunkTrunk.errors, ...device.errors],
+      };
+      const now = new Date().toISOString();
+      setResult(merged);
+      setLastScope(scope);
+      setScannedAt(now);
+      try {
+        localStorage.setItem(SCAN_STORAGE_KEY, JSON.stringify({ scope, result: merged, scannedAt: now } satisfies PersistedScan));
+      } catch {
+        // localStorage đầy/bị chặn — không sao, chỉ mất tiện ích nhớ lần quét trước, không ảnh hưởng dữ liệu thật.
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function runScan() {
+    return runScanWithScope({
+      trunkRackCode: trunkRackCode || undefined,
+      deviceRackCode: deviceRackCode || undefined,
+      deviceName: deviceName || undefined,
+    });
+  }
+
+  // "Làm mới" = quét lại ĐÚNG phạm vi lần quét gần nhất, bất kể 3 ô chọn ở
+  // trên đang hiển thị gì — cho phép cập nhật lại trạng thái (vd sau khi vừa
+  // sửa xong 1 luồng ở tab khác) chỉ bằng 1 cú bấm, không phải chọn lại rack/
+  // thiết bị từ đầu.
+  function refreshScan() {
+    return runScanWithScope(lastScope ?? {});
+  }
+
+  const hasScope = !!(trunkRackCode || deviceRackCode || deviceName);
+
+  return (
+    <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="btn-primary px-3 py-1.5 text-sm" onClick={runScan} disabled={busy}>
+          {busy ? "Đang quét..." : hasScope ? "🔎 Quét & lấp đầy (theo phạm vi đã chọn)" : "🔎 Quét & lấp đầy TOÀN TRẠM"}
+        </button>
+        {lastScope && (
+          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={refreshScan} disabled={busy}>
+            {busy ? "Đang làm mới..." : "🔄 Làm mới (theo phạm vi lần quét trước)"}
+          </button>
+        )}
+        <p className="text-xs text-primary-700">
+          Tự tạo/liên kết mọi cặp mà 1 bên đang TRỐNG — an toàn, không đụng dữ liệu đã có. Chỗ xung đột thật (đã có dữ
+          liệu KHÁC) chỉ liệt kê, không tự xóa. Để trống cả 3 ô dưới = quét toàn trạm; chọn 1-2 ô để thu hẹp phạm vi,
+          tránh động chạm chỗ khác đang đúng.
+        </p>
+      </div>
+      {scannedAt && (
+        <p className="mt-1 text-xs text-primary-500">
+          Lần quét gần nhất: {new Date(scannedAt).toLocaleString("vi-VN")}
+          {lastScope && (lastScope.trunkRackCode || lastScope.deviceRackCode || lastScope.deviceName) ? (
+            <>
+              {" "}
+              — phạm vi: {[lastScope.trunkRackCode, lastScope.deviceRackCode, lastScope.deviceName].filter(Boolean).join(", ")}
+            </>
+          ) : (
+            " — toàn trạm"
+          )}
+          . Sửa dữ liệu ở nơi khác xong thì bấm &quot;Làm mới&quot; để cập nhật lại danh sách dưới đây (kết quả này không tự
+          cập nhật khi tải lại trang).
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1 text-xs text-primary-700">
+          Rack ODF trung kế:
+          <select className="input w-auto py-1" value={trunkRackCode} onChange={(e) => setTrunkRackCode(e.target.value)}>
+            <option value="">(mọi rack)</option>
+            {trunkRackCodes.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-primary-700">
+          Rack ODF thiết bị:
+          <select className="input w-auto py-1" value={deviceRackCode} onChange={(e) => setDeviceRackCode(e.target.value)}>
+            <option value="">(mọi rack)</option>
+            {deviceRackCodes.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-primary-700">
+          Thiết bị:
+          <select className="input w-auto py-1" value={deviceName} onChange={(e) => setDeviceName(e.target.value)}>
+            <option value="">(mọi thiết bị)</option>
+            {deviceNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">Lỗi: {error}</p>}
+      {result && (
+        <div className="mt-2 text-xs text-primary-800">
+          <p>
+            Đã tự tạo <strong>{result.created}</strong> luồng mirror, tự liên kết <strong>{result.linked}</strong> cặp
+            khớp sẵn nhưng chưa gắn liên kết.
+          </p>
+          {result.conflicts.length > 0 && (
+            <div className="mt-1">
+              <p className="font-medium text-amber-700">{result.conflicts.length} xung đột cần tự vào xử lý:</p>
+              <ul className="ml-4 list-disc">
+                {result.conflicts.map((c, i) => (
+                  <li key={i}>
+                    <span className="font-medium">
+                      {c.sourceHref ? (
+                        <a href={c.sourceHref} target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-900">
+                          {c.sourceName}
+                        </a>
+                      ) : (
+                        c.sourceName
+                      )}
+                    </span>
+                    : {c.detail}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result.errors.length > 0 && (
+            <div className="mt-1">
+              <p className="font-medium text-red-700">{result.errors.length} lỗi:</p>
+              <ul className="ml-4 list-disc">
+                {result.errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -471,6 +721,125 @@ function PositionConflictsTab({ conflicts }: { conflicts: DevicePositionConflict
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Tab "1 thiết bị có ≥2 Trib khác nhau cùng ra 1 vị trí ODF/DDF" — đối xứng
+// NGƯỢC PositionConflictsTab ở trên (đó là 1 vị trí bị NHIỀU THIẾT BỊ dùng
+// chung; đây là NHIỀU TRIB của CÙNG 1 thiết bị dùng chung 1 vị trí). Yêu cầu
+// người dùng 2026-08-03. Gộp 2 nguồn dữ liệu: circuitDuplicates (từ chính Hồ
+// sơ đấu nối, có link nhảy tới đúng dòng) và libraryDuplicates (dữ liệu CŨ
+// trong thư viện Vị trí thiết bị — không có FK thật, không có gì để link tới
+// đúng dòng, chỉ liệt kê để tự vào /odf-device/vi-tri-thiet-bi sửa tay).
+// ============================================================================
+function OwnPositionDuplicatesTab({
+  circuitDuplicates,
+  libraryDuplicates,
+}: {
+  circuitDuplicates: DeviceOwnPositionDuplicate[];
+  libraryDuplicates: LibraryOwnPositionDuplicate[];
+}) {
+  const [search, setSearch] = useState("");
+
+  const filteredCircuit = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return circuitDuplicates;
+    return circuitDuplicates.filter(
+      (d) =>
+        d.deviceName.toLowerCase().includes(q) ||
+        d.positionText.toLowerCase().includes(q) ||
+        d.entries.some((e) => e.circuitName.toLowerCase().includes(q) || e.trib.toLowerCase().includes(q))
+    );
+  }, [circuitDuplicates, search]);
+
+  const filteredLibrary = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return libraryDuplicates;
+    return libraryDuplicates.filter(
+      (d) =>
+        d.deviceName.toLowerCase().includes(q) ||
+        d.positionText.toLowerCase().includes(q) ||
+        d.entries.some((e) => e.devicePosition.toLowerCase().includes(q))
+    );
+  }, [libraryDuplicates, search]);
+
+  const total = circuitDuplicates.length + libraryDuplicates.length;
+  if (total === 0) {
+    return (
+      <EmptyState text="Không phát hiện thiết bị nào có ≥2 Trib khác nhau cùng ra 1 vị trí ODF/DDF thật (không tính &quot;Kết nối trực tiếp&quot;)." />
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+      <h2 className="font-semibold text-red-800">
+        Phát hiện {total} thiết bị có ≥2 Trib khác nhau cùng ra 1 vị trí ODF/DDF
+      </h2>
+      <p className="mt-1 text-xs text-red-700">
+        1 thiết bị + 1 Trib chỉ có đúng 1 cách ra — trừ &quot;Kết nối trực tiếp&quot; (không tính ở đây, được phép dùng
+        chung cho nhiều Trib). Tự vào sửa tay, không tự đoán đâu là đúng.
+      </p>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          className="input w-auto max-w-[260px] border-red-300"
+          placeholder="Lọc theo thiết bị / vị trí / Trib..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      {filteredCircuit.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Từ Hồ sơ đấu nối</p>
+          <ul className="mt-1 space-y-2 text-sm text-red-700">
+            {filteredCircuit.map((d, i) => (
+              <li key={`${d.deviceName}|${d.positionText}|${i}`}>
+                <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;:{" "}
+                {d.entries.map((e, j) => (
+                  <span key={e.circuitId}>
+                    {j > 0 && "; "}
+                    {e.trib} (
+                    <a
+                      href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-red-900"
+                    >
+                      {e.circuitName || "(chưa đặt tên)"}
+                    </a>
+                    )
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {filteredLibrary.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-500">
+            Từ thư viện Vị trí thiết bị (dữ liệu cũ — tự vào{" "}
+            <a href="/odf-device/vi-tri-thiet-bi" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-900">
+              /odf-device/vi-tri-thiet-bi
+            </a>{" "}
+            sửa)
+          </p>
+          <ul className="mt-1 space-y-2 text-sm text-red-700">
+            {filteredLibrary.map((d, i) => (
+              <li key={`${d.deviceName}|${d.positionText}|${i}`}>
+                <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;: Trib{" "}
+                {d.entries.map((e) => e.devicePosition).join(", ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {filteredCircuit.length === 0 && filteredLibrary.length === 0 && <p className="mt-2 text-red-400">Không có dòng nào khớp bộ lọc.</p>}
     </div>
   );
 }

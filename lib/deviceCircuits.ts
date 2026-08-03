@@ -116,3 +116,49 @@ export function findDevicePositionConflicts(circuits: DeviceCircuitRow[]): Devic
   // page.tsx), chỉ cần dùng nội bộ để lọc.
   return [...map.values()].filter((v) => v.deviceIds.size > 1).map((v) => ({ positionText: v.positionText, entries: v.entries }));
 }
+
+export interface DeviceOwnPositionDuplicate {
+  deviceName: string;
+  positionText: string;
+  entries: { circuitName: string; circuitId: string; trib: string }[];
+}
+
+// Đối xứng NGƯỢC findDevicePositionConflicts (đó là "1 vị trí bị NHIỀU THIẾT
+// BỊ dùng chung" — sai). Ở đây là "TRONG CÙNG 1 THIẾT BỊ, ≥2 Trib khác nhau
+// lại ra CÙNG 1 vị trí ODF/DDF thật" — cũng là dấu hiệu sai/nhầm dữ liệu (yêu
+// cầu người dùng 2026-08-03: đúng ra 1 thiết bị 1 port chỉ ra đúng 1 chỗ, trừ
+// "Kết nối trực tiếp" — dùng chung hợp lệ cho nhiều Trib, xem
+// looksLikeRealPositionText loại trừ giá trị này khỏi kiểm tra).
+export function findDeviceOwnPositionDuplicates(circuits: DeviceCircuitRow[]): DeviceOwnPositionDuplicate[] {
+  const byDevice = new Map<string, DeviceCircuitRow[]>();
+  for (const c of circuits) {
+    if (!c.deviceId) continue;
+    const list = byDevice.get(c.deviceId) ?? [];
+    list.push(c);
+    byDevice.set(c.deviceId, list);
+  }
+  const result: DeviceOwnPositionDuplicate[] = [];
+  for (const list of byDevice.values()) {
+    const byPosition = new Map<
+      string,
+      { positionText: string; entries: DeviceOwnPositionDuplicate["entries"]; tribKeys: Set<string> }
+    >();
+    for (const c of list) {
+      const pos = c.devicePositionOwn;
+      if (!pos || !looksLikeRealPositionText(pos)) continue;
+      const posKey = normalizeDevicePositionKey(pos);
+      if (!posKey) continue;
+      const tribKey = normalizeDevicePositionKey(c.tribText ?? "");
+      const entry = byPosition.get(posKey) ?? { positionText: pos, entries: [], tribKeys: new Set<string>() };
+      entry.entries.push({ circuitName: c.name, circuitId: c.id, trib: c.tribText ?? "(trống)" });
+      if (tribKey) entry.tribKeys.add(tribKey);
+      byPosition.set(posKey, entry);
+    }
+    for (const entry of byPosition.values()) {
+      if (entry.tribKeys.size > 1) {
+        result.push({ deviceName: list[0].deviceName ?? "(không rõ)", positionText: entry.positionText, entries: entry.entries });
+      }
+    }
+  }
+  return result;
+}

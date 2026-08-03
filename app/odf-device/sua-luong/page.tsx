@@ -3,6 +3,7 @@ import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 import { fetchDevices } from "@/lib/devices";
 import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
+import { fetchDeviceAliases } from "@/lib/deviceAliases";
 import { findUnlinkedMirrorPairs, findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
 import { computeMirrorLinkStatuses } from "@/lib/mirrorLinkStatus";
 import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
@@ -22,11 +23,12 @@ export default async function SuaLuongThietBiPage() {
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — cần CẢ rack trung kế
   // lẫn ODF/DDF nội bộ (domain='device') để "Vị trí ODF (tiếp theo)" nhận
   // diện/chuẩn hóa được cả 2 loại (yêu cầu người dùng 2026-07-27).
-  const [circuits, devices, devicePositionMap, trunkPorts] = await Promise.all([
+  const [circuits, devices, devicePositionMap, trunkPorts, deviceAliases] = await Promise.all([
     fetchDeviceCircuits(),
     fetchDevices(),
     fetchDevicePositionMap(),
     fetchAllOdfPorts(),
+    fetchDeviceAliases(),
   ]);
   // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng (yêu cầu người dùng
   // 2026-08-02) — tái dùng ĐÚNG 2 hàm rà soát đã có ở /data-quality (mục
@@ -57,6 +59,7 @@ export default async function SuaLuongThietBiPage() {
           trunkPorts={trunkPorts}
           mirrorLinkStatuses={mirrorLinkStatuses}
           circuitPairDetails={circuitPairDetails}
+          deviceAliases={deviceAliases}
         />
       </div>
     </div>

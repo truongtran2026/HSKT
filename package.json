@@ -25,7 +25,8 @@
     "audit-trunk-trunk-sync": "tsx scripts/audit-trunk-trunk-sync.ts",
     "sync-missing-trunk-trunk-circuits": "tsx scripts/sync-missing-trunk-trunk-circuits.ts",
     "audit-device-device-sync": "tsx scripts/audit-device-device-sync.ts",
-    "sync-missing-device-device-circuits": "tsx scripts/sync-missing-device-device-circuits.ts"
+    "sync-missing-device-device-circuits": "tsx scripts/sync-missing-device-device-circuits.ts",
+    "backfill-transit-links-for-mirrors": "tsx scripts/backfill-transit-links-for-mirrors.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

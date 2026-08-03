@@ -12,7 +12,11 @@ import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias,
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
-import { autoCreateTrunkTrunkMirrorForCircuit } from "@/lib/mirrorTrunkCircuits";
+import {
+  autoCreateTrunkMirrorForCircuit,
+  autoCreateTrunkTrunkMirrorForCircuit,
+  replaceOccupantAndCreateTrunkTrunkMirror,
+} from "@/lib/mirrorTrunkCircuits";
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import type { CircuitOptions } from "@/lib/circuitOptions";
@@ -22,7 +26,7 @@ import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import FilterInput from "@/components/ui/FilterInput";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
-import type { MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 
@@ -43,6 +47,7 @@ export interface PortView {
     executionStationText: string | null;
     notes: string | null;
     circuitRole: string;
+    mirrorOfId: string | null;
   } | null;
 }
 
@@ -588,6 +593,28 @@ export default function PortTable({
       setError(edit.secondPortError ?? "Port ghép cùng không hợp lệ.");
       return;
     }
+    // Chặn lưu TOÀN BỘ khi luồng ĐÃ liên kết và "Chuyển tiếp" vừa đổi Vị trí
+    // ODF/Trib sang SỐ LIỆU THẬT khác (yêu cầu người dùng 2026-08-02, bước
+    // 2/6 đề xuất "Nhất quán liên kết..." — trước đây, mục 49, ca này vẫn cho
+    // lưu rồi hỏi confirm() có đẩy sang thiết bị không: chính lỗ hổng gây ra
+    // ca AĐN1.P2(2/1/2) ở đầu phiên — im lặng tin bên vừa sửa là đúng mà
+    // không ai xác nhận. CHỈ ĐỔI CÁCH GHI (số liệu vẫn khớp, qua
+    // hasPositionChanged/hasTribChanged đã tự tách đúng "số" khỏi "chữ")
+    // KHÔNG bị chặn — vẫn lưu bình thường, xem tự đồng bộ TÊN ở cuối hàm.
+    if (edit.circuitId) {
+      const linkedPair = circuitPairDetails?.find((d) => d.trunkCircuitId === edit.circuitId && d.isLinked);
+      if (linkedPair) {
+        const newSplit = splitOdfDeviceStructure(edit.transitText.trim());
+        const newOdfPart = newSplit.matched ? newSplit.odfPart ?? null : null;
+        const newTrib = newSplit.matched ? newSplit.port ?? null : null;
+        if (hasPositionChanged(linkedPair.deviceOwnPosition, newOdfPart) || hasTribChanged(linkedPair.deviceTrib, newTrib)) {
+          setError(
+            `Luồng này đang liên kết với luồng thiết bị "${linkedPair.deviceName}". Không lưu được vì Vị trí ODF/Trib trong Chuyển tiếp vừa đổi sang số liệu khác — dùng "Kiểm tra đồng bộ với hồ sơ đấu nối" để chọn đúng bên, hoặc "Gỡ liên kết" trước nếu đây thực sự là 1 đấu nối khác.`
+          );
+          return;
+        }
+      }
+    }
     setSaving(true);
     setError(null);
     try {
@@ -739,63 +766,88 @@ export default function PortTable({
       // UI). Không chặn việc lưu dù bước này lỗi — chỉ báo cho người dùng.
       try {
         const trunkResult = await autoCreateTrunkTrunkMirrorForCircuit(circuitId);
-        if (trunkResult.status === "error") {
+        if (trunkResult.status === "occupied") {
+          // Bước 3/6 (yêu cầu người dùng 2026-08-02) — bên vừa lưu là chuẩn:
+          // tên khớp hệt -> tự liên kết ngay; khác tên -> xác nhận xóa bên
+          // đang chiếm rồi tạo lại đúng theo bên vừa lưu. Đối xứng
+          // autoMirrorAfterSave (DeviceCircuitList.tsx).
+          if (trunkResult.occupantCircuitName.trim() === circuitFields.name.trim()) {
+            const { error: linkErr } = await supabase
+              .from("circuits")
+              .update({ mirror_of_id: circuitId })
+              .eq("id", trunkResult.occupantCircuitId);
+            if (linkErr) setError(`Đã lưu "Chuyển tiếp", nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${linkErr.message}`);
+          } else {
+            const ok = confirm(
+              `Port ${trunkResult.rackCode} (${trunkResult.portNumbers.join(",")}) đang có luồng trung kế khác: "${
+                trunkResult.occupantCircuitName
+              }" — không trùng tên với luồng vừa lưu ("${circuitFields.name}").\n\nXÓA luồng trung kế đó và TẠO LẠI đúng theo luồng vừa lưu?`
+            );
+            if (ok) {
+              try {
+                const retry = await replaceOccupantAndCreateTrunkTrunkMirror(trunkResult.occupantCircuitId, circuitId);
+                if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+              } catch (e) {
+                setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+          }
+        } else if (trunkResult.status === "error") {
           setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${trunkResult.message}`);
         }
       } catch (e) {
         setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
       }
 
-      // Tự đồng bộ liên tục sang luồng thiết bị ĐÃ liên kết (yêu cầu người
-      // dùng 2026-08-02: "sau khi đã liên kết được luồng rồi thì khi tôi sửa
-      // ở 1 bên hồ sơ thì hồ sơ bên còn lại tự đồng bộ luôn" — nhưng phải
-      // "hiện cảnh báo xác nhận, đồng thời đưa ra số liệu ánh xạ 1-1... cho
-      // từng trường" — KHÔNG âm thầm). Chỉ hỏi khi thật sự có gì đổi (so bằng
-      // hasPositionChanged, không phải string thô — tránh hỏi thừa vì lệch
-      // định dạng "ODF7/9(41,42)" vs "ODF 7/9 (41,42)").
+      // Tự đồng bộ TÊN sang luồng thiết bị ĐÃ liên kết — KHÔNG hỏi confirm()
+      // nữa (yêu cầu người dùng 2026-08-02, bước 2/6: "chỉ đổi cách ghi/tên
+      // thì tự đồng bộ luôn"). Vị trí ODF/Trib đổi SỐ THẬT đã bị CHẶN LƯU ở
+      // đầu hàm, nên tới đây chỉ còn khả năng đổi TÊN (hoặc đổi cách ghi vị
+      // trí/Trib mà số liệu vẫn khớp) là an toàn để tự đẩy sang, không cần
+      // hỏi lại.
       const pairDetail = circuitPairDetails?.find((d) => d.trunkCircuitId === circuitId && d.isLinked);
       if (pairDetail) {
         const newTrunkName = circuitFields.name;
-        const transitSplitNow = splitOdfDeviceStructure(transitText);
-        const newTrunkTransitOdfPart = transitSplitNow.matched ? transitSplitNow.odfPart ?? null : null;
-        const newTrunkTransitTrib = transitSplitNow.matched ? transitSplitNow.port ?? null : null;
-        const newTrunkTransitDevicePortText = transitSplitNow.matched
-          ? transitSplitNow.devicePortText ?? null
-          : pairDetail.trunkTransitDevicePortText;
-
-        const diffs: string[] = [];
         if (newTrunkName.trim() !== pairDetail.deviceName.trim()) {
-          diffs.push(`Tên luồng: "${pairDetail.deviceName}" -> "${newTrunkName}"`);
-        }
-        if (hasPositionChanged(pairDetail.deviceOwnPosition, newTrunkTransitOdfPart)) {
-          diffs.push(`Vị trí ODF (thiết bị): "${pairDetail.deviceOwnPosition ?? "(trống)"}" -> "${newTrunkTransitOdfPart ?? "(trống)"}"`);
-        }
-        if (hasTribChanged(pairDetail.deviceTrib, newTrunkTransitTrib)) {
-          diffs.push(`Trib: "${pairDetail.deviceTrib ?? "(trống)"}" -> "${newTrunkTransitTrib ?? "(trống)"}"`);
-        }
-        if (diffs.length > 0) {
-          const ok = confirm(
-            `Luồng này đã liên kết với luồng thiết bị "${pairDetail.deviceName}". Đồng bộ sang bên đó:\n\n${diffs.join(
-              "\n"
-            )}\n\nTiếp tục?`
-          );
-          if (ok) {
-            try {
-              await applySyncFromTrunk({
-                ...pairDetail,
-                trunkName: newTrunkName,
-                trunkTransitOdfPart: newTrunkTransitOdfPart,
-                trunkTransitTrib: newTrunkTransitTrib,
-                trunkTransitDevicePortText: newTrunkTransitDevicePortText,
-              });
-            } catch (e) {
-              setError(`Đã lưu luồng, nhưng đồng bộ sang thiết bị thất bại: ${e instanceof Error ? e.message : String(e)}`);
-            }
+          const transitSplitNow = splitOdfDeviceStructure(transitText);
+          try {
+            await applySyncFromTrunk({
+              ...pairDetail,
+              trunkName: newTrunkName,
+              trunkTransitOdfPart: transitSplitNow.matched ? transitSplitNow.odfPart ?? null : pairDetail.trunkTransitOdfPart,
+              trunkTransitTrib: transitSplitNow.matched ? transitSplitNow.port ?? null : pairDetail.trunkTransitTrib,
+              trunkTransitDevicePortText: transitSplitNow.matched
+                ? transitSplitNow.devicePortText ?? null
+                : pairDetail.trunkTransitDevicePortText,
+            });
+          } catch (e) {
+            setError(`Đã lưu luồng, nhưng đồng bộ tên sang thiết bị thất bại: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
 
       refreshAndThen(() => setEdit(null));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // "Gỡ liên kết" (yêu cầu người dùng 2026-08-02, bước 1/6 của đề xuất nhất
+  // quán liên kết) — chỉ set mirror_of_id = null, KHÔNG xóa/đổi dữ liệu nào
+  // (xem lib/mirrorLinkStatus.ts). counterpartName chỉ để hiện rõ trong
+  // confirm() (không truyền được thì vẫn gỡ được, chỉ hỏi chung chung hơn).
+  async function unlinkMirror(circuitId: string, counterpartName: string | null) {
+    const ok = confirm(
+      `Gỡ liên kết với${counterpartName ? ` "${counterpartName}"` : " luồng đối phương"}? Dữ liệu 2 bên vẫn giữ nguyên, chỉ không còn được coi là cùng 1 luồng để đối chiếu/tự đồng bộ nữa.`
+    );
+    if (!ok) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await unlinkCircuitMirror(circuitId);
+      refreshAndThen();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -835,6 +887,32 @@ export default function PortTable({
       if (transitLinkIds.length > 0) {
         const { error: transitErr } = await supabase.from("transit_links").delete().in("id", transitLinkIds);
         if (transitErr) throw transitErr;
+      }
+      // Xóa 1 luồng trung kế ĐANG LÀ mirror của 1 luồng thiết bị (mirrorOfId
+      // có sẵn) giải phóng port nhưng luồng thiết bị vẫn còn nguyên dữ liệu
+      // trỏ tới đúng vị trí đó — người dùng phát hiện 2026-08-02 (chủ động
+      // xóa để thử, "chưa thấy gì": "rõ ràng sync được thì có thông tin và
+      // trạng thái đã liên kết"): trước đây không có gì tự phục hồi, phải tự
+      // vào lưu lại luồng thiết bị mới kích hoạt lại được tự-tạo-mirror. Giờ
+      // gọi thẳng lại `autoCreateTrunkMirrorForCircuit` cho ĐÚNG luồng thiết
+      // bị gốc ngay sau khi xóa — port vừa trống nên sẽ tự tạo lại thành công
+      // (trừ khi dữ liệu thiết bị đã đổi sang trỏ nơi khác từ trước, khi đó
+      // trả "no-gap", vô hại).
+      if (circuit.mirrorOfId) {
+        try {
+          const recreated = await autoCreateTrunkMirrorForCircuit(circuit.mirrorOfId);
+          if (recreated.status === "error") {
+            setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${recreated.message}`);
+          } else if (recreated.status === "occupied") {
+            setError(
+              `Đã xóa luồng, nhưng vị trí ${recreated.rackCode} (${recreated.portNumbers.join(
+                ","
+              )}) lại đang có luồng khác ("${recreated.occupantCircuitName}") — vào lại luồng thiết bị gốc và Lưu để xử lý tiếp.`
+            );
+          }
+        } catch (e) {
+          setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
       refreshAndThen();
     } catch (e) {
@@ -1137,11 +1215,13 @@ export default function PortTable({
                     deviceAliases={deviceAliases}
                     devicePositionMap={devicePositionMap}
                     circuitPairDetails={circuitPairDetails}
+                    mirrorLinkStatuses={mirrorLinkStatuses}
                     onChange={setEdit}
                     onToggleMerge={toggleMerge}
                     onSecondPortNumberChange={changeSecondPortNumber}
                     onSave={saveEdit}
                     onCancel={cancelEdit}
+                    onUnlink={unlinkMirror}
                     busy={busy}
                     colSpan={10}
                   />
@@ -1313,11 +1393,13 @@ function EditRow({
   deviceAliases,
   devicePositionMap,
   circuitPairDetails,
+  mirrorLinkStatuses,
   onChange,
   onToggleMerge,
   onSecondPortNumberChange,
   onSave,
   onCancel,
+  onUnlink,
   busy,
   colSpan,
 }: {
@@ -1328,11 +1410,13 @@ function EditRow({
   deviceAliases: DeviceAliasRow[];
   devicePositionMap: DevicePositionMapRow[];
   circuitPairDetails?: CircuitPairDetail[];
+  mirrorLinkStatuses?: Record<string, MirrorLinkStatus>;
   onChange: (e: EditState) => void;
   onToggleMerge: (checked: boolean) => void;
   onSecondPortNumberChange: (text: string) => void;
   onSave: () => void;
   onCancel: () => void;
+  onUnlink: (circuitId: string, counterpartName: string | null) => void;
   busy: boolean;
   colSpan: number;
 }) {
@@ -1783,6 +1867,23 @@ function EditRow({
                 <CircuitPairSyncPanel detail={pairDetail} onApplied={() => setShowSyncCheck(false)} />
               </div>
             )}
+          </div>
+        )}
+        {/* "Gỡ liên kết" (yêu cầu người dùng 2026-08-02) — dựa trên
+            mirrorLinkStatuses (KHÔNG chỉ pairDetail) vì cũng phải hiện được
+            cho mirror trung kế-trung kế, loại pairDetail (device-trunk) không
+            phủ tới. */}
+        {edit.circuitId && mirrorLinkStatuses?.[edit.circuitId] === "linked" && (
+          <div className="mt-2">
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-red-600 hover:underline"
+              disabled={busy}
+              onClick={() => onUnlink(edit.circuitId!, pairDetail?.deviceName ?? null)}
+              title="Tách liên kết mirror_of_id — không xóa dữ liệu bên nào, chỉ không còn tự đồng bộ nữa. Dùng khi cần đổi luồng này sang 1 đấu nối khác."
+            >
+              🔓 Gỡ liên kết
+            </button>
           </div>
         )}
 

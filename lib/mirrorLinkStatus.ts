@@ -1,3 +1,4 @@
+import { supabase } from "@/lib/supabase";
 import type { TrunkPortRow } from "@/lib/trunkPorts";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { UnlinkedMirrorPair, UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
@@ -61,4 +62,29 @@ export function computeMirrorLinkStatuses(
   }
 
   return statusById;
+}
+
+// Gỡ liên kết mirror_of_id — yêu cầu người dùng 2026-08-02 ("Giải pháp: Nhất
+// quán liên kết...", bước 1/6): trước đây KHÔNG có cách nào tách 2 luồng đã
+// liên kết ra (đã grep toàn repo xác nhận), nên khi 1 luồng cần đổi sang đấu
+// nối THẬT KHÁC (không phải sửa lỗi chính tả), người dùng bị kẹt không có
+// đường thao tác đúng. Hàm này CHỈ set mirror_of_id = null — KHÔNG đụng tới
+// bất kỳ trường dữ liệu nào khác của cả 2 bên (tên/vị trí/trib giữ nguyên,
+// chỉ không còn coi là "cùng 1 luồng" để đối chiếu/tự đồng bộ nữa).
+//
+// `circuitId` truyền vào có thể là BÊN NÀO trong cặp — không cần biết trước
+// ai đang giữ cột mirror_of_id thật (device-trunk: luôn là bên trung kế;
+// device-device/trunk-trunk: là luồng được TẠO SAU, xem lib/deviceDeviceSync.ts
+// và lib/mirrorTrunkCircuits.ts) — dò cả 2 chiều, cùng lý do
+// computeMirrorLinkStatuses() ở trên cũng phải dò cả 2 chiều.
+export async function unlinkCircuitMirror(circuitId: string): Promise<void> {
+  const { data: self, error: selfErr } = await supabase.from("circuits").select("mirror_of_id").eq("id", circuitId).single();
+  if (selfErr) throw selfErr;
+  if (self?.mirror_of_id) {
+    const { error } = await supabase.from("circuits").update({ mirror_of_id: null }).eq("id", circuitId);
+    if (error) throw error;
+    return;
+  }
+  const { error } = await supabase.from("circuits").update({ mirror_of_id: null }).eq("mirror_of_id", circuitId);
+  if (error) throw error;
 }

@@ -36,6 +36,7 @@
 import * as path from "node:path";
 import { config as loadEnv } from "dotenv";
 import type { TrunkMirrorCandidate } from "../lib/mirrorTrunkCircuits";
+import { buildTransitRawTextFromDevice } from "../lib/mirrorTrunkCircuits";
 
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
@@ -167,6 +168,23 @@ async function main() {
     const { error: statusErr } = await supabase.from("ports").update({ status: "in_use" }).in("id", orderedPortIds);
     if (statusErr) {
       console.log(`  [CẢNH BÁO] "${cand.sourceCircuit.name}" [${cand.field}] -> tạo luồng+link OK nhưng cập nhật ports.status lỗi: ${statusErr.message}`);
+    }
+
+    // Ghi luôn "Chuyển tiếp" (transit_links) trỏ ngược về luồng thiết bị gốc —
+    // trước đây script này thiếu bước này (bug riêng, khác hẳn
+    // `autoCreateTrunkMirrorForCircuit`/`syncAllTrunkMirrorGaps` đã sửa ở
+    // architecture.md mục 63 vì đây là 2 code path tạo circuit RIÊNG, không
+    // dùng chung — phát hiện khi chạy chính script này để dọn tồn đọng 2026-
+    // 08-03 và thấy lại đúng lỗi vừa sửa). Dùng ĐÚNG `buildTransitRawTextFromDevice()`
+    // (nay export từ lib/mirrorTrunkCircuits.ts) — không viết lại công thức khác.
+    const rawText = buildTransitRawTextFromDevice(cand.sourceCircuit);
+    if (rawText) {
+      const { error: transitErr } = await supabase
+        .from("transit_links")
+        .insert({ source_port_id: orderedPortIds[0], target_type: "text_only", raw_text: rawText });
+      if (transitErr) {
+        console.log(`  [CẢNH BÁO] "${cand.sourceCircuit.name}" [${cand.field}] -> tạo luồng+link OK nhưng ghi Chuyển tiếp lỗi: ${transitErr.message}`);
+      }
     }
 
     console.log(`  [ĐÃ TẠO] "${cand.sourceCircuit.name}" [${cand.field}] -> rack "${cand.rackCode}", port ${cand.portNumbers.join(",")} (circuit mới: ${newCircuit.id})`);

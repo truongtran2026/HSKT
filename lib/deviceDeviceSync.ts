@@ -3,6 +3,8 @@ import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits
 import { fetchDevices, type DeviceRow } from "@/lib/devices";
 import { splitOdfDeviceStructure, combinePositionNext } from "@/lib/parsers/transit-text";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
+import type { MirrorGapScanSummary, MirrorScanScope } from "@/lib/mirrorTrunkCircuits";
+import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 
 // Phát hiện 2026-07-31 (người dùng, ngay sau khi tự thêm luồng "ADN1.ASBR#2-
 // MX2020 (7/1/7) đi ADN1.P2 (16/1/9)"): khi 2 đầu 1 luồng đều là thiết bị
@@ -42,7 +44,9 @@ export interface DeviceMirrorGap {
 // "thiếu mirror" rồi tự tạo thêm — sẽ tạo TRÙNG luồng đã có, làm dữ liệu tệ
 // hơn. Tách riêng để báo cho người dùng tự sửa lại đúng Trib bên nào.
 export interface DeviceMirrorMismatch {
+  sourceCircuitId: string;
   sourceCircuitName: string;
+  sourceDeviceName: string | null;
   targetDeviceName: string;
   expectedTrib: string;
   existingCircuitId: string;
@@ -102,7 +106,9 @@ export function findMissingDeviceMirrors(circuits: DeviceCircuitRow[], devices: 
     const sameNameCircuit = targetCircuits.find((tc) => tc.name === c.name);
     if (sameNameCircuit) {
       mismatches.push({
+        sourceCircuitId: c.id,
         sourceCircuitName: c.name,
+        sourceDeviceName: c.deviceName,
         targetDeviceName: target.name,
         expectedTrib: split.port,
         existingCircuitId: sameNameCircuit.id,
@@ -166,7 +172,13 @@ export async function autoCreateMirrorForCircuit(
 ): Promise<
   | { status: "created"; targetDeviceName: string; trib: string }
   | { status: "no-gap" }
-  | { status: "mismatch"; targetDeviceName: string; existingTrib: string | null; expectedTrib: string }
+  | {
+      status: "mismatch";
+      targetDeviceName: string;
+      existingCircuitId: string;
+      existingTrib: string | null;
+      expectedTrib: string;
+    }
   | { status: "error"; message: string }
 > {
   const circuits = await fetchDeviceCircuits();
@@ -182,6 +194,7 @@ export async function autoCreateMirrorForCircuit(
       return {
         status: "mismatch",
         targetDeviceName: mismatch.targetDeviceName,
+        existingCircuitId: mismatch.existingCircuitId,
         existingTrib: mismatch.existingTrib,
         expectedTrib: mismatch.expectedTrib,
       };
@@ -210,4 +223,103 @@ export async function autoCreateMirrorForCircuit(
   });
   if (insErr) return { status: "error", message: insErr.message };
   return { status: "created", targetDeviceName: gap.targetDeviceName, trib: gap.targetTrib };
+}
+
+// "Xóa bên đang chiếm rồi tạo lại theo đúng bên vừa lưu" — đối xứng
+// `replaceOccupantAndCreateTrunkMirror`/`replaceOccupantAndCreateTrunkTrunkMirror`
+// (lib/mirrorTrunkCircuits.ts, bước 3/6, cùng 1 cách xử lý DUY NHẤT cho mọi
+// loại cặp thay vì phân biệt trung kế/thiết bị). Luồng thiết bị KHÔNG có
+// port_circuit_links (chỉ gắn `device_id`, xem architecture.md mục 3.4) nên
+// xóa đơn giản hơn phía trung kế — không cần dọn `ports`/`transit_links`.
+export async function replaceMismatchedDeviceMirror(
+  existingCircuitId: string,
+  sourceCircuitId: string
+): ReturnType<typeof autoCreateMirrorForCircuit> {
+  const { error } = await supabase.from("circuits").delete().eq("id", existingCircuitId);
+  if (error) return { status: "error", message: error.message };
+  return autoCreateMirrorForCircuit(sourceCircuitId);
+}
+
+// "Nếu bên hồ sơ còn lại đang trống thì sync luôn chứ sao phải đợi sửa lại
+// bên hồ sơ đúng 1 chút gì đó... rồi mới kích hoạt" (yêu cầu người dùng
+// 2026-08-02) — đối xứng `syncAllTrunkMirrorGaps` (lib/mirrorTrunkCircuits.ts):
+// quét TOÀN BỘ tồn đọng cũ 1 lượt, không cần đợi ai sửa+lưu lại từng luồng.
+// `findMissingDeviceMirrors` đã tính SẴN toàn bộ gaps/mismatches cho MỌI
+// circuit trong 1 lần gọi (khác trunk phải lặp qua từng luồng) nên hàm này
+// đơn giản hơn hẳn — không viết lại thuật toán, chỉ thêm vòng lặp ghi.
+export async function syncAllDeviceMirrorGaps(scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
+  const circuits = await fetchDeviceCircuits();
+  const devices = await fetchDevices();
+  // findMissingDeviceMirrors() phải chạy trên TOÀN BỘ dữ liệu (không lọc
+  // scope ở INPUT) — nó cần thấy hết mọi luồng của thiết bị ĐÍCH để biết
+  // đúng Trib nào đã có, lọc scope SỚM sẽ làm sai kết quả đối chiếu đó. Chỉ
+  // lọc scope ở OUTPUT (gaps/mismatches), sau khi đã tính xong.
+  const { gaps: allGaps, mismatches: allMismatches } = findMissingDeviceMirrors(circuits, devices);
+
+  const gapInScope = (g: (typeof allGaps)[number]) => {
+    if (!scope) return true;
+    if (scope.deviceName && g.sourceDeviceName !== scope.deviceName && g.targetDeviceName !== scope.deviceName) return false;
+    if (
+      scope.deviceRackCode &&
+      !(g.sourceOwnPosition ?? "").includes(scope.deviceRackCode) &&
+      !g.targetOwnPosition.includes(scope.deviceRackCode)
+    )
+      return false;
+    return true;
+  };
+  const gaps = allGaps.filter(gapInScope);
+  // DeviceMirrorMismatch không mang theo vị trí ODF (chỉ có tên thiết bị
+  // nguồn/đích) nên chỉ lọc được theo deviceName — bỏ qua deviceRackCode cho
+  // danh sách này (không đủ dữ liệu để xác định chắc, thà hiện thừa còn hơn
+  // giấu mất 1 xung đột thật).
+  const mismatches = scope?.deviceName
+    ? allMismatches.filter((m) => m.targetDeviceName === scope.deviceName || m.sourceDeviceName === scope.deviceName)
+    : allMismatches;
+
+  const summary: MirrorGapScanSummary = {
+    created: 0,
+    linked: 0,
+    // "Mỗi lần vướng lại phải hỏi bạn lấy dữ liệu từ đâu... có cách nào ghi
+    // sẵn không" (yêu cầu người dùng 2026-08-02) — detail phải tự nói rõ
+    // nguồn gốc (thiết bị nào, Trib nào) + sourceHref bấm thẳng tới đúng dòng
+    // "Hồ sơ đấu nối" của luồng NGUỒN, không bắt phải hỏi lại.
+    conflicts: mismatches.map((m) => ({
+      sourceName: m.sourceCircuitName,
+      detail: `Luồng của thiết bị "${m.sourceDeviceName ?? "?"}" đặt tên trùng "${m.sourceCircuitName}" — thiết bị "${
+        m.targetDeviceName
+      }" đã có luồng cùng tên đó nhưng Trib ghi "${m.existingTrib ?? "(trống)"}" khác với Trib mong đợi "${m.expectedTrib}"`,
+      sourceHref: `/odf-device/sua-luong#${rowAnchor(m.sourceCircuitId)}`,
+    })),
+    errors: [],
+  };
+
+  for (const gap of gaps) {
+    const { data: liveRows, error: liveErr } = await supabase.from("circuits").select("id, trib_text").eq("device_id", gap.targetDeviceId);
+    if (liveErr) {
+      summary.errors.push(`${gap.sourceCircuitName}: ${liveErr.message}`);
+      continue;
+    }
+    const targetTribKey = normalizeDevicePositionKey(gap.targetTrib);
+    const already = (liveRows ?? []).some((r) => r.trib_text && normalizeDevicePositionKey(r.trib_text) === targetTribKey);
+    if (already) continue; // đã lấp trong lượt quét này (1 gap khác của cùng thiết bị đích) hoặc đã có từ trước
+
+    const nextPosition = buildMirrorNextPosition(gap);
+    const { error: insErr } = await supabase.from("circuits").insert({
+      name: gap.sourceCircuitName,
+      interface_type: gap.sourceInterfaceType,
+      device_id: gap.targetDeviceId,
+      trib_text: gap.targetTrib,
+      device_position_own: gap.targetOwnPosition,
+      device_position_next: nextPosition || null,
+      mirror_of_id: gap.sourceCircuitId,
+      notes: `Tự tạo từ luồng thiết bị "${gap.sourceCircuitName}" (quét lấp đầy chỗ trống, /data-quality) — xem lib/deviceDeviceSync.ts.`,
+    });
+    if (insErr) {
+      summary.errors.push(`${gap.sourceCircuitName}: ${insErr.message}`);
+      continue;
+    }
+    summary.created++;
+  }
+
+  return summary;
 }

@@ -32,7 +32,7 @@ import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
-import type { MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -40,9 +40,11 @@ import {
   findMirrorTrunkCircuits,
   cleanupAfterMirrorCascade,
   autoCreateTrunkMirrorForCircuit,
+  replaceOccupantAndCreateTrunkMirror,
   type MirrorTrunkMatch,
 } from "@/lib/mirrorTrunkCircuits";
-import { autoCreateMirrorForCircuit } from "@/lib/deviceDeviceSync";
+import { autoCreateMirrorForCircuit, replaceMismatchedDeviceMirror } from "@/lib/deviceDeviceSync";
+import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 
@@ -208,12 +210,37 @@ const FILTER_KEYS: FilterKey[] = ["name", "trib", "device", "positionOwn", "posi
 // splitOdfDeviceStructure, coi toàn bộ text cũ là Ô1, để trống Ô2/Ô3, không
 // mất dữ liệu. Khác PortTable.tsx (ẩn/hiện 2 ô tùy có khớp cấu trúc hay
 // không) — ở đây LUÔN hiện đủ 3 ô vì đa số dữ liệu vốn chỉ có Ô1.
-function splitPositionNextForEdit(raw: string): { odf: string; device: string; trib: string } {
+// Sửa 2026-08-02 (người dùng, khi Sửa 1 luồng báo thiếu "Cáp quang (tiếp
+// theo)" dù Ô1 đã khớp đúng 1 tuyến cáp trung kế thật): Ô2/Ô3 ở CHẾ ĐỘ CÁP
+// QUANG hiển thị (render) LUÔN đọc trực tiếp từ `matchTrunkPosition()` sống
+// (xem renderCircuitFormFields, dòng `trunkMatch.cableRouteName`) — KHÔNG
+// đọc từ state được tách ở đây. Trước đây hàm này CHỈ tách qua
+// `splitOdfDeviceStructure` (đòi hỏi đúng mẫu "ODF... - Tên (n,m)"); dữ liệu
+// cũ/import có thể khớp rack trung kế thật ở Ô1 nhưng không đúng y hệt mẫu
+// đó (thiếu "()" quanh Sợi, cách ghi khác) khiến STATE `positionNextDevice`
+// bị để RỖNG dù trên màn hình vẫn hiện đúng tên tuyến cáp — lệch giữa "cái
+// đang thấy" và "cái sắp lưu", tới lúc `findMissingRequiredFields()` đọc
+// STATE thì báo thiếu SAI. Fix tại gốc: khi Ô1 khớp rack trung kế thật, LUÔN
+// suy Ô2/Ô3 từ chính rack/port thật đó (giống hệt onChange của Ô1), không
+// phụ thuộc dữ liệu text cũ có đúng mẫu ghép hay không.
+function splitPositionNextForEdit(raw: string, trunkPorts: TrunkPortRow[]): { odf: string; device: string; trib: string } {
   const split = splitOdfDeviceStructure(raw);
+  const odf = split.matched ? split.odfPart ?? "" : raw.trim();
+  const trunkMatch = matchTrunkPosition(odf, trunkPorts);
+  if (trunkMatch.matched && trunkMatch.rackDomain === "trunk") {
+    const cleanPorts = !trunkMatch.invalidPortNumbers || trunkMatch.invalidPortNumbers.length === 0;
+    const fiberText =
+      cleanPorts && trunkMatch.resolvedPorts && trunkMatch.resolvedPorts.length > 0
+        ? trunkMatch.resolvedPorts.map((p) => p.fiberNumber ?? p.portNumber).join(",")
+        : split.matched
+          ? split.port ?? ""
+          : "";
+    return { odf, device: trunkMatch.cableRouteName ?? "", trib: fiberText };
+  }
   if (split.matched && split.deviceName && split.port) {
     return { odf: split.odfPart ?? "", device: split.deviceName, trib: split.port };
   }
-  return { odf: raw.trim(), device: "", trib: "" };
+  return { odf, device: "", trib: "" };
 }
 
 interface EditState {
@@ -303,6 +330,7 @@ export default function DeviceCircuitList({
   trunkPorts,
   mirrorLinkStatuses,
   circuitPairDetails,
+  deviceAliases,
 }: {
   circuits: DeviceCircuitRow[];
   devices: DeviceRow[];
@@ -310,6 +338,7 @@ export default function DeviceCircuitList({
   trunkPorts: TrunkPortRow[];
   mirrorLinkStatuses?: Record<string, MirrorLinkStatus>;
   circuitPairDetails?: CircuitPairDetail[];
+  deviceAliases: DeviceAliasRow[];
 }) {
   const router = useRouter();
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
@@ -338,6 +367,11 @@ export default function DeviceCircuitList({
   useEffect(() => setShowSyncCheck(false), [editId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cảnh báo MỀM (không chặn thao tác gì tiếp theo) khi maybeGrowLibrary()
+  // phát hiện Trib đã có trong thư viện nhưng ODF ghi khác — xem chỗ khai báo
+  // maybeGrowLibrary để biết lý do không tự ghi đè. Reset về null mỗi lần
+  // bấm Lưu mới (saveEdit/submitCreate).
+  const [libraryGrowWarning, setLibraryGrowWarning] = useState<LibraryGrowConflict | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   // Tô nền + đẩy lên đầu bảng cho MỌI luồng vừa thêm/sửa TRONG NGÀY HÔM NAY
   // (yêu cầu người dùng 2026-07-31, thay cho cơ chế cũ chỉ ghim đúng 1 dòng
@@ -452,37 +486,55 @@ export default function DeviceCircuitList({
     return map;
   }, [circuits, trunkPorts]);
 
+  // Kết quả conflict trả về từ maybeGrowLibrary — hiện cảnh báo mềm sau khi
+  // lưu (xem setLibraryGrowWarning ở saveEdit/submitCreate), KHÔNG chặn lưu.
+  interface LibraryGrowConflict {
+    deviceName: string;
+    trib: string;
+    existingOdf: string | null;
+    newOdf: string;
+  }
+
   // Nếu đã gõ 1 "Vị trí ODF (thiết bị)" MỚI (chưa có trong thư viện của đúng
-  // thiết bị đó) thì lưu thêm vào device_position_map — đúng yêu cầu "làm
-  // thư viện" dần theo thời gian, không cần màn hình riêng để nhập trước.
+  // thiết bị + Trib đó) thì lưu thêm vào device_position_map — đúng yêu cầu
+  // "làm thư viện" dần theo thời gian, không cần màn hình riêng để nhập trước.
   //
-  // Đồng bộ khi ĐÃ có sẵn (thiết bị, ODF) này (yêu cầu người dùng 2026-07-27):
-  // trước đây chỉ kiểm tra tồn tại theo cặp (thiết bị, ODF) rồi bỏ qua hoàn
-  // toàn nếu đã có — nên khi người dùng gõ ODF trước (tự điền Trib theo thư
-  // viện), rồi ĐỔI TAY sang 1 Trib khác cho đúng thực tế, giá trị mới không
-  // bao giờ được ghi lại vào thư viện (thư viện giữ mãi Trib cũ/sai). Giờ nếu
-  // Trib vừa lưu KHÁC Trib đã có trong thư viện, cập nhật lại cho khớp.
-  async function maybeGrowLibrary(deviceName: string | null, tribText: string, positionOwn: string) {
+  // SỬA LỖI khóa so khớp (người dùng xác nhận 2026-08-03, phát hiện qua ca
+  // thật ADN1.ADX): khóa "đã có chưa" PHẢI là (Thiết bị, Trib), KHÔNG PHẢI
+  // (Thiết bị, ODF) như bản cũ — nghiệp vụ thật là 1 thiết bị + 1 Trib chỉ có
+  // ĐÚNG 1 cách ra (1 tọa độ ODF thật, hoặc "Kết nối trực tiếp"). Khóa theo
+  // ODF sai vì "Kết nối trực tiếp" dùng CHUNG cho nhiều Trib khác nhau của
+  // cùng 1 thiết bị — bản cũ tưởng các lần lưu đó là "cùng 1 cặp đã có" rồi
+  // GHI ĐÈ Trib của dòng trước mỗi lần, cuối cùng thư viện chỉ còn sót 1 dòng
+  // (mất 3/4 Trib thật của ADX).
+  async function maybeGrowLibrary(
+    deviceName: string | null,
+    tribText: string,
+    positionOwn: string
+  ): Promise<LibraryGrowConflict | undefined> {
     const odf = positionOwn.trim();
-    if (!deviceName || !odf) return;
+    const trib = tribText.trim();
+    // Cần đủ CẢ 3 để xác định đúng 1 dòng thư viện — thiếu Trib thì không
+    // biết so khớp/tạo dòng nào (1 thiết bị có nhiều Trib, mỗi Trib đúng 1
+    // cách ra).
+    if (!deviceName || !odf || !trib) return;
     const nameKey = normalizeDeviceNameKey(deviceName);
-    const odfKey = normalizeDevicePositionKey(odf);
+    const tribKey = normalizeDevicePositionKey(trib);
     const existingEntry = devicePositionMap.find(
-      (m) => normalizeDeviceNameKey(m.deviceName) === nameKey && normalizeDevicePositionKey(m.odfPosition ?? "") === odfKey
+      (m) => normalizeDeviceNameKey(m.deviceName) === nameKey && normalizeDevicePositionKey(m.devicePosition ?? "") === tribKey
     );
     if (!existingEntry) {
-      await supabase.from("device_position_map").insert({
-        device_name: deviceName,
-        device_position: tribText.trim() || null,
-        odf_position: odf,
-      });
+      await supabase.from("device_position_map").insert({ device_name: deviceName, device_position: trib, odf_position: odf });
       return;
     }
-    const newTribKey = normalizeDevicePositionKey(tribText);
-    const existingTribKey = normalizeDevicePositionKey(existingEntry.devicePosition ?? "");
-    if (newTribKey && newTribKey !== existingTribKey) {
-      await supabase.from("device_position_map").update({ device_position: tribText.trim() }).eq("id", existingEntry.id);
-    }
+    const existingOdfKey = normalizeDevicePositionKey(existingEntry.odfPosition ?? "");
+    const newOdfKey = normalizeDevicePositionKey(odf);
+    if (existingOdfKey === newOdfKey) return; // Đã khớp thư viện, không có gì để làm.
+    // Trib đã có nhưng ODF ghi KHÁC — CONFLICT THẬT (thư viện và luồng vừa
+    // lưu không khớp nhau, không rõ bên nào đúng) — KHÔNG tự ghi đè thư viện
+    // (có thể lần này sai, hoặc lần trước sai), chỉ báo lại cho nơi gọi hiện
+    // cảnh báo mềm; rà soát/xử lý đầy đủ ở /data-quality (khung riêng).
+    return { deviceName, trib, existingOdf: existingEntry.odfPosition, newOdf: odf };
   }
 
   const existingDeviceKeys = useMemo(() => new Set(devices.map((d) => normalizeDeviceNameKey(d.name))), [devices]);
@@ -524,25 +576,65 @@ export default function DeviceCircuitList({
   // saveEdit/submitCreate gọi qua validatePositionNext().isCableMode) — tức
   // là gọi cả khi Ô1 không khớp gì LẪN khi khớp ODF/DDF nội bộ (domain=
   // 'device'), chỉ trừ khi khớp đúng rack trung kế thật.
-  async function maybeCreateNextDevice(deviceName: string) {
-    const trimmed = deviceName.trim();
-    if (!trimmed) return;
-    const key = normalizeDeviceNameKey(trimmed);
-    if (!key || existingDeviceKeys.has(key)) return;
+  type NextDeviceResolution =
+    | { status: "resolved"; deviceId: string; deviceName: string }
+    | { status: "declined" }
+    | { status: "error"; message: string };
+
+  // Thay maybeCreateNextDevice cũ — GIỜ CHẠY TRƯỚC khi lưu circuit (yêu cầu
+  // người dùng 2026-08-03), không còn là bước phụ chạy sau lưu. Phải trả về
+  // tên CHUẨN thật từ `devices` (không ghi thẳng chuỗi gõ tay) để
+  // maybeGrowLibrary dùng đúng khóa — bản cũ ghi thư viện bằng tên gõ tay
+  // TRƯỚC khi thiết bị mới được tạo (tên chuẩn có tiền tố "ADN1." tạo SAU),
+  // 2 nơi không bao giờ đồng bộ lại — đây là nguyên nhân chính của 94/120
+  // dòng thư viện lệch tên hiển thị so với /devices đã đo được thực tế.
+  //
+  // Nếu người dùng bấm Hủy ở hộp xác nhận tạo mới -> trả "declined" để nơi
+  // gọi HỦY TOÀN BỘ việc lưu circuit (khác hành vi maybeCreateCounterpartDevice
+  // — hàm đó KHÔNG đổi, vẫn không chặn lưu, ngoài phạm vi yêu cầu lần này).
+  async function resolveOrCreateNextDevice(typedName: string): Promise<NextDeviceResolution> {
+    const trimmed = typedName.trim();
+    if (!trimmed) return { status: "declined" };
+
+    // Cấp 1+2: khớp chính xác/alias đã xác nhận trước — tái dùng đúng hàm
+    // dùng chung với PortTable.tsx, không viết map so khớp riêng ở đây.
+    const existing = resolveDeviceByExactOrAlias(trimmed, devices, deviceAliases);
+    if (existing) return { status: "resolved", deviceId: existing.id, deviceName: existing.name };
+
+    // Cấp 3: gợi ý so khớp LỎNG trước khi hỏi tạo mới, tránh tạo trùng thiết
+    // bị chỉ vì gõ tắt/khác số 0 đầu (cùng cơ chế PortTable.tsx).
+    const looseCandidate = findLooseDeviceCandidate(trimmed, devices);
+    if (looseCandidate) {
+      const useExisting = confirm(
+        `"${trimmed}" (Thiết bị tiếp theo) chưa khớp chính xác thiết bị nào, nhưng có thể là thiết bị đã có "${looseCandidate.name}".\n\n` +
+          `OK = dùng thiết bị đã có (ghi nhớ cách gõ này cho lần sau)\nCancel = tạo thiết bị MỚI tên "ADN1.${trimmed}"`
+      );
+      if (useExisting) {
+        try {
+          await saveDeviceAlias(looseCandidate.id, trimmed);
+        } catch {
+          // Lỗi lưu alias không quan trọng bằng việc lưu được luồng — vẫn
+          // tiếp tục dùng thiết bị đã tìm thấy.
+        }
+        return { status: "resolved", deviceId: looseCandidate.id, deviceName: looseCandidate.name };
+      }
+    }
+
     const fullName = /^adn1\./i.test(trimmed) ? trimmed : `ADN1.${trimmed}`;
-    if (!confirm(`Chưa có thiết bị "${fullName}" trong hệ thống (nhận diện từ ô Thiết bị (tiếp theo)).\n\nTạo mới thiết bị này?`)) return;
+    if (!confirm(`Chưa có thiết bị "${fullName}" trong hệ thống (nhận diện từ ô Thiết bị (tiếp theo)).\n\nTạo mới thiết bị này?`)) {
+      return { status: "declined" };
+    }
     try {
       const stationId = await getAdn1StationId();
-      const { error: err } = await supabase.from("devices").insert({
-        station_id: stationId,
-        name: fullName,
-        coordinate_text: null,
-        full_label: fullName,
-        source: "auto",
-      });
+      const { data, error: err } = await supabase
+        .from("devices")
+        .insert({ station_id: stationId, name: fullName, coordinate_text: null, full_label: fullName, source: "auto" })
+        .select("id")
+        .single();
       if (err) throw err;
+      return { status: "resolved", deviceId: data.id as string, deviceName: fullName };
     } catch (e) {
-      setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? e.message : String(e)}`);
+      return { status: "error", message: e instanceof Error ? e.message : String(e) };
     }
   }
 
@@ -557,13 +649,33 @@ export default function DeviceCircuitList({
   // "no-gap", vô hại). Không chặn lưu luồng dù bước này lỗi — chỉ báo cho
   // người dùng biết để tự xử lý tay, cùng tinh thần với
   // maybeCreateCounterpartDevice/maybeCreateNextDevice ở trên.
-  async function autoMirrorAfterSave(circuitId: string) {
+  async function autoMirrorAfterSave(circuitId: string, sourceName: string) {
+    // Bước 3/6 (yêu cầu người dùng 2026-08-02, trả lời câu hỏi phân loại theo
+    // LOẠI cặp bằng: "cũng là odf, cũng có port, cũng có tên... như nhau mà
+    // có gì đâu mà phải phân loại lắm thế" — MỘT cách xử lý duy nhất, không
+    // phân biệt trung kế/thiết bị): bên VỪA LƯU luôn là chuẩn. Đầu xa trống
+    // thì tự tạo (giữ nguyên, "created"/"no-gap"). Đầu xa đã có dữ liệu:
+    // TÊN KHỚP HỆT (chắc chắn cùng 1 luồng, chỉ chưa gắn liên kết) -> tự liên
+    // kết NGAY, không hỏi. TÊN KHÁC (dù gần hay lệch hẳn port) -> xác nhận
+    // từng bước: xóa dữ liệu đầu xa CŨ rồi tạo lại đúng theo bên vừa lưu
+    // (KHÔNG âm thầm bỏ qua/chỉ báo lỗi mềm như trước — đó là lỗ hổng khiến
+    // 2 bên tiếp tục lệch nhau vô thời hạn).
     try {
       const result = await autoCreateMirrorForCircuit(circuitId);
       if (result.status === "mismatch") {
-        setError(
-          `Luồng đã lưu. Lưu ý: thiết bị "${result.targetDeviceName}" đã có luồng cùng tên nhưng Trib ghi "${result.existingTrib ?? "(trống)"}" khác với Trib mong đợi "${result.expectedTrib}" — vào Chất lượng dữ liệu > chạy npm run audit-device-device-sync để xem chi tiết, cần sửa tay.`
+        const ok = confirm(
+          `Thiết bị "${result.targetDeviceName}" đã có 1 luồng cùng tên "${sourceName}" nhưng Trib ghi "${
+            result.existingTrib ?? "(trống)"
+          }" khác với Trib mong đợi "${result.expectedTrib}" (từ luồng vừa lưu).\n\nXÓA luồng cũ đó và TẠO LẠI đúng theo luồng vừa lưu?`
         );
+        if (ok) {
+          try {
+            const retry = await replaceMismatchedDeviceMirror(result.existingCircuitId, circuitId);
+            if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+          } catch (e) {
+            setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
       } else if (result.status === "error") {
         setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${result.message}`);
       }
@@ -572,7 +684,31 @@ export default function DeviceCircuitList({
     }
     try {
       const trunkResult = await autoCreateTrunkMirrorForCircuit(circuitId);
-      if (trunkResult.status === "error") {
+      if (trunkResult.status === "occupied") {
+        if (trunkResult.occupantCircuitName.trim() === sourceName.trim()) {
+          // Tên khớp hệt -> chắc chắn cùng 1 luồng, chỉ chưa gắn liên kết —
+          // tự liên kết ngay, không hỏi (Case B).
+          const { error: linkErr } = await supabase
+            .from("circuits")
+            .update({ mirror_of_id: circuitId })
+            .eq("id", trunkResult.occupantCircuitId);
+          if (linkErr) setError(`Luồng đã lưu, nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${linkErr.message}`);
+        } else {
+          const ok = confirm(
+            `Port ${trunkResult.rackCode} (${trunkResult.portNumbers.join(",")}) đang có luồng trung kế khác: "${
+              trunkResult.occupantCircuitName
+            }" — không trùng tên với luồng vừa lưu ("${sourceName}").\n\nXÓA luồng trung kế đó và TẠO LẠI đúng theo luồng vừa lưu?`
+          );
+          if (ok) {
+            try {
+              const retry = await replaceOccupantAndCreateTrunkMirror(trunkResult.occupantCircuitId, circuitId);
+              if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+            } catch (e) {
+              setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
+        }
+      } else if (trunkResult.status === "error") {
         setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${trunkResult.message}`);
       }
     } catch (e) {
@@ -862,7 +998,7 @@ export default function DeviceCircuitList({
     // Chế độ Ô2 (Thiết bị/Cáp quang) KHÔNG cần suy luận/lưu riêng nữa — luôn
     // tính lại từ positionNextOdf qua matchTrunkPosition() mỗi lần render
     // (xem renderCircuitFormFields), đảm bảo nhất quán tuyệt đối với Ô1.
-    const nextSplit = splitPositionNextForEdit(c.devicePositionNext ?? "");
+    const nextSplit = splitPositionNextForEdit(c.devicePositionNext ?? "", trunkPorts);
     setEdit({
       id: c.id,
       deviceName: c.deviceName,
@@ -1039,15 +1175,69 @@ export default function DeviceCircuitList({
       setError(`Vui lòng nhập đủ: ${missingFields.join(", ")}.`);
       return;
     }
+    // Chặn lưu TOÀN BỘ khi luồng ĐÃ liên kết và Vị trí ODF (thiết bị)/Vị trí
+    // ODF (tiếp theo)/Trib vừa đổi sang SỐ LIỆU THẬT khác (yêu cầu người
+    // dùng 2026-08-02, bước 2/6 — đối xứng chốt chặn ở PortTable.tsx
+    // saveEdit(), cùng lỗ hổng gây ra ca AĐN1.P2(2/1/2) đầu phiên: trước đây,
+    // mục 49, vẫn cho lưu rồi hỏi confirm() có đẩy sang trung kế không, im
+    // lặng tin bên vừa sửa là đúng). Kiểm tra CẢ "Vị trí ODF (tiếp theo)" —
+    // trước đây (mục 49) KHÔNG kiểm tra trường này, đúng lỗ hổng gốc của ca
+    // P2 (đổi luôn "đầu xa ở đâu" mà vẫn còn liên kết mirror_of_id cũ).
+    if (edit.id) {
+      const linkedPair = circuitPairDetails?.find((d) => d.deviceCircuitId === edit.id && d.isLinked);
+      if (linkedPair) {
+        const newOwnPosition = edit.positionOwn.trim() || null;
+        const newTrib = edit.tribText.trim() || null;
+        const newNextPosition = combinePositionNext(edit.positionNextOdf, edit.positionNextDevice, edit.positionNextTrib) || null;
+        const ownChanged = hasPositionChanged(linkedPair.trunkTransitOdfPart, newOwnPosition);
+        const tribChanged = hasTribChanged(linkedPair.trunkTransitTrib, newTrib);
+        const nextChanged = hasPositionChanged(linkedPair.trunkOwnPositionCanonical, newNextPosition);
+        if (ownChanged || tribChanged || nextChanged) {
+          setError(
+            `Luồng này đang liên kết với luồng trung kế "${linkedPair.trunkName}" (${linkedPair.rackCode} port ${linkedPair.portNumbers.join(
+              ","
+            )}). Không lưu được vì Vị trí ODF/Trib vừa đổi sang số liệu khác — dùng "Kiểm tra đồng bộ với hồ sơ ODF trung kế" để chọn đúng bên, hoặc "Gỡ liên kết" trước nếu đây thực sự là 1 đấu nối khác.`
+          );
+          return;
+        }
+      }
+    }
     setBusy(true);
     setError(null);
+    setLibraryGrowWarning(null);
+
+    // ĐẢO THỨ TỰ (Lỗi 2, người dùng xác nhận 2026-08-03): xác nhận/tạo thiết
+    // bị cho Ô2 "Thiết bị (tiếp theo)" PHẢI XONG TRƯỚC khi lưu circuit, không
+    // phải SAU như bản cũ — nếu người dùng bấm Hủy ở hộp xác nhận tạo mới,
+    // HỦY TOÀN BỘ việc lưu (không chỉ riêng thư viện), bắt sửa lại tên hoặc
+    // xác nhận tạo thiết bị mới trước khi lưu được luồng này.
+    let resolvedNextDevice: { deviceId: string; deviceName: string } | null = null;
+    if (!isCableMode) {
+      const resolution = await resolveOrCreateNextDevice(edit.positionNextDevice);
+      if (resolution.status === "declined") {
+        setBusy(false);
+        setError(
+          'Chưa lưu luồng: cần xác nhận thiết bị cho "Thiết bị (tiếp theo)" trước khi lưu — sửa lại tên cho khớp thiết bị đã có, hoặc xác nhận tạo thiết bị mới ở hộp thoại.'
+        );
+        return;
+      }
+      if (resolution.status === "error") {
+        setBusy(false);
+        setError(`Chưa lưu luồng: tạo thiết bị "${edit.positionNextDevice}" thất bại — ${resolution.message}`);
+        return;
+      }
+      resolvedNextDevice = resolution;
+    }
+
     const { error: err } = await supabase
       .from("circuits")
       .update({
         name: edit.name.trim() || "(chưa đặt tên)",
         trib_text: edit.tribText.trim() || null,
         device_position_own: edit.positionOwn.trim() || null,
-        device_position_next: combinePositionNext(edit.positionNextOdf, edit.positionNextDevice, edit.positionNextTrib) || null,
+        device_position_next:
+          combinePositionNext(edit.positionNextOdf, resolvedNextDevice?.deviceName ?? edit.positionNextDevice, edit.positionNextTrib) ||
+          null,
         interface_type: edit.interfaceType.trim() || null,
         counterpart_text: edit.counterpartText.trim() || null,
         notes: edit.notes.trim() || null,
@@ -1058,51 +1248,51 @@ export default function DeviceCircuitList({
       setError(err.message);
       return;
     }
-    await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
+    const conflictOwn = await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
+    if (conflictOwn) setLibraryGrowWarning(conflictOwn);
     await maybeCreateCounterpartDevice(edit.counterpartText);
     // Chế độ Cáp quang (isCableMode) thì Ô2 ghi tên tuyến cáp, không phải
-    // thiết bị — không có gì để tạo devices/ghi thư viện device_position_map.
-    if (!isCableMode) {
-      await maybeGrowLibrary(edit.positionNextDevice || null, edit.positionNextTrib, edit.positionNextOdf);
-      await maybeCreateNextDevice(edit.positionNextDevice);
-      await autoMirrorAfterSave(edit.id);
+    // thiết bị — không có gì để ghi thư viện device_position_map, nên dòng
+    // dưới chỉ chạy khi KHÔNG phải cáp quang (thiết bị đã resolve xong ở
+    // trên, dùng TÊN CHUẨN thay vì chuỗi gõ tay — sửa tận gốc Lỗi 2).
+    if (!isCableMode && resolvedNextDevice) {
+      const conflictNext = await maybeGrowLibrary(resolvedNextDevice.deviceName, edit.positionNextTrib, edit.positionNextOdf);
+      if (conflictNext) setLibraryGrowWarning(conflictNext);
     }
+    // SỬA LỖI (người dùng 2026-08-03, phát hiện qua ca thật ADN1.ASBR#2-
+    // MX2020 (2/1/8) đi ODF 1/2 (47,48) không tự tạo mirror trung kế): trước
+    // đây `autoMirrorAfterSave` (gồm CẢ phần tự tạo mirror bên ODF trung kế
+    // `autoCreateTrunkMirrorForCircuit`) bị nhốt chung trong `if (!isCableMode)`
+    // phía trên — đúng ra chỉ 2 dòng `maybeGrowLibrary`/`maybeCreateNextDevice`
+    // (thật sự chỉ có nghĩa khi Ô2 là THIẾT BỊ) mới cần điều kiện đó. Chế độ
+    // Cáp quang chính là trường hợp CẦN autoMirrorAfterSave NHẤT (đầu kia luôn
+    // là 1 port ODF trung kế cụ thể) — bị nhốt chung khiến MỌI luồng nhập ở
+    // Chế độ Cáp quang từ trước tới giờ không bao giờ tự tạo mirror trung kế,
+    // âm thầm không ai biết. Xem lib/mirrorTrunkCircuits.ts —
+    // `autoCreateMirrorForCircuit` (nhánh device-device trong cùng hàm) vẫn AN
+    // TOÀN khi gọi ở Chế độ Cáp quang: tên "thiết bị" parse ra thực chất là
+    // tên tuyến cáp, không khớp bảng `devices` nào nên tự trả "no-gap", không
+    // gây hại gì.
+    await autoMirrorAfterSave(edit.id, edit.name.trim() || "(chưa đặt tên)");
 
-    // Tự đồng bộ liên tục sang luồng trung kế ĐÃ liên kết (yêu cầu người dùng
-    // 2026-08-02 — xem chú thích đối xứng ở PortTable.tsx saveEdit()). Chỉ
-    // hỏi khi thật sự có gì đổi.
+    // Tự đồng bộ TÊN sang luồng trung kế ĐÃ liên kết — KHÔNG hỏi confirm()
+    // nữa (yêu cầu người dùng 2026-08-02, bước 2/6 — đối xứng PortTable.tsx
+    // saveEdit()). Vị trí ODF/Trib đổi SỐ THẬT đã bị CHẶN LƯU ở đầu hàm, nên
+    // tới đây chỉ còn khả năng đổi TÊN (hoặc đổi cách ghi mà số liệu vẫn
+    // khớp) là an toàn để tự đẩy sang, không cần hỏi lại.
     const pairDetail = circuitPairDetails?.find((d) => d.deviceCircuitId === edit.id && d.isLinked);
     if (pairDetail) {
       const newDeviceName = edit.name.trim() || "(chưa đặt tên)";
-      const newOwnPosition = edit.positionOwn.trim() || null;
-      const newTrib = edit.tribText.trim() || null;
-      const diffs: string[] = [];
       if (newDeviceName !== pairDetail.trunkName.trim()) {
-        diffs.push(`Tên luồng: "${pairDetail.trunkName}" -> "${newDeviceName}"`);
-      }
-      if (hasPositionChanged(pairDetail.trunkTransitOdfPart, newOwnPosition)) {
-        diffs.push(`Chuyển tiếp bên trung kế (phần ODF): "${pairDetail.trunkTransitOdfPart ?? "(trống)"}" -> "${newOwnPosition ?? "(trống)"}"`);
-      }
-      if (hasTribChanged(pairDetail.trunkTransitTrib, newTrib)) {
-        diffs.push(`Trib trong Chuyển tiếp bên trung kế: "${pairDetail.trunkTransitTrib ?? "(trống)"}" -> "${newTrib ?? "(trống)"}"`);
-      }
-      if (diffs.length > 0) {
-        const ok = confirm(
-          `Luồng này đã liên kết với luồng trung kế "${pairDetail.trunkName}" (${pairDetail.rackCode} port ${pairDetail.portNumbers.join(
-            ","
-          )}). Đồng bộ sang bên đó:\n\n${diffs.join("\n")}\n\nTiếp tục?`
-        );
-        if (ok) {
-          try {
-            await applySyncFromDevice({
-              ...pairDetail,
-              deviceName: newDeviceName,
-              deviceOwnPosition: newOwnPosition,
-              deviceTrib: edit.tribText.trim() || null,
-            });
-          } catch (e) {
-            setError(`Đã lưu luồng, nhưng đồng bộ sang trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
-          }
+        try {
+          await applySyncFromDevice({
+            ...pairDetail,
+            deviceName: newDeviceName,
+            deviceOwnPosition: edit.positionOwn.trim() || null,
+            deviceTrib: edit.tribText.trim() || null,
+          });
+        } catch (e) {
+          setError(`Đã lưu luồng, nhưng đồng bộ tên sang trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
@@ -1110,6 +1300,27 @@ export default function DeviceCircuitList({
     setBusy(false);
     setEdit(null);
     router.refresh();
+  }
+
+  // "Gỡ liên kết" (yêu cầu người dùng 2026-08-02, bước 1/6 của đề xuất nhất
+  // quán liên kết — xem lib/mirrorLinkStatus.ts) — chỉ set mirror_of_id =
+  // null, KHÔNG xóa/đổi dữ liệu nào. counterpartName chỉ để hiện rõ trong
+  // confirm(), không truyền được thì vẫn gỡ được, chỉ hỏi chung chung hơn.
+  async function unlinkMirror(circuitId: string, counterpartName: string | null) {
+    const ok = confirm(
+      `Gỡ liên kết với${counterpartName ? ` "${counterpartName}"` : " luồng đối phương"}? Dữ liệu 2 bên vẫn giữ nguyên, chỉ không còn được coi là cùng 1 luồng để đối chiếu/tự đồng bộ nữa.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await unlinkCircuitMirror(circuitId);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openCreate() {
@@ -1316,6 +1527,28 @@ export default function DeviceCircuitList({
     }
     setBusy(true);
     setError(null);
+    setLibraryGrowWarning(null);
+
+    // ĐẢO THỨ TỰ — xem giải thích đầy đủ ở saveEdit(): xác nhận/tạo thiết bị
+    // Ô2 phải xong TRƯỚC khi insert circuit; từ chối -> hủy toàn bộ việc lưu.
+    let resolvedNextDevice: { deviceId: string; deviceName: string } | null = null;
+    if (!isCableMode) {
+      const resolution = await resolveOrCreateNextDevice(createDraft.positionNextDevice);
+      if (resolution.status === "declined") {
+        setBusy(false);
+        setError(
+          'Chưa lưu luồng: cần xác nhận thiết bị cho "Thiết bị (tiếp theo)" trước khi lưu — sửa lại tên cho khớp thiết bị đã có, hoặc xác nhận tạo thiết bị mới ở hộp thoại.'
+        );
+        return;
+      }
+      if (resolution.status === "error") {
+        setBusy(false);
+        setError(`Chưa lưu luồng: tạo thiết bị "${createDraft.positionNextDevice}" thất bại — ${resolution.message}`);
+        return;
+      }
+      resolvedNextDevice = resolution;
+    }
+
     // .select("id").single() để lấy lại id vừa tạo — cần id này để đưa dòng
     // mới lên đầu bảng + tô sáng tạm thời (yêu cầu người dùng 2026-07-28: dễ
     // kiểm tra ngay luồng vừa thêm thay vì phải tự tìm nó rơi ở đâu đó theo
@@ -1327,7 +1560,11 @@ export default function DeviceCircuitList({
         trib_text: createDraft.tribText.trim() || null,
         device_position_own: createDraft.positionOwn.trim() || null,
         device_position_next:
-          combinePositionNext(createDraft.positionNextOdf, createDraft.positionNextDevice, createDraft.positionNextTrib) || null,
+          combinePositionNext(
+            createDraft.positionNextOdf,
+            resolvedNextDevice?.deviceName ?? createDraft.positionNextDevice,
+            createDraft.positionNextTrib
+          ) || null,
         interface_type: createDraft.interfaceType.trim() || null,
         counterpart_text: createDraft.counterpartText.trim() || null,
         notes: createDraft.notes.trim() || null,
@@ -1340,13 +1577,18 @@ export default function DeviceCircuitList({
       setError(err.message);
       return;
     }
-    await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
+    const conflictOwn = await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
+    if (conflictOwn) setLibraryGrowWarning(conflictOwn);
     await maybeCreateCounterpartDevice(createDraft.counterpartText);
-    if (!isCableMode) {
-      await maybeGrowLibrary(createDraft.positionNextDevice || null, createDraft.positionNextTrib, createDraft.positionNextOdf);
-      await maybeCreateNextDevice(createDraft.positionNextDevice);
-      await autoMirrorAfterSave(inserted.id);
+    // Xem giải thích đầy đủ ở saveEdit() — CHỈ dòng ghi thư viện Ô2 mới cần
+    // loại trừ Chế độ Cáp quang, autoMirrorAfterSave phải chạy LUÔN CẢ 2 chế
+    // độ (bug cũ: nhốt chung khiến Chế độ Cáp quang không bao giờ tự tạo
+    // mirror trung kế).
+    if (!isCableMode && resolvedNextDevice) {
+      const conflictNext = await maybeGrowLibrary(resolvedNextDevice.deviceName, createDraft.positionNextTrib, createDraft.positionNextOdf);
+      if (conflictNext) setLibraryGrowWarning(conflictNext);
     }
+    await autoMirrorAfterSave(inserted.id, createDraft.name.trim() || "(chưa đặt tên)");
     setBusy(false);
     setCreating(false);
     setCreateDraft(EMPTY_CREATE_DRAFT);
@@ -1500,21 +1742,18 @@ export default function DeviceCircuitList({
               <div className="mt-1 text-[11px] text-slate-400">
                 Sợi quang (tiếp theo) <span className="text-red-500">*</span>
               </div>
-              <input
-                className="input mt-1"
-                placeholder="VD: 1,2"
-                value={values.positionNextTrib}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const fiberNumbers = trunkMatch.rackCode ? parseNumberList(v) : null;
-                  const foundPorts = fiberNumbers && trunkMatch.rackCode ? findPortsByFiberNumbers(trunkMatch.rackCode, fiberNumbers, trunkPorts) : null;
-                  if (foundPorts) {
-                    onChange({ positionNextTrib: v, positionNextOdf: `${trunkMatch.rackCode} (${foundPorts.map((p) => p.portNumber).join(",")})` });
-                  } else {
-                    onChange({ positionNextTrib: v });
-                  }
-                }}
-              />
+              {/* Read-only (yêu cầu người dùng 2026-08-02: "Có ODF x/y (a,b)
+                  thuộc trung kế là biết port mấy, sợi quang mấy luôn rồi cần
+                  gì gõ tay nữa" — trước đây vẫn là ô nhập tay, cho gõ NGƯỢC từ
+                  Sợi ra Port, dù đã tự điền sẵn khi gõ Ô1. Sợi quang suy 1-1
+                  từ port thật của tuyến cáp (trunkMatch.resolvedPorts), không
+                  cần/không nên cho gõ tay lệch khỏi port đã chọn ở Ô1 — cùng
+                  tinh thần khóa như "Cáp quang" ở trên. */}
+              <div className="input mt-1 flex items-center bg-slate-100 text-slate-500">
+                {trunkMatch.resolvedPorts && trunkMatch.resolvedPorts.length > 0
+                  ? trunkMatch.resolvedPorts.map((p) => p.fiberNumber ?? p.portNumber).join(",")
+                  : "—"}
+              </div>
             </>
           ) : (
             <>
@@ -1611,6 +1850,21 @@ export default function DeviceCircuitList({
   return (
     <div>
       {error && <p className="mb-2 text-sm text-red-600">Lỗi: {error}</p>}
+
+      {libraryGrowWarning && (
+        <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Đã lưu luồng, nhưng thư viện "Vị trí thiết bị" đang có 1 dòng KHÁC cho {libraryGrowWarning.deviceName} (
+          {libraryGrowWarning.trib}): thư viện ghi "{libraryGrowWarning.existingOdf ?? "(trống)"}", luồng vừa lưu ghi "
+          {libraryGrowWarning.newOdf}". Không tự ghi đè — xử lý ở{" "}
+          <Link href="/data-quality" className="underline hover:text-amber-900">
+            trang Chất lượng dữ liệu
+          </Link>
+          .
+          <button type="button" className="ml-2 underline hover:text-amber-900" onClick={() => setLibraryGrowWarning(null)}>
+            Đóng
+          </button>
+        </div>
+      )}
 
       {/* Datalist dùng chung cho gợi ý "Vị trí ODF (thiết bị/tiếp theo)" và
           "Giao tiếp" — khai báo 1 lần, tham chiếu từ nhiều ô input (dòng đang
@@ -1778,19 +2032,39 @@ export default function DeviceCircuitList({
             // circuitPairDetails (xem lib/circuitPairSync.ts), y hệt cơ chế
             // bên PortTable.tsx EditRow.
             const pairDetail = circuitPairDetails?.find((d) => d.deviceCircuitId === edit.id) ?? null;
-            if (!pairDetail) return null;
+            // "Gỡ liên kết" dựa trên mirrorLinkStatuses (KHÔNG chỉ pairDetail)
+            // vì cũng phải hiện được cho mirror thiết bị-thiết bị, loại
+            // pairDetail (device-trunk, xem lib/circuitPairSync.ts) không phủ
+            // tới (yêu cầu người dùng 2026-08-02).
+            const isLinked = mirrorLinkStatuses?.[edit.id] === "linked";
+            if (!pairDetail && !isLinked) return null;
             return (
               <div className="mt-3">
-                <button
-                  type="button"
-                  className="text-xs text-primary-600 hover:underline"
-                  onClick={() => setShowSyncCheck((v) => !v)}
-                >
-                  {showSyncCheck ? "▲ Ẩn" : "🔎 Kiểm tra đồng bộ với hồ sơ ODF trung kế"}
-                </button>
-                {showSyncCheck && (
+                {pairDetail && (
+                  <button
+                    type="button"
+                    className="text-xs text-primary-600 hover:underline"
+                    onClick={() => setShowSyncCheck((v) => !v)}
+                  >
+                    {showSyncCheck ? "▲ Ẩn" : "🔎 Kiểm tra đồng bộ với hồ sơ ODF trung kế"}
+                  </button>
+                )}
+                {showSyncCheck && pairDetail && (
                   <div className="mt-1">
                     <CircuitPairSyncPanel detail={pairDetail} onApplied={() => setShowSyncCheck(false)} />
+                  </div>
+                )}
+                {isLinked && (
+                  <div className={pairDetail ? "mt-2" : undefined}>
+                    <button
+                      type="button"
+                      className="text-xs text-slate-500 hover:text-red-600 hover:underline"
+                      disabled={busy}
+                      onClick={() => unlinkMirror(edit.id, pairDetail?.trunkName ?? null)}
+                      title="Tách liên kết mirror_of_id — không xóa dữ liệu bên nào, chỉ không còn tự đồng bộ nữa. Dùng khi cần đổi luồng này sang 1 đấu nối khác."
+                    >
+                      🔓 Gỡ liên kết
+                    </button>
                   </div>
                 )}
               </div>

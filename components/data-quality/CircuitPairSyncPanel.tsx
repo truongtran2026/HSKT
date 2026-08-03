@@ -45,28 +45,43 @@ export default function CircuitPairSyncPanel({ detail, onApplied }: { detail: Ci
       <table className="w-full border-collapse text-left">
         <thead>
           <tr className="text-slate-400">
-            <th className="w-1/4 py-0.5 font-normal"> </th>
+            <th className="w-1/6 py-0.5 font-normal"> </th>
             <th className="py-0.5 font-normal">Bên thiết bị (Hồ sơ đấu nối)</th>
+            <th className="w-1/6 py-0.5 font-normal"> </th>
             <th className="py-0.5 font-normal">Bên trung kế (Chuyển tiếp / vị trí port thật)</th>
           </tr>
         </thead>
         <tbody>
-          <DiffRow label="Tên luồng" a={detail.deviceName} b={detail.trunkName} match={detail.nameMatch} />
-          <DiffRow
-            label="Vị trí ODF (thiết bị)"
-            a={detail.deviceOwnPosition ?? "(trống)"}
-            b={detail.trunkTransitOdfPart ?? "(Chuyển tiếp trống/chưa đúng dạng)"}
-            match={detail.ownPositionMatch}
-          />
+          <DiffRow label="Tên luồng" a={detail.deviceName} bLabel="Tên luồng" b={detail.trunkName} match={detail.nameMatch} />
+          {/* Nhãn "Vị trí ODF (thiết bị)"/"Vị trí ODF (tiếp theo)" chỉ đúng
+              nghĩa cho cột "Bên thiết bị" (a) — đó là 2 cột thật
+              device_position_own/device_position_next. Cột "Bên trung kế" (b)
+              lại là 2 khái niệm KHÁC của chính bên trung kế (không phải
+              "thiết bị"/"tiếp theo"), nên có NHÃN RIÊNG (cột riêng, cùng kiểu
+              cột nhãn bên trái) thay vì dùng chung nhãn cột a.
+              THỨ TỰ 2 dòng dưới (người dùng xác nhận 2026-08-03, đã 1 lần làm
+              ngược): "Vị trí ODF trung kế" (vị trí port THẬT của chính rack
+              trung kế này, so với deviceNextPosition — nextPositionMatch)
+              PHẢI đứng TRƯỚC "Vị trí chuyển tiếp" (giá trị đọc từ ô Chuyển
+              tiếp, so với deviceOwnPosition — ownPositionMatch). */}
           <DiffRow
             label="Vị trí ODF (tiếp theo)"
             a={detail.deviceNextPosition ?? "(trống)"}
+            bLabel="Vị trí ODF trung kế"
             b={detail.trunkOwnPositionCanonical}
             match={detail.nextPositionMatch}
           />
           <DiffRow
+            label="Vị trí ODF (thiết bị)"
+            a={detail.deviceOwnPosition ?? "(trống)"}
+            bLabel="Vị trí chuyển tiếp"
+            b={detail.trunkTransitOdfPart ?? "(Chuyển tiếp trống/chưa đúng dạng)"}
+            match={detail.ownPositionMatch}
+          />
+          <DiffRow
             label="Trib"
             a={detail.deviceTrib ?? "(trống)"}
+            bLabel="Trib"
             b={detail.trunkTransitTrib ?? "(Chuyển tiếp trống/chưa đúng dạng)"}
             match={detail.tribMatch}
           />
@@ -112,12 +127,25 @@ export default function CircuitPairSyncPanel({ detail, onApplied }: { detail: Ci
   );
 }
 
-function DiffRow({ label, a, b, match }: { label: string; a: string; b: string; match: boolean | null }) {
+function DiffRow({
+  label,
+  a,
+  bLabel,
+  b,
+  match,
+}: {
+  label: string;
+  a: string;
+  bLabel: string;
+  b: string;
+  match: boolean | null;
+}) {
   const color = match === false ? "text-red-700 bg-red-50" : match === true ? "text-emerald-700" : "text-slate-400";
   return (
     <tr className={color}>
       <td className="py-0.5 pr-2 align-top text-slate-500">{label}</td>
       <td className="py-0.5 pr-2 align-top break-words">{a}</td>
+      <td className="py-0.5 pr-2 align-top text-slate-500">{bLabel}</td>
       <td className="py-0.5 align-top break-words">{b}</td>
     </tr>
   );
