@@ -38,6 +38,7 @@ const COMMIT = process.argv.includes("--commit");
 async function main() {
   const { supabase } = await import("../lib/supabase");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
+  const { writeTransitForPorts } = await import("../lib/transitLinks");
 
   console.log(`[backfill-transit-links-for-mirrors] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu...");
@@ -85,19 +86,24 @@ async function main() {
       continue;
     }
 
-    // Port ĐẦU TIÊN theo đúng quy ước tx trước rx sau (giống mọi nơi khác
-    // trong dự án) — "single" cũng coi là đầu tiên (chỉ có 1 port).
+    // Sắp theo đúng quy ước tx trước rx sau (giống mọi nơi khác trong dự án)
+    // — "single" cũng coi là đầu tiên (chỉ có 1 port). Lấy ĐỦ mọi port của
+    // circuit (2026-08-04, xem lib/transitLinks.ts) — trước đây chỉ xét/ghi
+    // port ĐẦU TIÊN, để sợi thứ 2 (nếu có) mãi mãi không có "Chuyển tiếp" dù
+    // cùng 1 luồng vừa được vá port đầu.
     const ordered = [...linkArr].sort((a, b) => {
       const rank = (r: string) => (r === "tx" ? 0 : r === "single" ? 0 : 1);
       return rank(a.link_role) - rank(b.link_role);
     });
-    const firstPortId = ordered[0].port_id;
+    const allPortIds = ordered.map((o) => o.port_id);
 
+    // Vẫn giữ nguyên tinh thần THẬN TRỌNG gốc của script này: chỉ vá khi
+    // TOÀN BỘ port của circuit đang chưa có transit_links nào (không đụng gì
+    // nếu dù chỉ 1 port đã có dữ liệu, kể cả dữ liệu đó khác nội dung).
     const { data: existingTransit, error: transitCheckErr } = await supabase
       .from("transit_links")
       .select("id")
-      .eq("source_port_id", firstPortId)
-      .limit(1);
+      .in("source_port_id", allPortIds);
     if (transitCheckErr) {
       console.log(`  [LỖI] "${row.name}" -> không đọc được transit_links: ${transitCheckErr.message}`);
       errors++;
@@ -119,18 +125,19 @@ async function main() {
     const rawText = `${origin.devicePositionOwn} - ${origin.deviceName} (${origin.tribText})`;
 
     if (!COMMIT) {
-      console.log(`  [SẼ TẠO] "${row.name}" -> transit_links.raw_text = "${rawText}" (port ${firstPortId})`);
+      console.log(`  [SẼ TẠO] "${row.name}" -> transit_links.raw_text = "${rawText}" (${allPortIds.length} port)`);
       created++;
       continue;
     }
 
-    const { error: insErr } = await supabase.from("transit_links").insert({ source_port_id: firstPortId, target_type: "text_only", raw_text: rawText });
-    if (insErr) {
-      console.log(`  [LỖI] "${row.name}" -> ghi transit_links thất bại: ${insErr.message}`);
+    try {
+      await writeTransitForPorts(allPortIds, rawText);
+    } catch (e) {
+      console.log(`  [LỖI] "${row.name}" -> ghi transit_links thất bại: ${e instanceof Error ? e.message : String(e)}`);
       errors++;
       continue;
     }
-    console.log(`  [ĐÃ TẠO] "${row.name}" -> transit_links.raw_text = "${rawText}"`);
+    console.log(`  [ĐÃ TẠO] "${row.name}" -> transit_links.raw_text = "${rawText}" (${allPortIds.length} port)`);
     created++;
   }
 

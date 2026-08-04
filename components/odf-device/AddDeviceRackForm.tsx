@@ -43,6 +43,29 @@ export default function AddDeviceRackForm({ stationId }: { stationId: string }) 
     setBusy(true);
     setError(null);
     try {
+      // Kiểm tra trùng mã TRƯỚC khi insert (rà soát 2026-08-03) — schema chưa
+      // có ràng buộc UNIQUE cho (station_id, code), toàn bộ cơ chế đối chiếu
+      // vị trí (lib/trunkPorts.ts matchTrunkPosition()) giả định "1 mã rack =
+      // 1 rack"; 2 rack trùng mã sẽ bị gộp port làm một và lấy nhầm domain,
+      // triệu chứng xuất hiện ở nơi khác hoàn toàn (bảng đối chiếu báo sai)
+      // nên rất khó lần ra nguyên nhân. Báo lỗi tiếng Việt rõ ràng ở đây thay
+      // vì để rơi xuống lỗi Postgres thô.
+      const { data: existing, error: checkErr } = await supabase
+        .from("racks")
+        .select("id, code, domain")
+        .eq("station_id", stationId)
+        .eq("code", trimmedCode)
+        .maybeSingle();
+      if (checkErr) throw checkErr;
+      if (existing) {
+        setError(
+          `Đã có rack mã "${trimmedCode}" (${
+            existing.domain === "trunk" ? "ODF trung kế" : "ODF/DDF thiết bị"
+          }). Mã rack phải là duy nhất — chọn mã khác hoặc mở rack đã có để sửa.`
+        );
+        setBusy(false);
+        return;
+      }
       const { data: newRack, error: rackErr } = await supabase
         .from("racks")
         .insert({
@@ -68,7 +91,11 @@ export default function AddDeviceRackForm({ stationId }: { stationId: string }) 
       if (portErr) throw portErr;
       router.push(`/odf-trunk/${newRackId}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // Phòng hờ (2026-08-03): kiểm tra trước ở trên đã chặn hầu hết trường
+      // hợp, nhưng vẫn có thể lọt qua nếu 2 người tạo cùng lúc — dịch mã lỗi
+      // trùng khóa Postgres sang tiếng Việt thay vì để lộ nguyên văn.
+      setError(msg.includes("23505") || msg.toLowerCase().includes("duplicate key") ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.` : msg);
       setBusy(false);
     }
   }

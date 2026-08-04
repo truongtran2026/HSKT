@@ -35,8 +35,15 @@
 //       npm run sync-missing-trunk-circuits -- --commit
 import * as path from "node:path";
 import { config as loadEnv } from "dotenv";
+// CHỈ import type ở top-level (xóa khỏi bundle lúc biên dịch, không có giá
+// trị runtime nào chạy) — import GIÁ TRỊ (buildTransitRawTextFromDevice) đã
+// dời xuống import động trong main() (rà soát 2026-08-04, phát hiện script
+// này crash ngay khi chạy: import tĩnh 1 giá trị từ lib/mirrorTrunkCircuits.ts
+// kéo theo lib/supabase.ts được nạp NGAY lúc import module, TRƯỚC khi
+// loadEnv() bên dưới kịp chạy — process.env rỗng, supabase.ts throw ngay.
+// Toàn bộ import giá trị khác trong file này đã đúng chuẩn (dynamic import
+// trong main(), xem bên dưới), chỉ riêng dòng này bị sót).
 import type { TrunkMirrorCandidate } from "../lib/mirrorTrunkCircuits";
-import { buildTransitRawTextFromDevice } from "../lib/mirrorTrunkCircuits";
 
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
@@ -46,7 +53,8 @@ async function main() {
   const { supabase } = await import("../lib/supabase");
   const { fetchAllOdfPorts } = await import("../lib/trunkPorts");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
-  const { findTrunkMirrorCandidates } = await import("../lib/mirrorTrunkCircuits");
+  const { findTrunkMirrorCandidates, buildTransitRawTextFromDevice } = await import("../lib/mirrorTrunkCircuits");
+  const { writeTransitForPorts } = await import("../lib/transitLinks");
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
   type DeviceCircuitRow = Awaited<ReturnType<typeof fetchDeviceCircuits>>[number];
@@ -177,13 +185,15 @@ async function main() {
     // dùng chung — phát hiện khi chạy chính script này để dọn tồn đọng 2026-
     // 08-03 và thấy lại đúng lỗi vừa sửa). Dùng ĐÚNG `buildTransitRawTextFromDevice()`
     // (nay export từ lib/mirrorTrunkCircuits.ts) — không viết lại công thức khác.
+    // Ghi cho TOÀN BỘ port của circuit vừa tạo (2026-08-04, xem
+    // lib/transitLinks.ts) — trước đây chỉ ghi orderedPortIds[0]; an toàn ở
+    // đây vì circuit vừa insert xong, chưa có dữ liệu cũ nào để bảo vệ.
     const rawText = buildTransitRawTextFromDevice(cand.sourceCircuit);
     if (rawText) {
-      const { error: transitErr } = await supabase
-        .from("transit_links")
-        .insert({ source_port_id: orderedPortIds[0], target_type: "text_only", raw_text: rawText });
-      if (transitErr) {
-        console.log(`  [CẢNH BÁO] "${cand.sourceCircuit.name}" [${cand.field}] -> tạo luồng+link OK nhưng ghi Chuyển tiếp lỗi: ${transitErr.message}`);
+      try {
+        await writeTransitForPorts(orderedPortIds, rawText);
+      } catch (e) {
+        console.log(`  [CẢNH BÁO] "${cand.sourceCircuit.name}" [${cand.field}] -> tạo luồng+link OK nhưng ghi Chuyển tiếp lỗi: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

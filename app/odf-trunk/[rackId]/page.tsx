@@ -144,7 +144,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // 2026-08-02, sau ca ADN1.P2(2/1/2) — xem lib/circuitPairSync.ts) — tính
   // sẵn CẢ trạm (không chỉ rack đang xem) vì EditRow cần tra cứu theo đúng
   // circuitId đang sửa, có thể là bất kỳ luồng trung kế nào.
-  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, deviceCircuits);
+  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, deviceCircuits, unlinkedMirrorPairs);
   const { rack, ports } = data;
   // Rack ODF/DDF nội bộ (domain='device') dùng lại NGUYÊN trang này (đúng
   // yêu cầu "dùng lại đúng bảng/nút bấm đã có" — RackHeader/RackAdminPanel

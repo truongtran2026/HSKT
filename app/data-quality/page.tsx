@@ -1,7 +1,7 @@
 import { fetchDevices } from "@/lib/devices";
 import { fetchDeviceCircuits, findDevicePositionConflicts, findDeviceOwnPositionDuplicates } from "@/lib/deviceCircuits";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
-import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
+import { fetchNonConformingTransitLinks, findDivergentTransitGroups } from "@/lib/transitLinks";
 import { fetchDevicePositionMap, findLibraryOwnPositionDuplicates } from "@/lib/devicePositionMap";
 import { findTransitPositionMismatches } from "@/lib/transitPositionMismatches";
 import { findDeviceCircuitLibraryMismatches } from "@/lib/devicePositionMismatches";
@@ -31,6 +31,10 @@ export default async function DataQualityPage() {
   // fetchNonConformingTransitLinks/findUnlinkedMirrorPairs cần trunkPorts đã
   // tải xong (đối chiếu phần ODF bên trong) nên chờ riêng, không gộp Promise.all.
   const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts);
+  // Bước 4e (HSKT-dot-1-brief.md) — luồng có ≥2 port ghi "Chuyển tiếp" khác
+  // nhau (thuần, không query thêm — trunkPorts đã có sẵn transitText/circuit
+  // cho từng port). Xem lib/transitLinks.ts findDivergentTransitGroups().
+  const divergentTransitGroups = findDivergentTransitGroups(trunkPorts);
   const unlinkedDeviceDevicePairs = findUnlinkedDeviceDevicePairs(circuits, devices);
   const dupCandidates = findFuzzyDuplicateDevices(devices, circuits, ignoredPairs);
   const positionConflicts = findDevicePositionConflicts(circuits);
@@ -89,6 +93,7 @@ export default async function DataQualityPage() {
           libraryOwnPositionDuplicates={libraryOwnPositionDuplicates}
           unlinkedPairDetails={unlinkedPairDetails}
           mismatchedLinkedPairs={mismatchedLinkedPairs}
+          divergentTransitGroups={divergentTransitGroups}
           trunkRackCodes={trunkRackCodes}
           deviceRackCodes={deviceRackCodes}
           deviceNames={deviceNames}

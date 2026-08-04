@@ -41,7 +41,7 @@ export default async function SuaLuongThietBiPage() {
   const mirrorLinkStatuses = computeMirrorLinkStatuses(trunkPorts, circuits, unlinkedMirrorPairs, unlinkedDeviceDevicePairs);
   // Nút "Kiểm tra đồng bộ" ngay trong form sửa 1 luồng (yêu cầu người dùng
   // 2026-08-02 — xem lib/circuitPairSync.ts).
-  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, circuits);
+  const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, circuits, unlinkedMirrorPairs);
   return (
     <div>
       <h1 className="text-2xl font-bold text-primary-800">Hồ sơ đấu nối</h1>

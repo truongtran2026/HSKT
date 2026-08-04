@@ -2,6 +2,63 @@ import { supabase } from "@/lib/supabase";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
 
+// Bước 4e của HSKT-dot-1-brief.md ("Luồng có 2 sợi ghi Chuyển tiếp khác
+// nhau") — CHỈ liệt kê để rà, KHÔNG có nút tự sửa (khác các tab
+// mismatch khác trong /data-quality). Lý do: rà dữ liệu sống 2026-08-04 xác
+// nhận đúng 11 ca thuộc nhóm này là thiết bị khuếch đại quang/DWDM
+// (MLA/SRA/CPL/WDM) có Tx/Rx đi 2 port THẬT khác nhau — người dùng xác nhận
+// đây là dữ liệu ĐÚNG, không phải lỗi (xem writeTransitForPorts() bên dưới,
+// architecture.md mục 65). Tab này tồn tại để DỄ THẤY nhóm ngoại lệ này (biết
+// chúng đang được bảo vệ, không bị code nào âm thầm ép đồng nhất) và để bắt
+// được ca THẬT SỰ SAI nếu phát sinh thêm sau này — không phải để "dọn về 0".
+export interface DivergentTransitEntry {
+  portId: string;
+  portNumber: number;
+  rackId: string;
+  rackCode: string;
+  rackDomain: "trunk" | "device";
+  rawText: string;
+}
+
+export interface DivergentTransitGroup {
+  circuitId: string;
+  circuitName: string;
+  entries: DivergentTransitEntry[];
+}
+
+// Thuần (không async) — `trunkPorts` (fetchAllOdfPorts) đã có sẵn
+// `transitText`/`circuit` cho từng port, không cần query Supabase riêng.
+export function findDivergentTransitGroups(trunkPorts: TrunkPortRow[]): DivergentTransitGroup[] {
+  const byCircuit = new Map<string, TrunkPortRow[]>();
+  for (const port of trunkPorts) {
+    if (!port.circuit) continue;
+    const list = byCircuit.get(port.circuit.id) ?? [];
+    list.push(port);
+    byCircuit.set(port.circuit.id, list);
+  }
+
+  const result: DivergentTransitGroup[] = [];
+  for (const [circuitId, ports] of byCircuit) {
+    if (ports.length < 2) continue;
+    const nonEmpty = ports.filter((p) => (p.transitText ?? "").trim() !== "");
+    const distinct = new Set(nonEmpty.map((p) => p.transitText!.trim()));
+    if (distinct.size < 2) continue;
+    result.push({
+      circuitId,
+      circuitName: ports[0].circuit!.name || "(chưa đặt tên)",
+      entries: nonEmpty.map((p) => ({
+        portId: p.portId,
+        portNumber: p.portNumber,
+        rackId: p.rackId,
+        rackCode: p.rackCode,
+        rackDomain: p.rackDomain,
+        rawText: p.transitText!.trim(),
+      })),
+    });
+  }
+  return result.sort((a, b) => a.circuitName.localeCompare(b.circuitName));
+}
+
 // Rà soát TOÀN BỘ cột "Chuyển tiếp" (transit_links.raw_text) bên ODF trung kế
 // tìm dòng CHƯA đúng chuẩn form đã ban hành (yêu cầu người dùng 2026-07-28,
 // cùng tinh thần "positionConflicts" đã làm ở DeviceCircuitList.tsx: chỉ LIỆT
@@ -138,4 +195,95 @@ export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[],
     }
   }
   return result;
+}
+
+export interface WriteTransitResult {
+  // "protected": port đã có sẵn ≥2 giá trị KHÁC nhau — không ghi gì đè lên
+  // (xem giải thích ở writeTransitForPorts). "written": đã ghi/xóa bình
+  // thường (có thể là ghi cho toàn bộ port, hoặc chỉ điền port đang trống).
+  status: "written" | "protected";
+}
+
+// ĐƯỜNG GHI DUY NHẤT cho "Chuyển tiếp" (transit_links.raw_text) — thêm
+// 2026-08-04 (rà soát toàn dự án 2026-08-03). Trước đây có 6 nơi ghi với 2
+// hành vi khác nhau: PortTable.saveEdit() ghi ĐỦ mọi port đang active của
+// luồng, còn applySyncFromDevice()/mirrorTrunkCircuits.ts (2 chỗ)/
+// scripts/sync-missing-trunk-circuits.ts/scripts/backfill-transit-links-for-
+// mirrors.ts chỉ ghi port ĐẦU TIÊN. Hệ quả: đồng bộ 1 luồng 2 sợi qua các
+// đường ghi thiếu có thể để lại 1 port mang raw_text CŨ — PortTable kiểm tra
+// `group.ports[0].transitText === group.ports[1].transitText` để quyết định
+// gộp ô (rowspan) nên tách thành 2 dòng ngay lúc vừa "đồng bộ cho khớp", và
+// fetchNonConformingTransitLinks quét từng dòng độc lập nên port lệch bị báo
+// nhầm "chưa chuẩn form". Người dùng xác nhận (BB-1): 2 sợi Tx/Rx của CÙNG 1
+// luồng bình thường luôn chuyển tiếp về CÙNG 1 chỗ.
+//
+// NGOẠI LỆ đã xác nhận bằng dữ liệu thật (rà soát 2026-08-04, KHÔNG suy đoán):
+// quét toàn bộ `transit_links` phát hiện 11 luồng — toàn bộ đều là thiết bị
+// khuếch đại quang/DWDM (MLA/SRA/CPL/WDM) — có Tx/Rx đi 2 port THẬT khác
+// nhau (vd "CPL/MLA2/Port 5 (Tx Out)" / "CPL/MLA2/Port 8 (Rx IN)"). Người
+// dùng xác nhận đây là dữ liệu ĐÚNG, không phải lỗi nhập liệu. Vì vậy hàm này
+// KHÔNG được ép đồng nhất mù quáng — nếu các port truyền vào ĐANG có sẵn ≥2
+// giá trị raw_text KHÁC nhau (không rỗng), coi đây là luồng thuộc nhóm ngoại
+// lệ hợp lệ: chỉ điền vào port đang TRỐNG (nếu có), giữ NGUYÊN mọi port đã có
+// giá trị — không ghi đè bất cứ gì. Điều này an toàn cho MỌI nơi gọi, kể cả
+// PortTable.saveEdit() (chỉ gộp ô khi 2 port đã ĐANG giống nhau nên hiếm khi
+// trúng nhánh này) và mirror tự tạo (luôn là port hoàn toàn mới, không có gì
+// để bảo vệ).
+export async function writeTransitForPorts(portIds: string[], rawText: string | null): Promise<WriteTransitResult> {
+  if (portIds.length === 0) return { status: "written" };
+  const text = (rawText ?? "").trim();
+
+  const { data: existingRows, error: readErr } = await supabase
+    .from("transit_links")
+    .select("id, source_port_id, raw_text")
+    .in("source_port_id", portIds);
+  if (readErr) throw readErr;
+
+  const existingByPort = new Map<string, { id: string; rawText: string | null }>();
+  for (const r of (existingRows ?? []) as { id: string; source_port_id: string; raw_text: string | null }[]) {
+    existingByPort.set(r.source_port_id, { id: r.id, rawText: r.raw_text });
+  }
+
+  const nonNullValues = new Set(
+    portIds
+      .map((id) => existingByPort.get(id)?.rawText ?? null)
+      .filter((v): v is string => v !== null && v.trim() !== "")
+  );
+  if (nonNullValues.size >= 2) {
+    // Nhóm ngoại lệ khuếch đại/DWDM — chỉ điền chỗ trống, không đụng port đã có giá trị.
+    const missingIds = portIds.filter((id) => {
+      const v = existingByPort.get(id)?.rawText;
+      return !v || !v.trim();
+    });
+    if (missingIds.length > 0 && text) {
+      const { error } = await supabase
+        .from("transit_links")
+        .insert(missingIds.map((id) => ({ source_port_id: id, target_type: "text_only" as const, raw_text: text })));
+      if (error) throw error;
+    }
+    return { status: "protected" };
+  }
+
+  if (!text) {
+    const ids = [...existingByPort.values()].map((v) => v.id);
+    if (ids.length > 0) {
+      const { error } = await supabase.from("transit_links").delete().in("id", ids);
+      if (error) throw error;
+    }
+    return { status: "written" };
+  }
+
+  const toUpdateIds = [...existingByPort.values()].map((v) => v.id);
+  if (toUpdateIds.length > 0) {
+    const { error } = await supabase.from("transit_links").update({ raw_text: text }).in("id", toUpdateIds);
+    if (error) throw error;
+  }
+  const toInsert = portIds
+    .filter((id) => !existingByPort.has(id))
+    .map((id) => ({ source_port_id: id, target_type: "text_only" as const, raw_text: text }));
+  if (toInsert.length > 0) {
+    const { error } = await supabase.from("transit_links").insert(toInsert);
+    if (error) throw error;
+  }
+  return { status: "written" };
 }

@@ -12,6 +12,7 @@ import type { UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
 import type { TransitPositionMismatch } from "@/lib/transitPositionMismatches";
 import type { DeviceCircuitLibraryMismatch } from "@/lib/devicePositionMismatches";
 import type { CircuitPairDetail } from "@/lib/circuitPairSync";
+import type { DivergentTransitGroup } from "@/lib/transitLinks";
 import {
   syncAllTrunkMirrorGaps,
   syncAllTrunkTrunkMirrorGaps,
@@ -26,6 +27,7 @@ import UnlinkedDeviceMirrorPairsTab from "@/components/data-quality/UnlinkedDevi
 import TransitPositionMismatchTab from "@/components/data-quality/TransitPositionMismatchTab";
 import DeviceLibraryMismatchTab from "@/components/data-quality/DeviceLibraryMismatchTab";
 import MismatchedLinkedPairsTab from "@/components/data-quality/MismatchedLinkedPairsTab";
+import DivergentTransitTab from "@/components/data-quality/DivergentTransitTab";
 
 // Gộp 8 tab cũ xuống còn 3 khung (mục 60, người dùng 2026-08-03: "xem việc
 // điều chỉnh ở các khung khác có vấn đề gì với nội dung gộp các khung...
@@ -53,6 +55,7 @@ export default function DataQualityClient({
   deviceCircuitLibraryMismatches,
   unlinkedPairDetails,
   mismatchedLinkedPairs,
+  divergentTransitGroups,
   trunkRackCodes,
   deviceRackCodes,
   deviceNames,
@@ -68,12 +71,14 @@ export default function DataQualityClient({
   deviceCircuitLibraryMismatches: DeviceCircuitLibraryMismatch[];
   unlinkedPairDetails: CircuitPairDetail[];
   mismatchedLinkedPairs: CircuitPairDetail[];
+  divergentTransitGroups: DivergentTransitGroup[];
   trunkRackCodes: string[];
   deviceRackCodes: string[];
   deviceNames: string[];
 }) {
   const syncCount = trunkMissingDeviceItems.length + unlinkedPairDetails.length + mismatchedLinkedPairs.length + unlinkedDeviceDevicePairs.length;
-  const formatCount = transitItems.length + transitPositionMismatches.length + deviceCircuitLibraryMismatches.length + dupCandidates.length;
+  const formatCount =
+    transitItems.length + transitPositionMismatches.length + deviceCircuitLibraryMismatches.length + dupCandidates.length + divergentTransitGroups.length;
   const positionsCount = positionConflicts.length + ownPositionDuplicates.length + libraryOwnPositionDuplicates.length;
 
   const [tab, setTab] = useState<Tab>(syncCount > 0 ? "sync" : formatCount > 0 ? "format" : "positions");
@@ -88,7 +93,8 @@ export default function DataQualityClient({
         {mismatchedLinkedPairs.length} cặp đã liên kết nhưng lệch dữ liệu ·{" "}
         {unlinkedDeviceDevicePairs.length} cặp luồng thiết bị-thiết bị chưa liên kết ·{" "}
         {transitPositionMismatches.length} chuyển tiếp sai tọa độ ODF ·{" "}
-        {deviceCircuitLibraryMismatches.length} luồng thiết bị sai tọa độ ODF so với thư viện
+        {deviceCircuitLibraryMismatches.length} luồng thiết bị sai tọa độ ODF so với thư viện ·{" "}
+        {divergentTransitGroups.length} luồng có 2 sợi ghi Chuyển tiếp khác nhau
       </p>
 
       <ScanFillGapsPanel trunkRackCodes={trunkRackCodes} deviceRackCodes={deviceRackCodes} deviceNames={deviceNames} />
@@ -128,6 +134,7 @@ export default function DataQualityClient({
             )}
             <TransitPositionMismatchTab items={transitPositionMismatches} />
             <DeviceLibraryMismatchTab items={deviceCircuitLibraryMismatches} />
+            <DivergentTransitTab groups={divergentTransitGroups} />
             <DeviceDupTab candidates={dupCandidates} />
           </div>
         ))}

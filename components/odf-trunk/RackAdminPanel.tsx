@@ -61,14 +61,35 @@ export default function RackAdminPanel({
       setError("Nhập mã Block ƯC và số port hợp lệ (số nguyên dương).");
       return;
     }
+    const trimmedCode = blockCode.trim();
     setBusy(true);
     setError(null);
     try {
+      // Kiểm tra trùng mã TRƯỚC khi insert (rà soát 2026-08-03) — cùng lý do
+      // với AddDeviceRackForm.tsx: schema chưa có ràng buộc UNIQUE cho
+      // (station_id, code), toàn bộ đối chiếu vị trí giả định "1 mã rack = 1
+      // rack" (lib/trunkPorts.ts matchTrunkPosition()).
+      const { data: existing, error: checkErr } = await supabase
+        .from("racks")
+        .select("id, code, domain")
+        .eq("station_id", stationId)
+        .eq("code", trimmedCode)
+        .maybeSingle();
+      if (checkErr) throw checkErr;
+      if (existing) {
+        setError(
+          `Đã có rack mã "${trimmedCode}" (${
+            existing.domain === "trunk" ? "ODF trung kế" : "ODF/DDF thiết bị"
+          }). Mã rack phải là duy nhất — chọn mã khác.`
+        );
+        setBusy(false);
+        return;
+      }
       const { data: newRack, error: rackErr } = await supabase
         .from("racks")
         .insert({
           station_id: stationId,
-          code: blockCode.trim(),
+          code: trimmedCode,
           domain: "trunk",
           odf_type: "distribution",
           parent_rack_id: rackId,
@@ -90,7 +111,8 @@ export default function RackAdminPanel({
       if (portErr) throw portErr;
       router.push(`/odf-trunk/${newRackId}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg.includes("23505") || msg.toLowerCase().includes("duplicate key") ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.` : msg);
       setBusy(false);
     }
   }

@@ -3,7 +3,8 @@ import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } fro
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
-import { findUnlinkedMirrorPairs } from "@/lib/unlinkedMirrorPairs";
+import { findUnlinkedMirrorPairs, type UnlinkedMirrorPair } from "@/lib/unlinkedMirrorPairs";
+import { writeTransitForPorts } from "@/lib/transitLinks";
 
 // Kiểm tra ĐỒNG BỘ ĐẦY ĐỦ 1 cặp luồng thiết bị-trung kế (yêu cầu người dùng
 // 2026-08-02, sau khi chỉ ra ca ADN1.P2(2/1/2) mà cách rà trước đó — mục 44
@@ -58,6 +59,11 @@ export interface CircuitPairDetail {
   trunkTransitTrib: string | null;
   trunkTransitLinkId: string | null;
   trunkFirstPortId: string;
+  /** TOÀN BỘ port của luồng trung kế này (2026-08-04) — dùng để ghi "Chuyển
+   *  tiếp" cho đủ mọi sợi Tx/Rx qua writeTransitForPorts(), không chỉ port
+   *  đầu tiên như trunkFirstPortId (giữ lại field đó để không phá các nơi
+   *  gọi khác đang dùng). */
+  trunkPortIds: string[];
 
   rackId: string;
   rackCode: string;
@@ -203,6 +209,7 @@ function buildDetail(
     trunkTransitTrib,
     trunkTransitLinkId: group.transitLinkId,
     trunkFirstPortId: group.firstPortId,
+    trunkPortIds: group.portIds,
     rackId: group.rackId,
     rackCode: group.rackCode,
     portNumbers: [...group.portNumbers].sort((a, b) => a - b),
@@ -243,7 +250,18 @@ export function findLinkedDeviceTrunkPairs(trunkPorts: TrunkPortRow[], deviceCir
 // "Kiểm tra đồng bộ" ở form sửa 1 luồng (lọc theo đúng 1 id trong kết quả).
 export async function findAllDeviceTrunkPairs(
   trunkPorts: TrunkPortRow[],
-  deviceCircuits: DeviceCircuitRow[]
+  deviceCircuits: DeviceCircuitRow[],
+  // Kết quả findUnlinkedMirrorPairs() ĐÃ TÍNH SẴN ở nơi gọi (rà soát
+  // 2026-08-03) — tránh tính LẠI lần hai trong cùng 1 lượt render:
+  // app/odf-trunk/[rackId]/page.tsx và app/odf-device/sua-luong/page.tsx đều
+  // đã gọi findUnlinkedMirrorPairs() một lần trước đó (để dựng huy hiệu "Đã
+  // liên kết"/"Chưa liên kết" qua computeMirrorLinkStatuses), rồi hàm này gọi
+  // lại lần nữa bên trong — mỗi lượt là ~2.000 circuit × 2 chuỗi vị trí ×
+  // ~150 mã rack trong matchTrunkPosition() (~600.000 phép so chuỗi), nhân
+  // đôi thành ~1,2 triệu, hoàn toàn thừa. Không truyền thì giữ nguyên hành vi
+  // cũ (tự tính) — an toàn cho nơi gọi khác (app/data-quality/page.tsx) chưa
+  // có sẵn kết quả này.
+  precomputedUnlinked?: UnlinkedMirrorPair[]
 ): Promise<CircuitPairDetail[]> {
   const trunkGroups = groupTrunkPortsByCircuit(trunkPorts);
   const trunkNameById = new Map<string, string>();
@@ -253,7 +271,7 @@ export async function findAllDeviceTrunkPairs(
 
   const linked = findLinkedDeviceTrunkPairs(trunkPorts, deviceCircuits);
 
-  const unlinked = await findUnlinkedMirrorPairs(trunkPorts, deviceCircuits);
+  const unlinked = precomputedUnlinked ?? (await findUnlinkedMirrorPairs(trunkPorts, deviceCircuits));
   const deviceById = new Map(deviceCircuits.map((d) => [d.id, d]));
   const unlinkedDetails: CircuitPairDetail[] = [];
   for (const u of unlinked) {
@@ -316,15 +334,13 @@ export async function applySyncFromDevice(detail: CircuitPairDetail): Promise<vo
 
   if (detail.deviceOwnPosition && detail.deviceDeviceName && detail.deviceTrib) {
     const newRawText = `${detail.deviceOwnPosition} - ${detail.deviceDeviceName} (${detail.deviceTrib})`;
-    if (detail.trunkTransitLinkId) {
-      const { error } = await supabase.from("transit_links").update({ raw_text: newRawText }).eq("id", detail.trunkTransitLinkId);
-      if (error) throw error;
-    } else {
-      const { error } = await supabase
-        .from("transit_links")
-        .insert({ source_port_id: detail.trunkFirstPortId, target_type: "text_only", raw_text: newRawText });
-      if (error) throw error;
-    }
+    // Ghi cho TOÀN BỘ port của luồng trung kế (2026-08-04, xem
+    // lib/transitLinks.ts) — trước đây chỉ ghi trunkFirstPortId, để sợi thứ 2
+    // (nếu có) giữ raw_text CŨ, gây lệch giữa 2 port cùng 1 luồng.
+    // writeTransitForPorts() tự bảo vệ 11 luồng khuếch đại/DWDM đã xác nhận
+    // có Tx/Rx đi khác port thật — không ép ghi đè khi phát hiện port đã có
+    // ≥2 giá trị khác nhau.
+    await writeTransitForPorts(detail.trunkPortIds, newRawText);
   }
 
   if (!detail.isLinked) {

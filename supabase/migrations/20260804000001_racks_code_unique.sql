@@ -1,0 +1,25 @@
+-- unique (station_id, code) trên racks (rà soát toàn bộ dự án 2026-08-03).
+--
+-- Lý do: toàn bộ cơ chế đối chiếu vị trí ODF dựa vào giả định "1 mã rack = 1
+-- rack" — matchTrunkPosition() (lib/trunkPorts.ts) lọc port bằng
+-- `p.rackCode === rackCode` rồi lấy `rackDomain` từ portsInRack[0]. Nếu tồn
+-- tại 2 rack cùng mã, hàm này GỘP port của cả 2 rack làm một và lấy domain
+-- của rack tình cờ đứng trước — làm sai phân biệt trunk/device, vốn là điểm
+-- quyết định của matchBareTrunkLink / fetchNonConformingTransitLinks /
+-- findUnlinkedMirrorPairs. Triệu chứng xuất hiện ở nơi khác hoàn toàn (bảng
+-- đối chiếu báo sai) nên rất khó lần ra nguyên nhân.
+--
+-- Rủi ro có đường vào THẬT: AddDeviceRackForm.submit() và
+-- RackAdminPanel.createBlockUC() đều cho gõ mã tự do — đã thêm kiểm tra trùng
+-- ở tầng app (2026-08-04) trước khi insert, nhưng đó chỉ là hàng rào mềm
+-- (race condition giữa 2 tab/2 máy vẫn lách được) — ràng buộc DB mới là hàng
+-- rào thật.
+--
+-- Đặt theo (station_id, code) chứ không chỉ (code): app hiện chỉ quản lý
+-- ADN1 nhưng schema vẫn thiết kế nhiều trạm (architecture.md mục 3.1), 2 trạm
+-- khác nhau hoàn toàn có thể có rack cùng mã.
+--
+-- Đã kiểm tra dữ liệu hiện có TRƯỚC khi viết migration này (script đọc trực
+-- tiếp Supabase, 2026-08-04): 0 nhóm (station_id, code) trùng nhau — an toàn
+-- để thêm ràng buộc ngay, không cần dọn dữ liệu trước.
+create unique index if not exists uq_racks_station_code on racks (station_id, code);

@@ -3,6 +3,7 @@ import { fetchAllOdfPorts, matchTrunkPosition, matchBareTrunkLink, type TrunkPor
 import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
+import { writeTransitForPorts } from "@/lib/transitLinks";
 
 // scripts/sync-missing-trunk-circuits.ts (2026-07-28, xem architecture.md mục
 // 15) tự tạo 1 `circuits` MỚI bên trung kế cho mỗi luồng thiết bị có
@@ -278,10 +279,15 @@ export async function autoCreateTrunkMirrorForCircuit(
 
     const rawText = buildTransitRawTextFromDevice(sourceCircuit);
     if (rawText) {
-      const { error: transitErr } = await supabase
-        .from("transit_links")
-        .insert({ source_port_id: orderedPortIds[0], target_type: "text_only", raw_text: rawText });
-      if (transitErr) return { status: "error", message: transitErr.message };
+      // Ghi cho TOÀN BỘ port của circuit vừa tạo (2026-08-04, xem
+      // lib/transitLinks.ts) — trước đây chỉ ghi orderedPortIds[0], để sợi
+      // thứ 2 (nếu có) không có "Chuyển tiếp" dù cùng 1 luồng. An toàn 100%
+      // ở đây vì circuit vừa insert xong, chưa có dữ liệu cũ nào để bảo vệ.
+      try {
+        await writeTransitForPorts(orderedPortIds, rawText);
+      } catch (e) {
+        return { status: "error", message: e instanceof Error ? e.message : String(e) };
+      }
     }
 
     createdAny = { rackCode: cand.rackCode, portNumbers: cand.portNumbers };
@@ -433,10 +439,12 @@ export async function syncAllTrunkMirrorGaps(scope?: MirrorScanScope): Promise<M
 
       const rawText = buildTransitRawTextFromDevice(sourceCircuit);
       if (rawText) {
-        const { error: transitErr } = await supabase
-          .from("transit_links")
-          .insert({ source_port_id: orderedPortIds[0], target_type: "text_only", raw_text: rawText });
-        if (transitErr) summary.errors.push(`${sourceCircuit.name}: tạo xong nhưng ghi Chuyển tiếp lỗi: ${transitErr.message}`);
+        // Ghi cho TOÀN BỘ port (2026-08-04) — xem giải thích ở nhánh trên.
+        try {
+          await writeTransitForPorts(orderedPortIds, rawText);
+        } catch (e) {
+          summary.errors.push(`${sourceCircuit.name}: tạo xong nhưng ghi Chuyển tiếp lỗi: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
 
       summary.created++;

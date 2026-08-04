@@ -3335,3 +3335,115 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       + sửa `sync-missing-trunk-circuits.ts`. curl `/`, `/data-quality`,
       `/odf-trunk`, `/odf-device`, `/odf-device/sua-luong` — 200. 3 script
       audit chạy lại xác nhận đúng số liệu trên.
+
+65. **Đợt 1 của tài liệu audit toàn dự án (người dùng gửi nguyên văn
+    `HSKT-audit-2026-08-03.md` + `HSKT-dot-1-brief.md` ngày 2026-08-03, yêu
+    cầu "tiếp tục thực hiện theo file md tôi gửi")** — brief chốt sẵn 2 bất
+    biến nghiệp vụ BB-1/BB-2 và 4 bước cụ thể, phạm vi hẹp (KHÔNG đụng
+    transaction/RPC — để dành đợt sau).
+    - **BB-2** (app dùng thật trên di động ngoài hiện trường) → **Bước 1**:
+      `components/Sidebar.tsx` — dải hover 3px mép trái vốn chỉ nhận hover
+      chuột (vô dụng trên cảm ứng) nay thêm `onClick`/`onKeyDown`/`role=
+      "button"`; thêm nút `☰` luôn hiện góc trái trên khi menu đang ẩn; thêm
+      lớp phủ nền mờ đóng menu khi bấm ra ngoài; thêm `aria-label` cho nút
+      tìm kiếm/ghim.
+    - **Bước 2**: `findAllDeviceTrunkPairs()` (lib/circuitPairSync.ts) trước
+      đây tự gọi lại `findUnlinkedMirrorPairs()` bên trong dù nơi gọi
+      (`/odf-trunk/[rackId]`, `/odf-device/sua-luong`) đã tính sẵn — tính
+      trùng 2 lần cùng 1 dữ liệu. Thêm tham số thứ 3 tùy chọn
+      `precomputedUnlinked` để tái dùng kết quả đã có, không đổi hành vi khi
+      không truyền (tương thích ngược).
+    - **Bước 3**: `AddDeviceRackForm.tsx`/`RackAdminPanel.tsx` (tạo rack ODF
+      trung kế/thiết bị) trước đây không kiểm tra trùng `code` trước khi
+      insert — lỗi 23505 từ Postgres hiện nguyên dạng khó hiểu cho người
+      dùng. Thêm bước `select` kiểm tra trùng `(station_id, code)` trước khi
+      insert, báo lỗi tiếng Việt rõ ràng; thêm dịch mã lỗi 23505 trong nhánh
+      catch (phòng race condition giữa lúc check và lúc insert thật). Kèm
+      migration `20260804000001_racks_code_unique.sql` — thêm ràng buộc
+      `unique index (station_id, code)` ở tầng DB (UI check không đủ để
+      chống race condition 2 người dùng bấm cùng lúc).
+    - **Bước 4** (nặng nhất) — **"Một đường ghi duy nhất cho Chuyển tiếp"**:
+      rà soát phát hiện **6 nơi** ghi `transit_links.raw_text` với **2 hành
+      vi khác nhau** (PortTable.saveEdit ghi ĐỦ mọi port active; 5 nơi còn
+      lại — applySyncFromDevice, mirrorTrunkCircuits.ts×2,
+      sync-missing-trunk-circuits.ts, backfill-transit-links-for-mirrors.ts —
+      chỉ ghi port ĐẦU TIÊN) → nguồn gốc gián tiếp của bug thiếu "Chuyển
+      tiếp" ở mục 63/64.
+      - Viết đường ghi duy nhất `writeTransitForPorts(portIds, rawText)`
+        (`lib/transitLinks.ts`) — tự đọc dữ liệu hiện có trên các port trước
+        khi ghi, xử lý đủ 3 case: xóa (rawText rỗng), update+insert đồng bộ
+        mọi port, và **case bảo vệ**.
+      - **Trước khi code case bảo vệ**: rà dữ liệu SỐNG (chỉ đọc) tìm mọi
+        circuit có ≥2 port đang mang `raw_text` KHÁC nhau — brief giả định
+        BB-1 ("2 sợi Tx/Rx của CÙNG 1 luồng LUÔN chuyển tiếp về CÙNG 1 chỗ,
+        không có ngoại lệ") là tuyệt đối. Kết quả rà thật: **11 circuit**
+        thật sự có 2 port mang giá trị khác nhau, toàn bộ đều là thiết bị
+        khuếch đại quang/DWDM (MLA/SRA/CPL/WDM, vd "CPL/MLA2/Port 5 (Tx
+        Out)" khác "CPL/MLA2/Port 8 (Rx IN)") — mâu thuẫn trực tiếp với BB-1
+        như brief viết. Dừng lại, trình bày đúng 11 ca kèm ví dụ cho người
+        dùng thay vì tự áp cứng công thức "luôn ghi giống nhau" của brief.
+        **Người dùng xác nhận 2026-08-04**: "11 ca này có đúng là ngoại lệ
+        hợp lệ (thiết bị khuếch đại, Tx/Rx đi khác port)" — tức BB-1 đúng
+        với ĐA SỐ nhưng KHÔNG tuyệt đối. `writeTransitForPorts()` vì vậy có
+        rule: nếu các port truyền vào ĐANG có sẵn ≥2 giá trị khác nhau (đã
+        khác nhau TỪ TRƯỚC, không phải do lần ghi này) → coi là ngoại lệ hợp
+        lệ, CHỈ điền port đang trống, không đụng port đã có giá trị — không
+        có nơi gọi nào (kể cả PortTable.saveEdit) có thể vô tình ép đồng
+        nhất 11 ca này nữa.
+      - Thay cả 6 nơi ghi cũ bằng gọi `writeTransitForPorts()` — không viết
+        lại công thức riêng ở đâu nữa (bài học mục 34/35/63 lặp lại: logic
+        ghi bị copy nhiều nơi rất dễ lệch nhau).
+      - **Bug phụ phát hiện khi sửa**: `scripts/sync-missing-trunk-circuits.ts`
+        crash ngay khi chạy (`Thiếu NEXT_PUBLIC_SUPABASE_URL...`) vì 1 import
+        tĩnh ở đầu file tải `lib/supabase.ts` TRƯỚC khi `loadEnv()` của
+        chính script kịp chạy (đúng bẫy đã ghi ở quy ước dự án — script CLI
+        phải dùng `await import()` động cho mọi module xuyên qua
+        `lib/supabase.ts`). Sửa xong, verify chạy sạch.
+      - **Vá dữ liệu cũ**: script mới `scripts/repair-transit-per-circuit.ts`
+        (dry-run mặc định, `--commit` để ghi thật) — Phần A gộp các dòng
+        `transit_links` bị ghi trùng y hệt nhau trên cùng 1 port (rà thật
+        thấy đúng 1 port bị trùng 3 dòng, gộp còn 1); Phần B backfill circuit
+        có port thiếu "Chuyển tiếp" so với port kia cùng luồng, dùng lại
+        chính `writeTransitForPorts()` (tự bảo vệ 11 ca ngoại lệ, không đụng
+        gì tới chúng). Dry-run xác nhận đúng số đã tính tay trước đó bằng
+        rà dữ liệu sống: 498 circuit cần vá + 11 bảo vệ = 509 circuit lệch,
+        cộng 19 circuit đã đủ sẵn = 528 circuit ≥2 port có `transit_links`.
+        Người dùng duyệt, chạy `--commit` **2026-08-04**:
+        498 circuit đã vá, 11 vẫn nguyên vẹn không bị đụng. Dry-run lần 2
+        xác nhận sạch: 0 dòng trùng còn lại, 0 circuit còn thiếu.
+      - Sau khi dữ liệu sạch, thêm migration
+        `20260804000002_transit_links_unique_port.sql` — xóa index thường cũ
+        `idx_transit_source`, thay bằng `unique index` cùng cột
+        `source_port_id`, chốt bất biến "1 port chỉ có đúng 1 dòng Chuyển
+        tiếp" ở tầng DB thay vì chỉ dựa vào code. An toàn với
+        `writeTransitForPorts()` vì hàm này luôn đọc trước rồi mới quyết
+        định update hay insert (không bao giờ insert trùng port đã có
+        dòng). Cả 2 migration (`racks_code_unique` + `transit_links_unique_port`)
+        đã được người dùng tự chạy tay trong Supabase SQL Editor, xác nhận
+        thành công **2026-08-04**.
+      - **Bước 4e**: thêm khung rà soát mới "Luồng có 2 sợi ghi Chuyển tiếp
+        khác nhau" ở `/data-quality` (nhóm tab "Định dạng") —
+        `findDivergentTransitGroups()` (lib/transitLinks.ts, thuần, không
+        query thêm vì `trunkPorts` đã có sẵn `transitText`/`circuit` mỗi
+        port) + `DivergentTransitTab.tsx`. CHỦ ĐỘNG khác các tab mismatch
+        khác trong trang: KHÔNG có nút tự sửa, vì phần lớn ca thuộc nhóm này
+        là ngoại lệ hợp lệ (11/11 ca đã rà là thiết bị khuếch đại/DWDM) — chỉ
+        liệt kê để dễ thấy/dễ rà nếu phát sinh ca mới thật sự sai, không phải
+        mục tiêu "dọn về 0". Verify qua HTML render thật: đúng 11 luồng hiện
+        ra, khớp số đã xác nhận với người dùng.
+    - Bước 0 của brief (bật Vercel Deployment Protection) — người dùng xác
+      nhận **2026-08-04 bỏ qua có chủ đích**: tính năng này (Password
+      Protection/Vercel Authentication) chỉ có ở gói Pro, tài khoản đang dùng
+      là Free. Không phải thiếu sót, không cần nhắc lại trừ khi sau này nâng
+      gói.
+    - **Kiểm chứng cuối đợt**: `tsc --noEmit` sạch, `npm run build` sạch
+      (14 trang, không lỗi). 3 script audit (`audit-device-trunk-sync`/
+      `audit-trunk-trunk-sync`/`audit-device-device-sync`) chạy lại trên dữ
+      liệu sống sau khi vá — 0 gap mới phát sinh; 2 dòng còn lại ở
+      `audit-trunk-trunk-sync` (rack ODF6/4↔ODF6/3) là ca CŨ đã biết từ mục
+      64 (cần tay xử lý, không phải regression của đợt này). Chưa tự test
+      cảm ứng Sidebar ở viewport hẹp qua trình duyệt thật (không có
+      Playwright) — đã báo người dùng tự thử trên di động ngoài hiện trường.
+    - **Đợt 1 hoàn tất** theo đúng phạm vi `HSKT-dot-1-brief.md` đã chốt.
+      Đợt 2 (transaction safety/RPC functions) trong tài liệu audit gốc chưa
+      bắt đầu — chờ người dùng yêu cầu.

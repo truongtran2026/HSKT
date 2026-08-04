@@ -11,6 +11,7 @@ import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
+import { writeTransitForPorts } from "@/lib/transitLinks";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
 import {
   autoCreateTrunkMirrorForCircuit,
@@ -639,23 +640,11 @@ export default function PortTable({
       );
       if (isNew && !hasCircuitData) {
         const transitOnly = edit.transitText.trim();
-        for (const portId of activePortIds) {
-          const port = ports.find((p) => p.id === portId);
-          if (port?.transitLinkId) {
-            if (transitOnly === "") {
-              const { error: delErr } = await supabase.from("transit_links").delete().eq("id", port.transitLinkId);
-              if (delErr) throw delErr;
-            } else {
-              const { error: updErr } = await supabase.from("transit_links").update({ raw_text: transitOnly }).eq("id", port.transitLinkId);
-              if (updErr) throw updErr;
-            }
-          } else if (transitOnly !== "") {
-            const { error: insErr } = await supabase
-              .from("transit_links")
-              .insert({ source_port_id: portId, target_type: "text_only", raw_text: transitOnly });
-            if (insErr) throw insErr;
-          }
-        }
+        // Đường ghi DUY NHẤT cho "Chuyển tiếp" (2026-08-04, xem
+        // lib/transitLinks.ts) — gộp đúng vòng lặp cũ (ghi giống nhau cho mọi
+        // port đang active) vào 1 hàm dùng chung với các nơi ghi khác, thêm
+        // sẵn bảo vệ 11 luồng khuếch đại/DWDM có Tx/Rx đi khác port thật.
+        await writeTransitForPorts(activePortIds, transitOnly || null);
         if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly);
         refreshAndThen(() => setEdit(null));
         return;
@@ -738,25 +727,11 @@ export default function PortTable({
       }
 
       // "Chuyển tiếp" dùng CHUNG 1 giá trị cho cả 2 port khi đang ghép — ghi
-      // giống nhau cho mọi port đang active để bảng hiển thị gộp đúng.
+      // giống nhau cho mọi port đang active để bảng hiển thị gộp đúng. Đường
+      // ghi DUY NHẤT (2026-08-04, xem lib/transitLinks.ts) — có bảo vệ sẵn 11
+      // luồng khuếch đại/DWDM đã xác nhận Tx/Rx đi khác port thật.
       const transitText = edit.transitText.trim();
-      for (const portId of activePortIds) {
-        const port = ports.find((p) => p.id === portId);
-        if (port?.transitLinkId) {
-          if (transitText === "") {
-            const { error: delErr } = await supabase.from("transit_links").delete().eq("id", port.transitLinkId);
-            if (delErr) throw delErr;
-          } else {
-            const { error: updErr } = await supabase.from("transit_links").update({ raw_text: transitText }).eq("id", port.transitLinkId);
-            if (updErr) throw updErr;
-          }
-        } else if (transitText !== "") {
-          const { error: insErr } = await supabase
-            .from("transit_links")
-            .insert({ source_port_id: portId, target_type: "text_only", raw_text: transitText });
-          if (insErr) throw insErr;
-        }
-      }
+      await writeTransitForPorts(activePortIds, transitText || null);
       if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
 
       // Tự tạo mirror trung kế-trung kế nếu "Chuyển tiếp" vừa lưu trỏ sang 1

@@ -91,6 +91,7 @@ export default function Sidebar() {
             onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
             className="rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
             title="Tìm kiếm nhanh (Cmd/Ctrl + K)"
+            aria-label="Tìm kiếm nhanh"
           >
             🔍
           </button>
@@ -103,6 +104,7 @@ export default function Sidebar() {
                 ? "Bỏ ghim — ẩn bớt khung này để tăng bề rộng cho nội dung chính, đưa chuột sát mép trái để hiện lại tạm thời"
                 : "Ghim cố định — luôn hiện khung này"
             }
+            aria-label={pinned ? "Bỏ ghim menu" : "Ghim menu"}
           >
             {pinned ? "Bỏ ghim" : "Ghim"}
           </button>
@@ -166,15 +168,51 @@ export default function Sidebar() {
   // chuột ra khỏi khung (yêu cầu người dùng 2026-07-28). Dải mỏng bên trái
   // luôn tồn tại (kể cả lúc overlay đang hiện, nằm dưới overlay) làm nơi hover
   // lại nếu chuột rời khung rồi quay lại ngay.
+  //
+  // SỬA LỖI KHÓA MENU trên thiết bị cảm ứng (rà soát 2026-08-03, người dùng
+  // xác nhận CÓ dùng điện thoại tra cứu tại hiện trường — BB-2): trước đây
+  // cách DUY NHẤT mở lại menu khi đã bỏ ghim là onMouseEnter — cảm ứng không
+  // có sự kiện hover, và nút 🔍 để mở Command Palette nằm TRONG chính menu
+  // đang ẩn, nên bỏ ghim trên máy tính rồi mở app trên điện thoại (localStorage
+  // khôi phục lại trạng thái bỏ ghim) là kẹt hoàn toàn, chỉ còn cách gõ URL tay
+  // hoặc xóa dữ liệu trình duyệt. Thêm 3 lối thoát: (a) dải mép trái bấm/Enter
+  // được, không chỉ hover; (b) nút ☰ luôn hiện khi đang ẩn; (c) lớp nền mờ bấm
+  // ra ngoài để đóng — onMouseLeave không bao giờ kích hoạt trên cảm ứng nên
+  // trước đây mở overlay ra rồi không có cách đóng lại bằng tay.
   return (
     <>
+      {!visible && (
+        <button
+          type="button"
+          onClick={() => setHovering(true)}
+          aria-label="Mở menu điều hướng"
+          title="Mở menu điều hướng"
+          className="fixed left-2 top-2 z-30 rounded-md bg-primary-700 px-3 py-2 text-white shadow-lg hover:bg-primary-600"
+        >
+          ☰
+        </button>
+      )}
       <div
-        className="fixed left-0 top-0 z-40 h-screen w-3"
+        className="fixed left-0 top-0 z-40 h-screen w-3 cursor-pointer"
         onMouseEnter={() => setHovering(true)}
-        title="Đưa chuột vào đây để hiện lại Hồ sơ kỹ thuật"
+        onClick={() => setHovering(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") setHovering(true);
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label="Hiện menu điều hướng"
+        title="Chạm hoặc đưa chuột vào đây để hiện lại Hồ sơ kỹ thuật"
       >
         <div className="h-full w-1 bg-primary-700/40" />
       </div>
+      {visible && (
+        <div
+          className="fixed inset-0 z-30 bg-slate-900/20"
+          onClick={() => setHovering(false)}
+          aria-hidden="true"
+        />
+      )}
       <aside
         onMouseLeave={() => setHovering(false)}
         className={
