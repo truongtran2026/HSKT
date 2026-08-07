@@ -4140,3 +4140,43 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     - **Ngoài phạm vi đợt này**: Import Excel ngược lại (đọc file đã sửa tay,
       so sánh/diff với dữ liệu hiện có, xác nhận từng thay đổi rồi mới ghi) —
       người dùng đã chọn rõ để đợt sau, cần lập kế hoạch riêng.
+
+78. **2 lỗi người dùng phát hiện sau khi dùng thử Export + Tìm kiếm
+    (2026-08-08)**.
+    - **"Chọn tất cả" ở khung Export không rõ ràng**: `GroupedMultiSelect`
+      dùng `selected=null` ngầm định nghĩa "đã chọn hết" — đúng về logic
+      (không chọn gì = xuất toàn trạm) nhưng người dùng không nhận ra, tưởng
+      phải tick từng rack/thiết bị một trong dropdown 41 rack. **Fix**:
+      `components/import-export/ImportExportClient.tsx` — thêm 1 checkbox
+      RIÊNG "Toàn trạm"/"Tất cả thiết bị" ở mỗi khối, mặc định BẬT (ẩn hẳn
+      `GroupedMultiSelect` lúc này); tắt checkbox mới hiện khung chọn cụ thể.
+      Rõ ràng hơn hẳn so với dựa vào ngữ nghĩa ngầm của dropdown.
+    - **"Xem tất cả kết quả tìm kiếm" (`/search`) chỉ có ODF trung kế, thiếu
+      Hồ sơ đấu nối thiết bị** — đúng vậy: cả `app/search/page.tsx`
+      (`fetchAllTrunkPorts` only) lẫn `CommandPalette.tsx` (Cmd+K, chỉ có
+      `fetchAllTrunkPorts` + `fetchDevices` — có danh mục thiết bị nhưng
+      KHÔNG có luồng thiết bị thật) đều chưa từng đụng tới
+      `fetchDeviceCircuits`. **Fix**:
+      - `CommandPalette.tsx` — thêm `fetchDeviceCircuits` vào lượt tải lười
+        lúc mở lần đầu, thêm `ResultKind` mới `"device-circuit"`, neo tới
+        `/odf-device/sua-luong#${rowAnchor(id)}` (tái dùng `rowAnchor()` có
+        sẵn — `DeviceCircuitList.tsx` đã tự đọc hash này để cuộn/tô sáng
+        đúng dòng, không cần thêm gì ở đó).
+      - `/search` — **KHÔNG gộp chung 1 bảng** với ODF trung kế (2 domain
+        cấu trúc cột khác hẳn: trung kế có Port/Sợi/Trạng thái cổng trống
+        thật qua `port_circuit_links`; thiết bị chỉ có vị trí ODF dạng text,
+        không có khái niệm "cổng trống" — gộp cưỡng ép ra bảng nhiều cột rỗng
+        vô nghĩa). Thay bằng **`components/search/SearchTabs.tsx`** (mới,
+        `"use client"`) chuyển đổi 2 tab "ODF trung kế"/"Hồ sơ đấu nối", mỗi
+        tab 1 bảng riêng: `SearchClient.tsx` (giữ nguyên, trung kế) và
+        **`components/search/DeviceSearchClient.tsx`** (mới) — copy đúng cấu
+        trúc `SortableTh`/`ResizableTh`/`FilterInput`/`useColumnWidths` từ
+        `SearchClient.tsx` cho đồng nhất, cột theo `DeviceCircuitRow` (Tên
+        luồng/Thiết bị/Trib/Vị trí ODF thiết bị/Vị trí ODF tiếp theo/Đối
+        phương), lọc "Đường dự phòng" qua `isStandbyCircuitName()` có sẵn
+        (bỏ "Cổng trống" — không áp dụng domain này). `app/search/page.tsx`
+        tải cả 2 nguồn 1 lần (`Promise.all`), truyền xuống `SearchTabs`.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch
+      (`/search` 4.83kB, `/import-export` không đổi đáng kể). Chưa test UI
+      thật bằng trình duyệt (không có công cụ tự động hóa trình duyệt trong
+      môi trường này).

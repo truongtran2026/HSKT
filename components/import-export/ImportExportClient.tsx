@@ -34,8 +34,15 @@ export default function ImportExportClient({
         group: trunkRows.find((r) => r.rackId === rackId)?.rackCableRouteName ?? "(không có tuyến)",
       }));
   }, [trunkRows]);
+  // "Toàn trạm" là 1 checkbox RIÊNG, tách khỏi ngữ nghĩa ngầm "selected=null"
+  // của GroupedMultiSelect (yêu cầu người dùng 2026-08-08: bấm "Chọn tất cả"
+  // trong dropdown 41 rack không rõ ràng/không tìm thấy) — mặc định BẬT
+  // (đúng là chọn hết), tắt đi mới hiện khung chọn rack cụ thể. Rõ ràng hơn
+  // nhiều so với việc phải hiểu "để trống nghĩa là chọn hết".
+  const [wholeStationTrunk, setWholeStationTrunk] = useState(true);
   const [selectedRackIds, setSelectedRackIds] = useState<string[] | null>(null);
-  const trunkCount = selectedRackIds === null ? trunkRows.length : trunkRows.filter((r) => selectedRackIds.includes(r.rackId)).length;
+  const effectiveRackIds = wholeStationTrunk ? null : selectedRackIds;
+  const trunkCount = effectiveRackIds === null ? trunkRows.length : trunkRows.filter((r) => effectiveRackIds.includes(r.rackId)).length;
 
   // Khối Hồ sơ đấu nối — items = tên thiết bị (nhóm theo Lĩnh vực), ĐÚNG
   // quy ước lọc đã có sẵn ở DeviceCircuitList.tsx (theo thiết bị/lĩnh vực,
@@ -53,9 +60,11 @@ export default function ImportExportClient({
       .sort((a, b) => a.localeCompare(b))
       .map((name) => ({ value: name, label: name, group: categoryByDeviceName.get(name) ?? UNCATEGORIZED_LABEL }));
   }, [deviceRows, categoryByDeviceName]);
+  const [wholeStationDevice, setWholeStationDevice] = useState(true);
   const [selectedDeviceNames, setSelectedDeviceNames] = useState<string[] | null>(null);
+  const effectiveDeviceNames = wholeStationDevice ? null : selectedDeviceNames;
   const deviceCount =
-    selectedDeviceNames === null ? deviceRows.length : deviceRows.filter((r) => r.deviceName !== null && selectedDeviceNames.includes(r.deviceName)).length;
+    effectiveDeviceNames === null ? deviceRows.length : deviceRows.filter((r) => r.deviceName !== null && effectiveDeviceNames.includes(r.deviceName)).length;
 
   return (
     <div className="space-y-6">
@@ -66,9 +75,15 @@ export default function ImportExportClient({
           hiện / Ghi chú), mỗi port 1 dòng.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <GroupedMultiSelect items={rackItems} selected={selectedRackIds} onChange={setSelectedRackIds} buttonLabel="Chọn rack/tuyến cáp" />
+          <label className="flex items-center gap-1.5 text-sm text-slate-700">
+            <input type="checkbox" checked={wholeStationTrunk} onChange={(e) => setWholeStationTrunk(e.target.checked)} />
+            Toàn trạm (tất cả {rackItems.length} rack)
+          </label>
+          {!wholeStationTrunk && (
+            <GroupedMultiSelect items={rackItems} selected={selectedRackIds} onChange={setSelectedRackIds} buttonLabel="Chọn rack/tuyến cáp" />
+          )}
           <span className="text-sm text-slate-500">Sẽ xuất {trunkCount} dòng.</span>
-          <button type="button" className="btn-primary" onClick={() => exportTrunkExcel(trunkRows, selectedRackIds)} disabled={trunkCount === 0}>
+          <button type="button" className="btn-primary" onClick={() => exportTrunkExcel(trunkRows, effectiveRackIds)} disabled={trunkCount === 0}>
             Xuất Excel
           </button>
         </div>
@@ -81,9 +96,15 @@ export default function ImportExportClient({
           Đối phương / Ghi chú).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <GroupedMultiSelect items={deviceItems} selected={selectedDeviceNames} onChange={setSelectedDeviceNames} buttonLabel="Chọn thiết bị/lĩnh vực" />
+          <label className="flex items-center gap-1.5 text-sm text-slate-700">
+            <input type="checkbox" checked={wholeStationDevice} onChange={(e) => setWholeStationDevice(e.target.checked)} />
+            Tất cả thiết bị ({deviceItems.length})
+          </label>
+          {!wholeStationDevice && (
+            <GroupedMultiSelect items={deviceItems} selected={selectedDeviceNames} onChange={setSelectedDeviceNames} buttonLabel="Chọn thiết bị/lĩnh vực" />
+          )}
           <span className="text-sm text-slate-500">Sẽ xuất {deviceCount} dòng.</span>
-          <button type="button" className="btn-primary" onClick={() => exportDeviceExcel(deviceRows, selectedDeviceNames)} disabled={deviceCount === 0}>
+          <button type="button" className="btn-primary" onClick={() => exportDeviceExcel(deviceRows, effectiveDeviceNames)} disabled={deviceCount === 0}>
             Xuất Excel
           </button>
         </div>

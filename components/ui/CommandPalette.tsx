@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchAllTrunkPorts, type TrunkPortRow } from "@/lib/trunkPorts";
 import { fetchDevices, deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
+import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits";
+import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { derivePortStatus, type DerivedPortStatus } from "@/lib/portStatus";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeVN } from "@/lib/text";
@@ -21,7 +23,7 @@ export const COMMAND_PALETTE_OPEN_EVENT = "hskt:open-command-palette";
 
 const MAX_RESULTS = 30;
 
-type ResultKind = "circuit" | "rack" | "port" | "device";
+type ResultKind = "circuit" | "rack" | "port" | "device" | "device-circuit";
 
 interface PaletteResult {
   kind: ResultKind;
@@ -62,6 +64,7 @@ const KIND_LABEL: Record<ResultKind, string> = {
   rack: "Rack",
   port: "Port",
   device: "Thiết bị",
+  "device-circuit": "Luồng thiết bị",
 };
 
 const STATUS_BADGE: Record<DerivedPortStatus, { label: string; className: string }> = {
@@ -98,6 +101,7 @@ export default function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [ports, setPorts] = useState<TrunkPortRow[] | null>(null);
   const [devices, setDevices] = useState<DeviceRow[] | null>(null);
+  const [deviceCircuits, setDeviceCircuits] = useState<DeviceCircuitRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadedOnceRef = useRef(false);
@@ -135,10 +139,11 @@ export default function CommandPalette() {
     loadedOnceRef.current = true;
     setLoading(true);
     setLoadError(null);
-    Promise.all([fetchAllTrunkPorts(supabase), fetchDevices(supabase)])
-      .then(([p, d]) => {
+    Promise.all([fetchAllTrunkPorts(supabase), fetchDevices(supabase), fetchDeviceCircuits(supabase)])
+      .then(([p, d, dc]) => {
         setPorts(p);
         setDevices(d);
+        setDeviceCircuits(dc);
       })
       .catch((e) => {
         loadedOnceRef.current = false; // cho phép thử lại lần mở kế tiếp nếu lỗi (vd mất mạng lúc đó)
@@ -268,9 +273,26 @@ export default function CommandPalette() {
       });
     }
 
+    // Luồng thiết bị (Hồ sơ đấu nối) — thêm 2026-08-08, người dùng phát hiện
+    // "Xem tất cả kết quả tìm kiếm" chỉ ra ODF trung kế, thiếu hẳn domain
+    // này. Neo #dc-<id> tái dùng rowAnchor() đã có sẵn (DeviceCircuitList.tsx
+    // đọc hash này để cuộn/tô sáng đúng dòng).
+    for (const c of deviceCircuits ?? []) {
+      const score = bestScore([c.name, c.deviceName, c.tribText, c.devicePositionOwn, c.devicePositionNext, c.counterpartText], q);
+      if (score === null) continue;
+      out.push({
+        kind: "device-circuit",
+        key: `device-circuit-${c.id}`,
+        title: c.name,
+        subtitle: [c.deviceName, c.devicePositionOwn, c.counterpartText].filter(Boolean).join(" · ") || "Hồ sơ đấu nối",
+        score,
+        href: `/odf-device/sua-luong#${rowAnchor(c.id)}`,
+      });
+    }
+
     out.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title));
     return out.slice(0, MAX_RESULTS);
-  }, [query, grouped, devices]);
+  }, [query, grouped, devices, deviceCircuits]);
 
   useEffect(() => {
     setActiveIndex(0);
