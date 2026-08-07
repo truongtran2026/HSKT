@@ -4072,3 +4072,71 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       **Chưa test được UI thật bằng trình duyệt** trong phiên này (không có
       công cụ tự động hóa trình duyệt) — cần người dùng tự bấm thử qua `npm
       run dev`/production sau khi chạy migration.
+
+77. **Export Excel — làm trước Import (2026-08-07)**. `app/import-export/page.tsx`
+    trước đây chỉ là `PagePlaceholder`. Người dùng xác nhận qua hỏi đáp: làm
+    **Export trước** (chỉ đọc, an toàn) — **Import (đọc file sửa tay, diff rồi
+    xác nhận mới ghi) để riêng 1 đợt sau**, không làm trong đợt này.
+    - **`lib/trunkExportData.ts`** (mới) — `fetchTrunkExportRows(client)`:
+      query RIÊNG (không đụng `TrunkPortRow` dùng chung nhiều nơi, vì export
+      cần thêm `execution_station_text`/`notes` mà type đó không mang) — copy
+      cấu trúc từ `getRackAndPorts()` (`app/odf-trunk/[rackId]/page.tsx`)
+      nhưng bỏ giới hạn 1 rack, lọc `racks.domain = 'trunk'` qua
+      `racks!inner(...).eq("racks.domain","trunk")`. 1 dòng = 1 port (không
+      gộp Tx/Rx — CLAUDE.md nguyên tắc #1). Phân trang theo `id` (con trỏ ổn
+      định) rồi **sắp lại 1 lần ở cuối** theo `rackCode` rồi `portNumber` cho
+      file dễ đọc (id không theo đúng thứ tự rack/port). Đã test bằng script
+      tạm đọc CSDL thật: 2016 dòng, 41 rack trung kế, dữ liệu đúng.
+    - **Cột ODF trung kế** (đúng file gốc, đã bỏ "Mức Độ ưu tiên" theo quyết
+      định cũ, xác nhận lại cả từ `architecture.md` mục 3.9 lẫn header thật
+      của `data/Cáp quang/...xls`): `Rack-sub ODF | Port | Sợi | Tên luồng |
+      Giao tiếp | Chuyển tiếp | Đối phương | Phương án ứng cứu | Trạm thực
+      hiện | Ghi chú`.
+    - **Cột ODF thiết bị** — người dùng CHỌN xuất theo cấu trúc HIỆN TẠI của
+      app (không cố tách lại 3 cột cũ "ODF chuyển tiếp/Thiết bị chuyển
+      tiếp/TBi đầu cuối" của file gốc — dữ liệu đã gộp vào `notes` từ lúc
+      `import-device-v2.ts` chạy, tách lại không đáng tin): `Tên luồng | Trib
+      | Thiết bị | Vị trí ODF (thiết bị) | Vị trí ODF (tiếp theo) | Giao tiếp
+      | Đối phương | Ghi chú` — khớp đúng cột đang hiện ở
+      `DeviceCircuitList.tsx`, lấy thẳng từ `DeviceCircuitRow`
+      (`lib/deviceCircuits.ts` `fetchDeviceCircuits`, tái dùng nguyên, không
+      viết query mới).
+    - **`lib/exportExcel.ts`** (mới) — `exportTrunkExcel(rows, rackIds)` /
+      `exportDeviceExcel(rows, deviceNames)`: lọc theo phạm vi (`null` = tất
+      cả), `XLSX.utils.aoa_to_sheet` với header cố định đúng thứ tự đã chốt
+      (không suy từ object keys — tránh lệch thứ tự nếu sau này thêm field),
+      `XLSX.writeFile(wb, "...xlsx")` — SheetJS tự tạo Blob + trigger tải
+      xuống trong trình duyệt, không cần viết thêm helper download riêng
+      (dự án chưa có helper này, đã kiểm tra).
+    - **Phạm vi chọn khi xuất** — tái dùng NGUYÊN `GroupedMultiSelect.tsx`
+      (dropdown chọn nhiều có nhóm + tìm kiếm, `selected=null`="tất cả",
+      cùng pattern `DeviceCircuitList.tsx` đang dùng cho bộ lọc thiết bị):
+      - ODF trung kế: items = rack (label=mã rack, group=tên tuyến cáp) — tự
+        nhiên có CẢ "theo rack" (bỏ tick 1 rack) LẪN "theo tuyến cáp" (gõ tìm
+        tên tuyến, "Chọn tất cả" trong nhóm lọc), không cần 2 UI riêng.
+      - Hồ sơ đấu nối: items = tên thiết bị (group=Lĩnh vực, qua
+        `deviceCategoryLabel`) — **KHÔNG có "theo rack"** cho domain này:
+        `circuits` (luồng thiết bị) không có FK thật tới rack/port (chỉ text
+        tự do), và chính `DeviceCircuitList.tsx` hiện tại cũng CHƯA từng lọc
+        theo rack (chỉ theo thiết bị/lĩnh vực) — export dùng đúng quy ước lọc
+        đã có, không bịa khái niệm phạm vi mới.
+    - **`components/import-export/ImportExportClient.tsx`** (mới, `"use
+      client"`) — 2 khối độc lập (ODF trung kế / Hồ sơ đấu nối), mỗi khối có
+      `GroupedMultiSelect` + hiện số dòng sẽ xuất theo phạm vi đang chọn +
+      nút "Xuất Excel" (khóa khi 0 dòng). `app/import-export/page.tsx` viết
+      lại thành Server Component: tải hết 1 lần (`fetchTrunkExportRows` +
+      `fetchDeviceCircuits` + `fetchDevices`, `Promise.all`), lọc phạm vi làm
+      ở client — không round-trip lại server mỗi lần đổi lựa chọn (chấp nhận
+      chi phí tải hết 1 lần, cùng mức đã chấp nhận ở các trang khác trong dự
+      án, xem mục 72).
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (route
+      `/import-export` từ 146B lên 96.1kB First Load JS — do bundle gói
+      `xlsx` phía client, hợp lý vì cần build file .xlsx ngay trên trình
+      duyệt). Query `fetchTrunkExportRows` đã test qua script tạm đọc CSDL
+      thật (service-role key, không sửa gì, xóa script sau khi xong): 2016
+      dòng port trung kế, 41 rack, dữ liệu đúng. **Chưa test được UI thật
+      bằng trình duyệt** (không có công cụ tự động hóa trình duyệt trong môi
+      trường này) — cần người dùng tự bấm thử qua `npm run dev`/production.
+    - **Ngoài phạm vi đợt này**: Import Excel ngược lại (đọc file đã sửa tay,
+      so sánh/diff với dữ liệu hiện có, xác nhận từng thay đổi rồi mới ghi) —
+      người dùng đã chọn rõ để đợt sau, cần lập kế hoạch riêng.
