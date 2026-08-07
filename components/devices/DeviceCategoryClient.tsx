@@ -113,6 +113,14 @@ export default function DeviceCategoryClient({
   const [pendingNameOverrides, setPendingNameOverrides] = useState<Record<string, string>>({});
   const [pendingBusyKey, setPendingBusyKey] = useState<string | null>(null);
 
+  // Thêm mới thiết bị tay (yêu cầu người dùng 2026-08-07 — trang này trước
+  // đây chỉ tạo được thiết bị GIÁN TIẾP qua "gán tên" ở khung pendingGroups
+  // phía trên hoặc qua các form nhập luồng — chưa có nút thêm trực tiếp).
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState("");
+  const [newDeviceCoordinate, setNewDeviceCoordinate] = useState("");
+  const [newDeviceCategory, setNewDeviceCategory] = useState("");
+
   const categoryOptions = useMemo(() => {
     const set = new Set<string>();
     for (const d of devices) set.add(deviceCategoryLabel(d.category));
@@ -368,6 +376,50 @@ export default function DeviceCategoryClient({
     }
   }
 
+  // Thêm mới 1 thiết bị (2026-08-07) — tự thêm tiền tố "ADN1." nếu chưa gõ,
+  // ĐÚNG quy ước tạo thiết bị đã dùng ở mọi nơi khác (PortTable.tsx,
+  // DeviceCircuitList.tsx: maybeCreateCounterpartDevice/resolveOrCreateNextDevice)
+  // — không phát minh quy ước mới. Chặn trùng tên TRƯỚC khi insert (so theo
+  // khóa đã chuẩn hóa qua normalizeDeviceNameKey, không phân biệt hoa/thường/
+  // dấu) vì `devices.name` KHÔNG có ràng buộc unique ở tầng CSDL (chưa làm ở
+  // đợt nào — chỉ mới ràng buộc racks.code, xem architecture.md mục 65).
+  async function addDevice() {
+    const typed = newDeviceName.trim();
+    if (!typed) {
+      setError("Nhập tên thiết bị.");
+      return;
+    }
+    const fullName = /^adn1\./i.test(typed) ? typed : `ADN1.${typed}`;
+    const key = normalizeDeviceNameKey(fullName);
+    if (devices.some((d) => normalizeDeviceNameKey(d.name) === key)) {
+      setError(`Thiết bị "${fullName}" đã tồn tại — không tạo trùng, tìm trong danh sách bên dưới để sửa nếu cần.`);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const coordinate = newDeviceCoordinate.trim() || null;
+      const { error: err } = await supabase.from("devices").insert({
+        station_id: stationId,
+        name: fullName,
+        coordinate_text: coordinate,
+        full_label: coordinate ? `${fullName}(${coordinate})` : fullName,
+        category: newDeviceCategory.trim() || null,
+        source: "manual",
+      });
+      if (err) throw err;
+      setNewDeviceName("");
+      setNewDeviceCoordinate("");
+      setNewDeviceCategory("");
+      setShowAddForm(false);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Giải quyết 1 nhóm luồng CHƯA có thiết bị: map vào thiết bị đã có (theo
   // đúng tên gõ) hoặc tạo thiết bị mới — luôn đồng bộ luôn thư viện "Vị trí
   // thiết bị" theo mọi biến thể tên gốc của nhóm.
@@ -482,6 +534,61 @@ export default function DeviceCategoryClient({
           )}
         </div>
       )}
+
+      <div className="mb-3">
+        {!showAddForm ? (
+          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => setShowAddForm(true)}>
+            + Thêm thiết bị
+          </button>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs text-slate-500">Tên thiết bị *</span>
+              <input
+                className="input w-56"
+                placeholder="vd OTS2 hoặc ADN1.OTS2"
+                value={newDeviceName}
+                onChange={(e) => setNewDeviceName(e.target.value)}
+                autoFocus
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs text-slate-500">Tọa độ (tùy chọn)</span>
+              <input
+                className="input w-32"
+                placeholder="vd 1-3-3"
+                value={newDeviceCoordinate}
+                onChange={(e) => setNewDeviceCoordinate(e.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs text-slate-500">Lĩnh vực (tùy chọn)</span>
+              <input
+                className="input w-40"
+                list="device-category-options"
+                value={newDeviceCategory}
+                onChange={(e) => setNewDeviceCategory(e.target.value)}
+              />
+            </label>
+            <button type="button" className="btn-primary px-3 py-1.5 text-sm" onClick={addDevice} disabled={busy}>
+              {busy ? "Đang tạo..." : "Tạo"}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary px-3 py-1.5 text-sm"
+              onClick={() => {
+                setShowAddForm(false);
+                setNewDeviceName("");
+                setNewDeviceCoordinate("");
+                setNewDeviceCategory("");
+              }}
+              disabled={busy}
+            >
+              Hủy
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="mb-3">
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Lĩnh vực</p>
