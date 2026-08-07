@@ -44,7 +44,7 @@ Người dùng là kỹ sư Điện tử Viễn thông (ETE), không phải lậ
 ## Giao diện / UX
 - Tông màu xanh dương sáng, layout sidebar trái (menu: Xem / Sửa / Dashboard / Cài đặt — xem ảnh mẫu người dùng cung cấp, tên app tham khảo "PTools").
 - Giao diện nhập liệu phải cho phép edit/copy/delete nhanh theo dòng, và hỗ trợ "đẩy dữ liệu từ tuyến A sang tuyến B" như 1 thao tác riêng (không phải copy-paste tay).
-- Ở giai đoạn multi-user (không phải MVP), thêm: đăng nhập, phân quyền Admin/Edit/Viewer theo bảng, nhật ký hoạt động — chưa cần làm ở MVP nhưng thiết kế component sao cho dễ thêm sau (không hardcode kiểu single-user sâu vào logic UI).
+- Đăng nhập đã có (2026-08-06). Từ 2026-08-06 (cùng ngày, theo yêu cầu người dùng) RLS có **3 cấp quyền** qua `app_metadata.role`: `viewer` (chỉ xem), `operator` (xem/sửa/xóa TỪNG luồng, không xóa cả rack/thiết bị), `admin` (mọi quyền) — xem migration `20260806000001`. Sidebar hiện badge role đang đăng nhập (`components/Sidebar.tsx`) để tự test đổi vai trò (đăng xuất/đăng nhập lại bằng tài khoản khác qua `npm run create-role-accounts`). **Chưa làm**: UI tự ẩn/khóa nút theo role (viewer bấm nút sửa/xóa vẫn thấy, chỉ bị RLS chặn ở tầng CSDL và hiện lỗi Postgres thô chưa dịch — xem Đợt 4 "dịch lỗi Postgres"), nhật ký hoạt động — thêm khi thật sự cần, thiết kế component sao cho dễ thêm sau (không hardcode kiểu single-user sâu vào logic UI).
 
 ## Công cụ phụ trợ (tùy chọn, không bắt buộc)
 - **Deep Research skill** (bên thứ ba, không phải của Anthropic): https://github.com/Weizhena/Deep-Research-skills — skill cho Claude Code hỗ trợ nghiên cứu sâu có cấu trúc (outline → research song song → report markdown) qua các lệnh `/research`, `/research-deep`, `/research-report`. Cài bằng cách copy vào `~/.claude/skills/` theo hướng dẫn trong README của repo.
@@ -52,6 +52,16 @@ Người dùng là kỹ sư Điện tử Viễn thông (ETE), không phải lậ
   - **Không dùng cho**: viết code CRUD, import Excel, hay UI thông thường của app — các việc này làm trực tiếp theo `architecture.md`/mục tiêu MVP ở trên, không cần qua research skill.
 
 
-- Không tự thêm authentication ở giai đoạn MVP.
+- ~~Không tự thêm authentication ở giai đoạn MVP~~ — **đổi 2026-08-06**: đã bật
+  Supabase Auth thật (email+password, 1 tài khoản), vì rà soát bảo mật
+  (`HSKT-audit-2026-08-03.md`) phát hiện anon key public + RLS `mvp_allow_all`
+  cho phép BẤT KỲ AI mở `hskt.vercel.app` đọc/ghi/xóa toàn bộ CSDL qua REST
+  API, không cần qua app. Người dùng xác nhận chấp nhận đổi nguyên tắc MVP
+  này vì lỗ hổng bảo mật thật quan trọng hơn. Chi tiết triển khai: xem
+  `architecture.md` (mục ghi đợt Auth, 2026-08-06) — `lib/supabase.ts` (client
+  trình duyệt), `lib/supabase-server.ts` (client Server Component/middleware),
+  `scripts/lib/supabaseAdmin.ts` (client script CLI), `middleware.ts` (chặn
+  route chưa đăng nhập). Vẫn giữ tinh thần "không viết backend riêng" —
+  Supabase Auth là tính năng gốc của Supabase, không phải backend thứ hai.
 - Không tự thêm cột/bảng ngoài `architecture.md`.
 - Không tối ưu hóa/refactor lớn khi chưa có yêu cầu — ưu tiên chạy đúng, dễ hiểu, dễ sửa.

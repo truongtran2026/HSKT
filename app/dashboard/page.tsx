@@ -1,6 +1,8 @@
 import { fetchAllTrunkPorts } from "@/lib/trunkPorts";
 import { derivePortStatus } from "@/lib/portStatus";
 import DashboardClient, { type RouteStat, type OverallStat } from "@/components/dashboard/DashboardClient";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
@@ -8,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 const UNNAMED_ROUTE = "(chưa đặt tên tuyến)";
 
-async function getDashboardData(): Promise<{ routes: RouteStat[]; overall: OverallStat }> {
-  const ports = await fetchAllTrunkPorts();
+async function getDashboardData(client: SupabaseClient): Promise<{ routes: RouteStat[]; overall: OverallStat }> {
+  const ports = await fetchAllTrunkPorts(client);
 
   const map = new Map<string, RouteStat>();
   const overall: OverallStat = { total: 0, inUse: 0, standby: 0, empty: 0 };
@@ -38,7 +40,8 @@ async function getDashboardData(): Promise<{ routes: RouteStat[]; overall: Overa
 }
 
 export default async function DashboardPage() {
-  const { routes, overall } = await getDashboardData();
+  const supabase = await createSupabaseServerClient();
+  const { routes, overall } = await getDashboardData(supabase);
   return (
     <div>
       <h1 className="text-2xl font-bold text-primary-800">Dashboard</h1>

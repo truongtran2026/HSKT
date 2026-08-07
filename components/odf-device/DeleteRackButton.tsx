@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Xóa hẳn 1 rack ODF/DDF thiết bị (yêu cầu người dùng 2026-07-28) — CHỈ dùng
 // cho domain='device' (xem app/odf-trunk/[rackId]/page.tsx, chỉ render nút
@@ -33,13 +34,13 @@ export default function DeleteRackButton({ rackId, rackCode }: { rackId: string;
     const { error: portErr } = await supabase.from("ports").delete().eq("rack_id", rackId);
     if (portErr) {
       setBusy(false);
-      setError(portErr.message);
+      setError(translatePgError(portErr.message));
       return;
     }
     const { error: rackErr } = await supabase.from("racks").delete().eq("id", rackId);
     if (rackErr) {
       setBusy(false);
-      setError(rackErr.message);
+      setError(translatePgError(rackErr.message));
       return;
     }
     router.push("/odf-device");

@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TrunkCircuitMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
 import { findMirrorTrunkCircuits, deleteTrunkCircuitToResync } from "@/lib/mirrorTrunkCircuits";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Khung rà soát CHIỀU NGƯỢC của mục 38/39 (yêu cầu người dùng 2026-07-31,
 // xem lib/reverseDeviceTrunkAudit.ts để hiểu đầy đủ lý do) — luồng trung kế
@@ -58,7 +60,7 @@ export default function TrunkMissingDeviceMirrorTab({ items }: { items: TrunkCir
     setError(null);
     setBusyId(item.trunkCircuitId);
     try {
-      const mirrorMap = await findMirrorTrunkCircuits([item.trunkCircuitId]);
+      const mirrorMap = await findMirrorTrunkCircuits(supabase, [item.trunkCircuitId]);
       const cascaded = [...mirrorMap.values()];
       const cascadeNote =
         cascaded.length > 0 ? ` Lưu ý: ${cascaded.length} luồng mirror khác (${cascaded.map((m) => m.circuitName).join(", ")}) sẽ mất theo.` : "";
@@ -70,10 +72,10 @@ export default function TrunkMissingDeviceMirrorTab({ items }: { items: TrunkCir
         setBusyId(null);
         return;
       }
-      await deleteTrunkCircuitToResync(item.trunkCircuitId, cascaded);
+      await deleteTrunkCircuitToResync(supabase, item.trunkCircuitId, cascaded);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusyId(null);
     }

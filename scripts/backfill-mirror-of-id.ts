@@ -22,7 +22,8 @@ const COMMIT = process.argv.includes("--commit");
 const ORIGIN_ID_RE = /luồng gốc id ([0-9a-fA-F-]{36})/;
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
+  const supabase = getSupabaseAdmin();
 
   const { data, error } = await supabase.from("circuits").select("id, name, notes, mirror_of_id").ilike("notes", "%luồng gốc id%");
   if (error) throw error;

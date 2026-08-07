@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import type { UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
 import { linkDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Khung rà soát "2 luồng THIẾT BỊ-THIẾT BỊ (cả 2 đầu local ADN1) đã có sẵn cả
 // 2 phía, khớp đúng thiết bị đích + Trib, nhưng chưa liên kết mirror_of_id"
@@ -70,11 +72,11 @@ export default function UnlinkedDeviceMirrorPairsTab({ items }: { items: Unlinke
     setError(null);
     setBusyKey(key);
     try {
-      await linkDeviceDevicePair(item.circuitAId, item.circuitBId, choice === "none" ? undefined : choice);
+      await linkDeviceDevicePair(supabase, item.circuitAId, item.circuitBId, choice === "none" ? undefined : choice);
       setLinkedKeys((prev) => new Set(prev).add(key));
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusyKey(null);
     }

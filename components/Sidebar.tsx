@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
+import { supabase } from "@/lib/supabase";
 
 // "Xem" và "Sửa" từng tách riêng ở giai đoạn skeleton (khi CRUD thật chưa
 // tồn tại) nhưng ODF trung kế đã gộp xem+sửa ngay tại chỗ từ lâu (PortTable
@@ -15,6 +16,16 @@ import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
 // luồng thiết bị" — yêu cầu người dùng 2026-07-28) mới là nơi duy nhất
 // Thêm/Sửa/Xóa chi tiết luồng. Dashboard (thống kê tổng quan) tách nhóm riêng
 // lên đầu, phần hồ sơ/chi tiết số liệu để nhóm dưới cho đỡ rối.
+//
+// Đợt 4 audit mục 3.3 (2026-08-07) — người dùng XÁC NHẬN giữ "Hồ sơ ODF Thiết
+// bị" và "Hồ sơ đấu nối" tách riêng (đề xuất gộp 2 mục này của audit ĐI NGƯỢC
+// quyết định 2026-07-28 ở trên, hỏi lại và người dùng chọn giữ nguyên — xem
+// architecture.md mục 73). Chỉ làm phần KHÔNG mâu thuẫn của đề xuất: gom "Chất
+// lượng dữ liệu"/"Danh mục thiết bị"/"Thư viện vị trí thiết bị"/"Import Export"/
+// "Cài đặt chung" (ít dùng hằng ngày hơn 3 mục Hồ sơ) vào 1 nhóm "Quản trị";
+// bỏ "Tìm kiếm nhanh" khỏi sidebar — Cmd/Ctrl+K + nút 🔍 đã thay thế tốt hơn,
+// trang /search vẫn còn, chỉ chuyển link vào trong CommandPalette (xem
+// CommandPalette.tsx, dòng "Xem tất cả kết quả tìm kiếm").
 const menuGroups = [
   {
     label: "Thống kê",
@@ -26,15 +37,15 @@ const menuGroups = [
       { href: "/odf-trunk", label: "Hồ sơ ODF Trung kế" },
       { href: "/odf-device", label: "Hồ sơ ODF Thiết bị" },
       { href: "/odf-device/sua-luong", label: "Hồ sơ đấu nối" },
-      { href: "/search", label: "Tìm kiếm nhanh" },
-      { href: "/data-quality", label: "Chất lượng dữ liệu" },
     ],
   },
   {
-    label: "Cài đặt",
+    label: "Quản trị",
     items: [
-      { href: "/import-export", label: "Import / Export Excel" },
+      { href: "/data-quality", label: "Chất lượng dữ liệu" },
       { href: "/devices", label: "Danh mục thiết bị" },
+      { href: "/odf-device/vi-tri-thiet-bi", label: "Thư viện vị trí thiết bị" },
+      { href: "/import-export", label: "Import / Export Excel" },
       { href: "/settings", label: "Cài đặt chung" },
     ],
   },
@@ -42,8 +53,27 @@ const menuGroups = [
 
 const PIN_STORAGE_KEY = "sidebar-pinned";
 
-export default function Sidebar() {
+// Nhãn hiển thị + màu cho từng role (mở rộng Đợt 3, 2026-08-06 — người dùng
+// yêu cầu 3 cấp quyền viewer/operator/admin thay vì chỉ 1 tài khoản, xem
+// migration 20260806000001_authenticated_rls.sql). Badge này CHỈ để hiển thị
+// đang đăng nhập bằng tài khoản nào khi tự test đổi vai trò (đăng xuất/đăng
+// nhập lại bằng tài khoản khác) — không phải chốt chặn quyền, RLS mới là nơi
+// chặn thật.
+const ROLE_LABEL: Record<string, string> = {
+  admin: "Admin",
+  operator: "Operator",
+  viewer: "Viewer (chỉ xem)",
+};
+
+export default function Sidebar({
+  userEmail,
+  userRole,
+}: {
+  userEmail: string | null;
+  userRole: string | null;
+}) {
   const pathname = usePathname();
+  const router = useRouter();
   // Ghim/bỏ ghim (yêu cầu người dùng 2026-07-28: tăng bề rộng khung nhìn khi
   // cần cập nhật hồ sơ) — mặc định pinned=true (giữ đúng hành vi cũ cho lần
   // mở đầu tiên), đọc lại lựa chọn đã lưu ở useEffect (localStorage chỉ có ở
@@ -142,7 +172,31 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-5 py-3 border-t border-primary-600 text-xs text-primary-200">
-        Giai đoạn MVP · single-user
+        <div className="flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate" title={userEmail ?? ""}>
+            {userEmail ?? "—"}
+            {userRole && (
+              <span className="ml-1.5 rounded bg-primary-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                {ROLE_LABEL[userRole] ?? userRole}
+              </span>
+            )}
+            {userEmail && !userRole && (
+              <span className="ml-1.5 rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                chưa gán quyền
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push("/login");
+            }}
+            className="shrink-0 rounded border border-primary-500 px-2 py-0.5 text-primary-100 hover:bg-primary-600/60 hover:text-white"
+          >
+            Đăng xuất
+          </button>
+        </div>
       </div>
     </>
   );

@@ -10,6 +10,7 @@ import { findTrunkCircuitsMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAu
 import { findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
 import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import DataQualityClient from "@/components/data-quality/DataQualityClient";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 // Trang "Chất lượng dữ liệu" (yêu cầu người dùng 2026-07-29) — gộp 3 khung
 // rà soát trước đây nằm rời rạc (Chuyển tiếp chưa chuẩn form mỗi rack/danh
@@ -20,17 +21,18 @@ import DataQualityClient from "@/components/data-quality/DataQualityClient";
 export const dynamic = "force-dynamic";
 
 export default async function DataQualityPage() {
+  const supabase = await createSupabaseServerClient();
   const [devices, circuits, trunkPorts, ignoredPairs, trunkMissingDeviceItems, devicePositionMap] = await Promise.all([
-    fetchDevices(),
-    fetchDeviceCircuits(),
-    fetchAllOdfPorts(),
-    fetchIgnoredDevicePairs(),
-    findTrunkCircuitsMissingDeviceMirror(),
-    fetchDevicePositionMap(),
+    fetchDevices(supabase),
+    fetchDeviceCircuits(supabase),
+    fetchAllOdfPorts(supabase),
+    fetchIgnoredDevicePairs(supabase),
+    findTrunkCircuitsMissingDeviceMirror(supabase),
+    fetchDevicePositionMap(supabase),
   ]);
   // fetchNonConformingTransitLinks/findUnlinkedMirrorPairs cần trunkPorts đã
   // tải xong (đối chiếu phần ODF bên trong) nên chờ riêng, không gộp Promise.all.
-  const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts);
+  const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts);
   // Bước 4e (HSKT-dot-1-brief.md) — luồng có ≥2 port ghi "Chuyển tiếp" khác
   // nhau (thuần, không query thêm — trunkPorts đã có sẵn transitText/circuit
   // cho từng port). Xem lib/transitLinks.ts findDivergentTransitGroups().
@@ -47,7 +49,7 @@ export default async function DataQualityPage() {
   // Ô "Chuyển tiếp" ghi sai tọa độ ODF so với Vị trí thiết bị đã xác nhận
   // (yêu cầu người dùng 2026-08-02, phát hiện từ ca thật ADN1.P2(2/1/2) — xem
   // lib/transitPositionMismatches.ts).
-  const transitPositionMismatches = await findTransitPositionMismatches(devicePositionMap);
+  const transitPositionMismatches = await findTransitPositionMismatches(supabase, devicePositionMap);
   // Luồng ở Hồ sơ đấu nối (circuits.device_position_own) lệch tọa độ ODF so
   // với thư viện Vị trí thiết bị (yêu cầu người dùng 2026-08-03, phát hiện
   // qua ca thật ADN1.ADX — xem lib/devicePositionMismatches.ts).

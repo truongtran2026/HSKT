@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Gợi ý "vừa chọn vừa gõ tay" cho form nhập/sửa luồng ODF trung kế — lấy từ
 // chính dữ liệu đã có (không phải danh sách cứng), để luôn khớp thực tế và
@@ -10,10 +10,14 @@ export interface CircuitOptions {
   transitTexts: string[];
 }
 
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
 async function fetchDistinctNonNull(
+  client: SupabaseClient,
   table: "circuits" | "transit_links",
   column: "interface_type" | "execution_station_text" | "raw_text"
 ): Promise<string[]> {
+  const supabase = client;
   const values = new Set<string>();
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
@@ -33,11 +37,11 @@ async function fetchDistinctNonNull(
   return [...values];
 }
 
-export async function fetchCircuitOptions(): Promise<CircuitOptions> {
+export async function fetchCircuitOptions(client: SupabaseClient): Promise<CircuitOptions> {
   const [interfaceTypes, stationRaw, transitTexts] = await Promise.all([
-    fetchDistinctNonNull("circuits", "interface_type"),
-    fetchDistinctNonNull("circuits", "execution_station_text"),
-    fetchDistinctNonNull("transit_links", "raw_text"),
+    fetchDistinctNonNull(client, "circuits", "interface_type"),
+    fetchDistinctNonNull(client, "circuits", "execution_station_text"),
+    fetchDistinctNonNull(client, "transit_links", "raw_text"),
   ]);
 
   // "Trạm thực hiện" cho phép chọn NHIỀU trạm cùng lúc (nối bằng dấu phẩy) —

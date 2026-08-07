@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { normalizeDevicePositionKey } from "@/lib/deviceNotes";
@@ -307,7 +307,10 @@ export function findMismatchedLinkedPairs(trunkPorts: TrunkPortRow[], deviceCirc
 // = phần Trib tách được từ Chuyển tiếp (yêu cầu người dùng 2026-08-02: "port
 // trib cũng phải đồng bộ luôn... thống nhất 1 tên thôi" — copy NGUYÊN VĂN từ
 // Chuyển tiếp, không tự quy đổi hệ ký hiệu).
-export async function applySyncFromTrunk(detail: CircuitPairDetail): Promise<void> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function applySyncFromTrunk(client: SupabaseClient, detail: CircuitPairDetail): Promise<void> {
+  const supabase = client;
   const update: Record<string, string | null> = {
     name: detail.trunkName,
     device_position_next: detail.trunkOwnPositionCanonical,
@@ -328,7 +331,8 @@ export async function applySyncFromTrunk(detail: CircuitPairDetail): Promise<voi
 // (tiếp theo) không cần ghi gì bên trung kế — đó vốn CHÍNH LÀ vị trí port
 // thật (không phải text lưu riêng), tự động đúng vì cặp được xác định qua
 // đúng port này.
-export async function applySyncFromDevice(detail: CircuitPairDetail): Promise<void> {
+export async function applySyncFromDevice(client: SupabaseClient, detail: CircuitPairDetail): Promise<void> {
+  const supabase = client;
   const { error: nameErr } = await supabase.from("circuits").update({ name: detail.deviceName }).eq("id", detail.trunkCircuitId);
   if (nameErr) throw nameErr;
 
@@ -340,7 +344,7 @@ export async function applySyncFromDevice(detail: CircuitPairDetail): Promise<vo
     // writeTransitForPorts() tự bảo vệ 11 luồng khuếch đại/DWDM đã xác nhận
     // có Tx/Rx đi khác port thật — không ép ghi đè khi phát hiện port đã có
     // ≥2 giá trị khác nhau.
-    await writeTransitForPorts(detail.trunkPortIds, newRawText);
+    await writeTransitForPorts(client, detail.trunkPortIds, newRawText);
   }
 
   if (!detail.isLinked) {

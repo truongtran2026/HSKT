@@ -36,6 +36,7 @@ import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStat
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
+import { confirmBulkDelete } from "@/lib/dangerousConfirm";
 import {
   findMirrorTrunkCircuits,
   cleanupAfterMirrorCascade,
@@ -45,6 +46,7 @@ import {
 } from "@/lib/mirrorTrunkCircuits";
 import { autoCreateMirrorForCircuit, replaceMismatchedDeviceMirror } from "@/lib/deviceDeviceSync";
 import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
+import { translatePgError } from "@/lib/translatePgError";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 
@@ -555,7 +557,7 @@ export default function DeviceCircuitList({
     const fullName = `ADN1.${parsed.deviceName.trim()}`;
     if (!confirm(`Chưa có thiết bị "${fullName}" trong hệ thống (nhận diện từ ô Đối phương).\n\nTạo mới thiết bị này?`)) return;
     try {
-      const stationId = await getAdn1StationId();
+      const stationId = await getAdn1StationId(supabase);
       const { error: err } = await supabase.from("devices").insert({
         station_id: stationId,
         name: fullName,
@@ -565,7 +567,7 @@ export default function DeviceCircuitList({
       });
       if (err) throw err;
     } catch (e) {
-      setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Luồng đã lưu, nhưng tạo thiết bị "${fullName}" thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
     }
   }
 
@@ -611,7 +613,7 @@ export default function DeviceCircuitList({
       );
       if (useExisting) {
         try {
-          await saveDeviceAlias(looseCandidate.id, trimmed);
+          await saveDeviceAlias(supabase, looseCandidate.id, trimmed);
         } catch {
           // Lỗi lưu alias không quan trọng bằng việc lưu được luồng — vẫn
           // tiếp tục dùng thiết bị đã tìm thấy.
@@ -625,7 +627,7 @@ export default function DeviceCircuitList({
       return { status: "declined" };
     }
     try {
-      const stationId = await getAdn1StationId();
+      const stationId = await getAdn1StationId(supabase);
       const { data, error: err } = await supabase
         .from("devices")
         .insert({ station_id: stationId, name: fullName, coordinate_text: null, full_label: fullName, source: "auto" })
@@ -661,7 +663,7 @@ export default function DeviceCircuitList({
     // (KHÔNG âm thầm bỏ qua/chỉ báo lỗi mềm như trước — đó là lỗ hổng khiến
     // 2 bên tiếp tục lệch nhau vô thời hạn).
     try {
-      const result = await autoCreateMirrorForCircuit(circuitId);
+      const result = await autoCreateMirrorForCircuit(supabase, circuitId);
       if (result.status === "mismatch") {
         const ok = confirm(
           `Thiết bị "${result.targetDeviceName}" đã có 1 luồng cùng tên "${sourceName}" nhưng Trib ghi "${
@@ -670,20 +672,20 @@ export default function DeviceCircuitList({
         );
         if (ok) {
           try {
-            const retry = await replaceMismatchedDeviceMirror(result.existingCircuitId, circuitId);
-            if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+            const retry = await replaceMismatchedDeviceMirror(supabase, result.existingCircuitId, circuitId);
+            if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${translatePgError(retry.message)}`);
           } catch (e) {
-            setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+            setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
           }
         }
       } else if (result.status === "error") {
-        setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${result.message}`);
+        setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${translatePgError(result.message)}`);
       }
     } catch (e) {
-      setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
     }
     try {
-      const trunkResult = await autoCreateTrunkMirrorForCircuit(circuitId);
+      const trunkResult = await autoCreateTrunkMirrorForCircuit(supabase, circuitId);
       if (trunkResult.status === "occupied") {
         if (trunkResult.occupantCircuitName.trim() === sourceName.trim()) {
           // Tên khớp hệt -> chắc chắn cùng 1 luồng, chỉ chưa gắn liên kết —
@@ -692,7 +694,7 @@ export default function DeviceCircuitList({
             .from("circuits")
             .update({ mirror_of_id: circuitId })
             .eq("id", trunkResult.occupantCircuitId);
-          if (linkErr) setError(`Luồng đã lưu, nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${linkErr.message}`);
+          if (linkErr) setError(`Luồng đã lưu, nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${translatePgError(linkErr.message)}`);
         } else {
           const ok = confirm(
             `Port ${trunkResult.rackCode} (${trunkResult.portNumbers.join(",")}) đang có luồng trung kế khác: "${
@@ -701,18 +703,18 @@ export default function DeviceCircuitList({
           );
           if (ok) {
             try {
-              const retry = await replaceOccupantAndCreateTrunkMirror(trunkResult.occupantCircuitId, circuitId);
-              if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+              const retry = await replaceOccupantAndCreateTrunkMirror(supabase, trunkResult.occupantCircuitId, circuitId);
+              if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${translatePgError(retry.message)}`);
             } catch (e) {
-              setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+              setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
             }
           }
         }
       } else if (trunkResult.status === "error") {
-        setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${trunkResult.message}`);
+        setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${translatePgError(trunkResult.message)}`);
       }
     } catch (e) {
-      setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Luồng đã lưu, nhưng tự tạo mirror bên ODF trung kế thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
     }
   }
 
@@ -1042,9 +1044,9 @@ export default function DeviceCircuitList({
     setError(null);
     let mirror: MirrorTrunkMatch | null = null;
     try {
-      mirror = (await findMirrorTrunkCircuits([c.id])).get(c.id) ?? null;
+      mirror = (await findMirrorTrunkCircuits(supabase, [c.id])).get(c.id) ?? null;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
       return;
     }
     const mirrorNote = mirror
@@ -1061,16 +1063,16 @@ export default function DeviceCircuitList({
     const { error: err } = await supabase.from("circuits").delete().eq("id", c.id);
     if (err) {
       setBusy(false);
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     if (mirror) {
       try {
-        await cleanupAfterMirrorCascade([mirror]);
+        await cleanupAfterMirrorCascade(supabase, [mirror]);
       } catch (e) {
         setError(
           `Đã xóa luồng thiết bị (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
-            e instanceof Error ? e.message : String(e)
+            e instanceof Error ? translatePgError(e.message) : String(e)
           }`
         );
       }
@@ -1120,16 +1122,20 @@ export default function DeviceCircuitList({
     const ids = [...selected];
     let mirrors: MirrorTrunkMatch[] = [];
     try {
-      mirrors = [...(await findMirrorTrunkCircuits(ids)).values()];
+      mirrors = [...(await findMirrorTrunkCircuits(supabase, ids)).values()];
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
       return;
     }
     const mirrorNote =
       mirrors.length > 0
         ? `\n\nLƯU Ý: ${mirrors.length} luồng trong số này đã có luồng "mirror" tự sinh bên Hồ sơ ODF Trung kế — sẽ bị xóa theo, (các) port trung kế tương ứng trở về trạng thái trống.`
         : "";
-    if (!confirm(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.${mirrorNote}`)) return;
+    // confirmBulkDelete (Đợt 3.4 audit, 2026-08-07) thay confirm() OK/Cancel
+    // thường — bắt gõ "XÓA" + giới hạn 20 dòng/lần, xóa hàng loạt khó hoàn
+    // tác hơn xóa 1 dòng nên cần rào chắn mạnh hơn.
+    if (!confirmBulkDelete(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.${mirrorNote}`, selected.size))
+      return;
     setBusy(true);
     const chunkSize = 200;
     for (let i = 0; i < ids.length; i += chunkSize) {
@@ -1137,17 +1143,17 @@ export default function DeviceCircuitList({
       const { error: err } = await supabase.from("circuits").delete().in("id", batch);
       if (err) {
         setBusy(false);
-        setError(err.message);
+        setError(translatePgError(err.message));
         return;
       }
     }
     if (mirrors.length > 0) {
       try {
-        await cleanupAfterMirrorCascade(mirrors);
+        await cleanupAfterMirrorCascade(supabase, mirrors);
       } catch (e) {
         setError(
           `Đã xóa các luồng thiết bị (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
-            e instanceof Error ? e.message : String(e)
+            e instanceof Error ? translatePgError(e.message) : String(e)
           }`
         );
       }
@@ -1223,7 +1229,7 @@ export default function DeviceCircuitList({
       }
       if (resolution.status === "error") {
         setBusy(false);
-        setError(`Chưa lưu luồng: tạo thiết bị "${edit.positionNextDevice}" thất bại — ${resolution.message}`);
+        setError(`Chưa lưu luồng: tạo thiết bị "${edit.positionNextDevice}" thất bại — ${translatePgError(resolution.message)}`);
         return;
       }
       resolvedNextDevice = resolution;
@@ -1245,7 +1251,7 @@ export default function DeviceCircuitList({
       .eq("id", edit.id);
     if (err) {
       setBusy(false);
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     const conflictOwn = await maybeGrowLibrary(edit.deviceName, edit.tribText, edit.positionOwn);
@@ -1285,14 +1291,14 @@ export default function DeviceCircuitList({
       const newDeviceName = edit.name.trim() || "(chưa đặt tên)";
       if (newDeviceName !== pairDetail.trunkName.trim()) {
         try {
-          await applySyncFromDevice({
+          await applySyncFromDevice(supabase, {
             ...pairDetail,
             deviceName: newDeviceName,
             deviceOwnPosition: edit.positionOwn.trim() || null,
             deviceTrib: edit.tribText.trim() || null,
           });
         } catch (e) {
-          setError(`Đã lưu luồng, nhưng đồng bộ tên sang trung kế thất bại: ${e instanceof Error ? e.message : String(e)}`);
+          setError(`Đã lưu luồng, nhưng đồng bộ tên sang trung kế thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
         }
       }
     }
@@ -1314,10 +1320,10 @@ export default function DeviceCircuitList({
     setBusy(true);
     setError(null);
     try {
-      await unlinkCircuitMirror(circuitId);
+      await unlinkCircuitMirror(supabase, circuitId);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }
@@ -1543,7 +1549,7 @@ export default function DeviceCircuitList({
       }
       if (resolution.status === "error") {
         setBusy(false);
-        setError(`Chưa lưu luồng: tạo thiết bị "${createDraft.positionNextDevice}" thất bại — ${resolution.message}`);
+        setError(`Chưa lưu luồng: tạo thiết bị "${createDraft.positionNextDevice}" thất bại — ${translatePgError(resolution.message)}`);
         return;
       }
       resolvedNextDevice = resolution;
@@ -1574,7 +1580,7 @@ export default function DeviceCircuitList({
       .single();
     if (err) {
       setBusy(false);
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     const conflictOwn = await maybeGrowLibrary(createDeviceName, createDraft.tribText, createDraft.positionOwn);
@@ -2402,7 +2408,7 @@ export default function DeviceCircuitList({
                   </td>
                   <td className="px-4 py-2 text-slate-700 break-words">
                     {displayName(c) || "—"}
-                    <MirrorLinkBadge status={mirrorLinkStatuses?.[c.id]} />
+                    <MirrorLinkBadge status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
                   <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>

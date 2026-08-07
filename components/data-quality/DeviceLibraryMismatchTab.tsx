@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import type { DeviceCircuitLibraryMismatch } from "@/lib/devicePositionMismatches";
 import { applyLibraryFromCircuit, applyCircuitFromLibrary, applyCustomPosition } from "@/lib/devicePositionMismatches";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Khung rà soát "luồng ở Hồ sơ đấu nối lệch tọa độ ODF so với thư viện Vị trí
 // thiết bị" (yêu cầu người dùng 2026-08-03, phát hiện qua ca thật ADN1.ADX) —
@@ -126,13 +128,13 @@ function MismatchRow({ item, onDone }: { item: DeviceCircuitLibraryMismatch; onD
     setError(null);
     setBusy(true);
     try {
-      if (choice === "circuit") await applyLibraryFromCircuit(item);
-      else if (choice === "library") await applyCircuitFromLibrary(item);
-      else await applyCustomPosition(item, customValue);
+      if (choice === "circuit") await applyLibraryFromCircuit(supabase, item);
+      else if (choice === "library") await applyCircuitFromLibrary(supabase, item);
+      else await applyCustomPosition(supabase, item, customValue);
       onDone();
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }

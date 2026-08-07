@@ -10,14 +10,16 @@
 // Dùng THẲNG các hàm live thật (matchTrunkPosition/fetchAllOdfPorts/
 // fetchDeviceCircuits/splitOdfDeviceStructure) thay vì chép lại thuật toán,
 // để không lệch với UI đang chạy (bài học ở architecture.md mục 9: sửa thuật
-// toán gốc mà quên sửa bản chép sẽ lệch kết quả). Các file lib đó
-// `import { supabase } from "@/lib/supabase"`, đọc process.env NGAY lúc
-// import module — nạp env TRƯỚC bằng loadEnv() rồi mới `await import(...)`
-// ĐỘNG (dynamic import, không hoist như import tĩnh) để đảm bảo thứ tự chạy
-// đúng, KHÔNG cần cờ `-r dotenv/config` hay biến môi trường phụ nào khi gọi
-// qua `npm run` (khác cách 2 script `normalize-odf-positions.ts`/
-// `fix-100g-label.ts` trước đây phải chép nguyên văn thuật toán vì chưa nghĩ
-// ra cách này).
+// toán gốc mà quên sửa bản chép sẽ lệch kết quả). Đợt 3 (2026-08-06): các hàm
+// lib đó không còn tự import `lib/supabase.ts` nữa — nay nhận tham số
+// `client: SupabaseClient` BẮT BUỘC, script tự lấy qua
+// `scripts/lib/supabaseAdmin.ts` (service role, bỏ qua RLS) rồi truyền vào.
+// Vẫn giữ `await import(...)` ĐỘNG (dynamic import, không hoist như import
+// tĩnh) cho module lấy client này bên trong `main()` — nạp env TRƯỚC bằng
+// loadEnv() rồi mới import động để đảm bảo thứ tự chạy đúng, KHÔNG cần cờ
+// `-r dotenv/config` hay biến môi trường phụ nào khi gọi qua `npm run` (khác
+// cách 2 script `normalize-odf-positions.ts`/`fix-100g-label.ts` trước đây
+// phải chép nguyên văn thuật toán vì chưa nghĩ ra cách này).
 //
 // Chạy: npm run audit-device-trunk-sync
 import * as path from "node:path";
@@ -26,9 +28,12 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
 async function main() {
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchAllOdfPorts, matchTrunkPosition } = await import("../lib/trunkPorts");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
   const { splitOdfDeviceStructure } = await import("../lib/parsers/transit-text");
+
+  const supabase = getSupabaseAdmin();
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
   type TrunkPositionMatch = ReturnType<typeof matchTrunkPosition>;
@@ -90,8 +95,8 @@ async function main() {
   }
 
   console.log("Đang tải dữ liệu port (cả trung kế + ODF/DDF nội bộ) và luồng thiết bị...");
-  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts();
-  const circuits: DeviceCircuitRow[] = await fetchDeviceCircuits();
+  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts(supabase);
+  const circuits: DeviceCircuitRow[] = await fetchDeviceCircuits(supabase);
   console.log(`Tổng ${trunkPorts.length} port, ${circuits.length} luồng thiết bị.\n`);
 
   let ownMatchedTrunk = 0;

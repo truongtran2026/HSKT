@@ -20,13 +20,16 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
 async function main() {
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
   const { fetchDevices } = await import("../lib/devices");
   const { findMissingDeviceMirrors } = await import("../lib/deviceDeviceSync");
 
+  const supabase = getSupabaseAdmin();
+
   console.log("Đang tải dữ liệu luồng thiết bị + danh mục thiết bị...");
-  const circuits = await fetchDeviceCircuits();
-  const devices = await fetchDevices();
+  const circuits = await fetchDeviceCircuits(supabase);
+  const devices = await fetchDevices(supabase);
 
   const { gaps, mismatches } = findMissingDeviceMirrors(circuits, devices);
 

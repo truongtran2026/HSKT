@@ -1,10 +1,21 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
-// MVP giai đoạn 1 = single-user, chưa bật Supabase Auth/RLS (architecture.md
-// mục 2). Vì vậy 1 client dùng anon key là đủ cho cả Server Component lẫn
-// Client Component — không cần phân biệt client/server helper riêng như khi
-// có phiên đăng nhập (đó là việc của giai đoạn 2 khi bật Auth, lúc đó sẽ cần
-// @supabase/ssr để đọc cookie phiên).
+// Đợt 3 bảo mật (architecture.md, yêu cầu người dùng 2026-08-06: bật Supabase
+// Auth thật, đổi nguyên tắc "không auth ở MVP" cũ trong CLAUDE.md vì lỗ hổng
+// bảo mật thật — anon key public + RLS mvp_allow_all cho phép AI CŨNG đọc/
+// ghi/xóa toàn bộ CSDL qua REST API, không cần qua app).
+//
+// Client này giờ CHỈ dùng cho trình duyệt (Client Component, `"use client"`)
+// — createBrowserClient (thay cho createClient trơn trước đây) tự đọc/ghi
+// phiên đăng nhập qua cookie, để middleware.ts và Server Component (đọc cookie
+// qua next/headers) thấy ĐÚNG 1 phiên đó. Đây là lý do phải tách riêng client
+// cho Server Component — xem lib/supabase-server.ts (tạo mới mỗi request,
+// KHÔNG phải singleton như file này) và scripts/lib/supabaseAdmin.ts (service
+// role key, dùng cho script CLI chạy `tsx`, không có cookie/next-headers).
+//
+// Giữ NGUYÊN tên export `supabase` — mọi Client Component gọi thẳng
+// `supabase.from(...)` (9 file: PortTable.tsx, DeviceCircuitList.tsx...)
+// không cần sửa gì cho việc đổi này.
 //
 // Không dùng generic createClient<Database>(...): bản @supabase/postgrest-js
 // hiện tại đòi hỏi kiểu schema rất chi tiết (xem lib/database.types.ts), viết
@@ -30,7 +41,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // nhiều lần vẫn không thấy — số dòng bảng đứng yên bất kể dữ liệu thật đã
 // tăng). Ép fetch riêng của client này luôn "no-store" thì Next.js mới thực
 // sự không cache, áp dụng chung cho MỌI bảng, không chỉ device_position_map.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey, {
   global: {
     fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
   },

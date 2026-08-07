@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { looseDeviceNameSegments, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -74,7 +74,10 @@ function extractNumbers(text: string): number[] {
   return [...text.matchAll(/\d+/g)].map((m) => parseInt(m[0], 10));
 }
 
-export async function findTransitPositionMismatches(devicePositionMap: DevicePositionMapRow[]): Promise<TransitPositionMismatch[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function findTransitPositionMismatches(client: SupabaseClient, devicePositionMap: DevicePositionMapRow[]): Promise<TransitPositionMismatch[]> {
+  const supabase = client;
   const pageSize = 1000;
   const all: RawRow[] = [];
   for (let from = 0; ; from += pageSize) {
@@ -142,14 +145,16 @@ export async function findTransitPositionMismatches(devicePositionMap: DevicePos
 // KHÔNG có hướng nào tự động mặc định.
 
 // Hướng 1: Chuyển tiếp đúng -> ghi đè thư viện Vị trí thiết bị theo Chuyển tiếp.
-export async function applyLibraryFromTransit(m: TransitPositionMismatch): Promise<void> {
+export async function applyLibraryFromTransit(client: SupabaseClient, m: TransitPositionMismatch): Promise<void> {
+  const supabase = client;
   const { error } = await supabase.from("device_position_map").update({ odf_position: m.transitOdfPart }).eq("id", m.devicePositionMapId);
   if (error) throw error;
 }
 
 // Hướng 2: Thư viện Vị trí thiết bị đúng -> ghi đè Chuyển tiếp theo thư viện
 // (giữ nguyên phần "Thiết bị (trib)").
-export async function applyTransitFromLibrary(m: TransitPositionMismatch): Promise<void> {
+export async function applyTransitFromLibrary(client: SupabaseClient, m: TransitPositionMismatch): Promise<void> {
+  const supabase = client;
   const newRawText = `${m.libraryOdfPosition} - ${m.devicePortText}`;
   const { error } = await supabase.from("transit_links").update({ raw_text: newRawText }).eq("id", m.transitLinkId);
   if (error) throw error;
@@ -157,7 +162,8 @@ export async function applyTransitFromLibrary(m: TransitPositionMismatch): Promi
 
 // Hướng 3: CẢ HAI đều sai -> người dùng tự gõ tọa độ đúng, ghi vào CẢ 2 nơi
 // cho khớp nhau lại.
-export async function applyCustomPosition(m: TransitPositionMismatch, customOdfPosition: string): Promise<void> {
+export async function applyCustomPosition(client: SupabaseClient, m: TransitPositionMismatch, customOdfPosition: string): Promise<void> {
+  const supabase = client;
   const trimmed = customOdfPosition.trim();
   if (!trimmed) throw new Error("Chưa nhập tọa độ ODF mới.");
   const newRawText = `${trimmed} - ${m.devicePortText}`;

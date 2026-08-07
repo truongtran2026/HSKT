@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import { fetchDevices, type DeviceRow } from "@/lib/devices";
 import { splitOdfDeviceStructure, combinePositionNext } from "@/lib/parsers/transit-text";
@@ -167,7 +167,10 @@ export function buildMirrorNextPosition(gap: DeviceMirrorGap): string {
 // tránh lệch nhau như bài học mục 34/35), chỉ khác là tự fetch dữ liệu MỚI
 // NHẤT rồi ghi luôn (không cần DRY RUN vì đây là 1 luồng đơn lẻ người dùng vừa
 // chủ động lưu, không phải sửa hàng loạt).
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
 export async function autoCreateMirrorForCircuit(
+  client: SupabaseClient,
   sourceCircuitId: string
 ): Promise<
   | { status: "created"; targetDeviceName: string; trib: string }
@@ -181,8 +184,9 @@ export async function autoCreateMirrorForCircuit(
     }
   | { status: "error"; message: string }
 > {
-  const circuits = await fetchDeviceCircuits();
-  const devices = await fetchDevices();
+  const supabase = client;
+  const circuits = await fetchDeviceCircuits(client);
+  const devices = await fetchDevices(client);
   const sourceCircuit = circuits.find((c) => c.id === sourceCircuitId);
   if (!sourceCircuit) return { status: "no-gap" };
 
@@ -232,12 +236,14 @@ export async function autoCreateMirrorForCircuit(
 // port_circuit_links (chỉ gắn `device_id`, xem architecture.md mục 3.4) nên
 // xóa đơn giản hơn phía trung kế — không cần dọn `ports`/`transit_links`.
 export async function replaceMismatchedDeviceMirror(
+  client: SupabaseClient,
   existingCircuitId: string,
   sourceCircuitId: string
 ): ReturnType<typeof autoCreateMirrorForCircuit> {
+  const supabase = client;
   const { error } = await supabase.from("circuits").delete().eq("id", existingCircuitId);
   if (error) return { status: "error", message: error.message };
-  return autoCreateMirrorForCircuit(sourceCircuitId);
+  return autoCreateMirrorForCircuit(client, sourceCircuitId);
 }
 
 // "Nếu bên hồ sơ còn lại đang trống thì sync luôn chứ sao phải đợi sửa lại
@@ -247,9 +253,10 @@ export async function replaceMismatchedDeviceMirror(
 // `findMissingDeviceMirrors` đã tính SẴN toàn bộ gaps/mismatches cho MỌI
 // circuit trong 1 lần gọi (khác trunk phải lặp qua từng luồng) nên hàm này
 // đơn giản hơn hẳn — không viết lại thuật toán, chỉ thêm vòng lặp ghi.
-export async function syncAllDeviceMirrorGaps(scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
-  const circuits = await fetchDeviceCircuits();
-  const devices = await fetchDevices();
+export async function syncAllDeviceMirrorGaps(client: SupabaseClient, scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
+  const supabase = client;
+  const circuits = await fetchDeviceCircuits(client);
+  const devices = await fetchDevices(client);
   // findMissingDeviceMirrors() phải chạy trên TOÀN BỘ dữ liệu (không lọc
   // scope ở INPUT) — nó cần thấy hết mọi luồng của thiết bị ĐÍCH để biết
   // đúng Trib nào đã có, lọc scope SỚM sẽ làm sai kết quả đối chiếu đó. Chỉ

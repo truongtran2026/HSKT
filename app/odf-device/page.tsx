@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortStatusCounts } from "@/lib/deviceRackPorts";
 import { getAdn1StationId } from "@/lib/devices";
 import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackListTable";
 import AddDeviceRackForm from "@/components/odf-device/AddDeviceRackForm";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
@@ -18,7 +19,7 @@ interface RawRack {
   port_count: number;
 }
 
-async function getRacks(): Promise<RackListItem[]> {
+async function getRacks(supabase: SupabaseClient): Promise<RackListItem[]> {
   const { data, error } = await supabase
     .from("racks")
     .select("id, code, cable_route_name, odf_type, port_count")
@@ -30,8 +31,9 @@ async function getRacks(): Promise<RackListItem[]> {
   // dùng 2026-07-28: số liệu cũ đọc ports.status luôn hiện sai "0/48" vì luồng
   // thiết bị không hề đụng tới bảng ports thật — xem lib/deviceRackPorts.ts +
   // architecture.md).
-  const trunkPorts = await fetchAllOdfPorts();
+  const trunkPorts = await fetchAllOdfPorts(supabase);
   const counts = await fetchDeviceRackPortStatusCounts(
+    supabase,
     racks.map((r) => ({ id: r.id, code: r.code, portCount: r.port_count })),
     trunkPorts
   );
@@ -57,7 +59,8 @@ async function getRacks(): Promise<RackListItem[]> {
 // architecture.md). Bấm vào 1 rack dùng lại NGUYÊN trang
 // "/odf-trunk/[rackId]" (đã domain-aware sẵn).
 export default async function OdfDevicePage() {
-  const [racks, stationId] = await Promise.all([getRacks(), getAdn1StationId()]);
+  const supabase = await createSupabaseServerClient();
+  const [racks, stationId] = await Promise.all([getRacks(supabase), getAdn1StationId(supabase)]);
 
   return (
     <div>

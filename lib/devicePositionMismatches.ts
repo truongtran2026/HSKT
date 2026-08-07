@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -52,17 +52,22 @@ export function findDeviceCircuitLibraryMismatches(
 
 // 3 hướng xử lý — cùng tinh thần transitPositionMismatches.ts (không có
 // nguồn nào mặc định "đúng", người dùng tự chọn).
-export async function applyLibraryFromCircuit(m: DeviceCircuitLibraryMismatch): Promise<void> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function applyLibraryFromCircuit(client: SupabaseClient, m: DeviceCircuitLibraryMismatch): Promise<void> {
+  const supabase = client;
   const { error } = await supabase.from("device_position_map").update({ odf_position: m.circuitOdfPosition }).eq("id", m.devicePositionMapId);
   if (error) throw error;
 }
 
-export async function applyCircuitFromLibrary(m: DeviceCircuitLibraryMismatch): Promise<void> {
+export async function applyCircuitFromLibrary(client: SupabaseClient, m: DeviceCircuitLibraryMismatch): Promise<void> {
+  const supabase = client;
   const { error } = await supabase.from("circuits").update({ device_position_own: m.libraryOdfPosition }).eq("id", m.circuitId);
   if (error) throw error;
 }
 
-export async function applyCustomPosition(m: DeviceCircuitLibraryMismatch, customOdfPosition: string): Promise<void> {
+export async function applyCustomPosition(client: SupabaseClient, m: DeviceCircuitLibraryMismatch, customOdfPosition: string): Promise<void> {
+  const supabase = client;
   const trimmed = customOdfPosition.trim();
   if (!trimmed) throw new Error("Chưa nhập tọa độ ODF mới.");
   const { error: circuitErr } = await supabase.from("circuits").update({ device_position_own: trimmed }).eq("id", m.circuitId);

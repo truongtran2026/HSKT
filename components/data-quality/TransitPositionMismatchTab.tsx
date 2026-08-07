@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TransitPositionMismatch } from "@/lib/transitPositionMismatches";
 import { applyLibraryFromTransit, applyTransitFromLibrary, applyCustomPosition } from "@/lib/transitPositionMismatches";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Khung rà soát "ô Chuyển tiếp lệch tọa độ ODF so với thư viện Vị trí thiết
 // bị" (yêu cầu người dùng 2026-08-02, phát hiện từ ca thật ADN1.P2(2/1/2) —
@@ -126,13 +128,13 @@ function MismatchRow({ item, onDone }: { item: TransitPositionMismatch; onDone: 
     setError(null);
     setBusy(true);
     try {
-      if (choice === "transit") await applyLibraryFromTransit(item);
-      else if (choice === "library") await applyTransitFromLibrary(item);
-      else await applyCustomPosition(item, customValue);
+      if (choice === "transit") await applyLibraryFromTransit(supabase, item);
+      else if (choice === "library") await applyTransitFromLibrary(supabase, item);
+      else await applyCustomPosition(supabase, item, customValue);
       onDone();
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }

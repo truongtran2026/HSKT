@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDeviceNameFromNotes, looksLikeRealPositionText, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 
 // Luồng thuộc ODF/DDF thiết bị (file M3.TD-1_2) — lần import đầu CHỈ tạo
@@ -40,7 +40,10 @@ interface RawRow {
 
 // Xem lib/trunkPorts.ts để biết lý do PHẢI phân trang + sort có tiêu chí phụ
 // "id" (duy nhất) — cùng 1 lớp lỗi đã gặp thực tế ở trang Tìm kiếm nhanh.
-async function fetchAllCircuits(): Promise<RawRow[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+async function fetchAllCircuits(client: SupabaseClient): Promise<RawRow[]> {
+  const supabase = client;
   const pageSize = 1000;
   const all: RawRow[] = [];
   for (let from = 0; ; from += pageSize) {
@@ -60,8 +63,8 @@ async function fetchAllCircuits(): Promise<RawRow[]> {
   return all;
 }
 
-export async function fetchDeviceCircuits(): Promise<DeviceCircuitRow[]> {
-  const all = await fetchAllCircuits();
+export async function fetchDeviceCircuits(client: SupabaseClient): Promise<DeviceCircuitRow[]> {
+  const all = await fetchAllCircuits(client);
   return all
     .filter((r) => !r.port_circuit_links || r.port_circuit_links.length === 0)
     .map((r) => ({

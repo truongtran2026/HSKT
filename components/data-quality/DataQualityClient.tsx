@@ -20,6 +20,8 @@ import {
   type MirrorScanScope,
 } from "@/lib/mirrorTrunkCircuits";
 import { syncAllDeviceMirrorGaps } from "@/lib/deviceDeviceSync";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
 import UnlinkedMirrorPairsTab from "@/components/data-quality/UnlinkedMirrorPairsTab";
@@ -225,9 +227,9 @@ function ScanFillGapsPanel({
     setError(null);
     try {
       const [trunk, trunkTrunk, device] = await Promise.all([
-        syncAllTrunkMirrorGaps(scope),
-        syncAllTrunkTrunkMirrorGaps(scope),
-        syncAllDeviceMirrorGaps(scope),
+        syncAllTrunkMirrorGaps(supabase, scope),
+        syncAllTrunkTrunkMirrorGaps(supabase, scope),
+        syncAllDeviceMirrorGaps(supabase, scope),
       ]);
       const merged: MirrorGapScanSummary = {
         created: trunk.created + trunkTrunk.created + device.created,
@@ -246,7 +248,7 @@ function ScanFillGapsPanel({
       }
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }
@@ -451,19 +453,19 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
     setBusyKey(keyOf(candidate));
     setError(null);
     try {
-      await mergeDeviceInto(source.id, target.id);
+      await mergeDeviceInto(supabase, source.id, target.id);
       try {
-        await syncDevicePositionMapNames([source.name], target.name);
+        await syncDevicePositionMapNames(supabase, [source.name], target.name);
       } catch (syncErr) {
         setError(
           `Đã gộp xong, nhưng đồng bộ thư viện "Vị trí thiết bị" thất bại: ${
-            syncErr instanceof Error ? syncErr.message : String(syncErr)
+            syncErr instanceof Error ? translatePgError(syncErr.message) : String(syncErr)
           }`
         );
       }
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusyKey(null);
     }
@@ -473,10 +475,10 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
     setBusyKey(keyOf(candidate));
     setError(null);
     try {
-      await ignoreDevicePair(candidate.deviceA.id, candidate.deviceB.id);
+      await ignoreDevicePair(supabase, candidate.deviceA.id, candidate.deviceB.id);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusyKey(null);
     }

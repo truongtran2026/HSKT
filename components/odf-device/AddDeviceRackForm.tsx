@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Thêm rack ODF/DDF thiết bị MỚI (yêu cầu người dùng 2026-07-28: "Chưa có
 // phần thêm/sửa/xóa Rack... Số port là nhập liệu ban đầu khi khởi tạo Rack
@@ -95,7 +96,11 @@ export default function AddDeviceRackForm({ stationId }: { stationId: string }) 
       // Phòng hờ (2026-08-03): kiểm tra trước ở trên đã chặn hầu hết trường
       // hợp, nhưng vẫn có thể lọt qua nếu 2 người tạo cùng lúc — dịch mã lỗi
       // trùng khóa Postgres sang tiếng Việt thay vì để lộ nguyên văn.
-      setError(msg.includes("23505") || msg.toLowerCase().includes("duplicate key") ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.` : msg);
+      setError(
+        msg.includes("23505") || msg.toLowerCase().includes("duplicate key")
+          ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.`
+          : translatePgError(msg)
+      );
       setBusy(false);
     }
   }

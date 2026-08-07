@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
 
 // Tra cứu "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" — xem migration
@@ -18,7 +18,10 @@ interface RawRow {
   odf_position: string | null;
 }
 
-export async function fetchDevicePositionMap(): Promise<DevicePositionMapRow[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function fetchDevicePositionMap(client: SupabaseClient): Promise<DevicePositionMapRow[]> {
+  const supabase = client;
   const pageSize = 1000;
   const all: RawRow[] = [];
   for (let from = 0; ; from += pageSize) {
@@ -49,7 +52,8 @@ export async function fetchDevicePositionMap(): Promise<DevicePositionMapRow[]> 
 // thiết bị chưa khớp" ở tab Vị trí thiết bị làm lại LẦN NỮA cho đúng cùng 1
 // thiết bị. Gọi hàm này ngay sau khi đổi tên/gộp/tạo mới ở Chuẩn hóa thiết bị
 // để chỉ cần làm 1 lần duy nhất.
-export async function syncDevicePositionMapNames(oldNames: string[], newName: string): Promise<void> {
+export async function syncDevicePositionMapNames(client: SupabaseClient, oldNames: string[], newName: string): Promise<void> {
+  const supabase = client;
   const newKey = normalizeDeviceNameKey(newName);
   const oldKeys = new Set(oldNames.map((n) => normalizeDeviceNameKey(n)).filter((k) => k && k !== newKey));
   if (oldKeys.size === 0) return;
@@ -82,7 +86,8 @@ export async function syncDevicePositionMapNames(oldNames: string[], newName: st
 // thật tới devices (khớp bằng tên, xem đầu file), nên xóa thiết bị không tự
 // động dọn thư viện: nếu không gọi hàm này, thư viện sẽ còn sót gợi ý (tên
 // thiết bị + vị trí ODF) cho 1 thiết bị không còn tồn tại nữa.
-export async function deleteDevicePositionMapForNames(names: string[]): Promise<void> {
+export async function deleteDevicePositionMapForNames(client: SupabaseClient, names: string[]): Promise<void> {
+  const supabase = client;
   const keys = new Set(names.map((n) => normalizeDeviceNameKey(n)).filter((k) => k));
   if (keys.size === 0) return;
 
@@ -117,10 +122,12 @@ export async function deleteDevicePositionMapForNames(names: string[]): Promise<
 // thêm dòng mới. Không tự sửa ngược lại raw_text bên trung kế theo thư viện
 // trong đợt này, giữ đơn giản.
 export async function growDevicePositionMapByTrib(
+  client: SupabaseClient,
   deviceName: string,
   devicePosition: string,
   odfPosition: string
 ): Promise<{ grown: boolean }> {
+  const supabase = client;
   const nameKey = normalizeDeviceNameKey(deviceName);
   const tribKey = normalizeDevicePositionKey(devicePosition);
   if (!nameKey || !tribKey || !odfPosition.trim()) return { grown: false };

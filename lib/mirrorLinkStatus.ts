@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrunkPortRow } from "@/lib/trunkPorts";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 import type { UnlinkedMirrorPair, UnlinkedDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
@@ -77,7 +77,10 @@ export function computeMirrorLinkStatuses(
 // device-device/trunk-trunk: là luồng được TẠO SAU, xem lib/deviceDeviceSync.ts
 // và lib/mirrorTrunkCircuits.ts) — dò cả 2 chiều, cùng lý do
 // computeMirrorLinkStatuses() ở trên cũng phải dò cả 2 chiều.
-export async function unlinkCircuitMirror(circuitId: string): Promise<void> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function unlinkCircuitMirror(client: SupabaseClient, circuitId: string): Promise<void> {
+  const supabase = client;
   const { data: self, error: selfErr } = await supabase.from("circuits").select("mirror_of_id").eq("id", circuitId).single();
   if (selfErr) throw selfErr;
   if (self?.mirror_of_id) {

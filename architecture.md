@@ -3445,5 +3445,463 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       cảm ứng Sidebar ở viewport hẹp qua trình duyệt thật (không có
       Playwright) — đã báo người dùng tự thử trên di động ngoài hiện trường.
     - **Đợt 1 hoàn tất** theo đúng phạm vi `HSKT-dot-1-brief.md` đã chốt.
-      Đợt 2 (transaction safety/RPC functions) trong tài liệu audit gốc chưa
-      bắt đầu — chờ người dùng yêu cầu.
+
+66. **Đợt 2 của `HSKT-audit-2026-08-03.md` mục 7 ("Nhất quán dữ liệu")** —
+    người dùng yêu cầu 2026-08-04 "tiếp tục các nội dung còn lại của các
+    đợt". Mục 2.1/2.2 (1 hàm ghi `transit_links` duy nhất + script vá) đã
+    làm xong trong Đợt 1 (mục 65) dù audit gốc xếp vào Đợt 2 — phần còn lại
+    của Đợt 2 là 2.3/2.4/2.5:
+    - **2.3/2.4 — 2 hàm RPC xóa nguyên tử** (`supabase/migrations/
+      20260804000003_delete_rpc_and_mirror_unique.sql`): trước đây
+      `PortTable.deleteGroup()` là 4 lời gọi Supabase độc lập từ trình
+      duyệt (xóa `port_circuit_links` → xóa `circuits` → update
+      `ports.status` → xóa `transit_links`); mất mạng/đóng tab giữa chừng
+      để lại trạng thái dở dang không tự phát hiện được (circuit đã xóa
+      nhưng port vẫn `in_use`). Tương tự `DeviceCategoryClient.
+      deleteSelectedDevices()` (5+ lời gọi, chia batch 200).
+      - `delete_trunk_circuit(p_circuit_id uuid)` — gộp đúng 4 bước cũ vào 1
+        hàm `plpgsql`, `security invoker` (tôn trọng RLS người gọi, sẵn sàng
+        cho lúc bật Auth thật mà không cần sửa lại hàm). `PortTable.
+        deleteGroup()` giờ chỉ còn 1 lời gọi `supabase.rpc(...)`.
+      - `delete_devices_with_circuits(p_device_ids uuid[])` — gộp phần THUẦN
+        CƠ HỌC (xóa circuits theo device_id, dọn port/transit_links của
+        mirror trung kế bị cascade xóa theo, xóa devices) vào 1 hàm, nhận
+        thẳng mảng id (không cần tự chia batch 200 như code cũ — Postgres
+        xử lý `= any(uuid[])` tốt với mảng lớn). **Cố ý KHÔNG** đưa bước dọn
+        `device_position_map` vào RPC — bước đó khớp theo tên đã chuẩn hóa
+        qua `normalizeDeviceNameKey()` (hàm JS, chưa có bản SQL tương
+        đương) nên vẫn giữ là lời gọi JS riêng, best-effort, SAU khi RPC
+        thành công — đúng hành vi cũ (không đổi ngữ nghĩa, chỉ thu hẹp cửa
+        sổ "dở dang" xuống đúng phần thuần cơ học).
+      - Tương tự, phần business logic thật (tự tạo lại mirror sau khi xóa ở
+        `deleteGroup`, dùng `autoCreateTrunkMirrorForCircuit` — có logic dò/
+        khớp vị trí) KHÔNG đưa vào RPC, vẫn ở tầng JS, gọi SAU khi RPC thành
+        công, y hệt trước.
+      - **Verify**: viết script test tạm (tự tạo rack/port/circuit/device
+        giả với tiền tố `TEST_RPC_DELETE_TMP`, gọi RPC, kiểm 10 assertion,
+        tự dọn sạch ở `finally` bất kể pass/fail, xóa script sau khi chạy) —
+        cả 2 RPC pass toàn bộ, bao gồm đúng ca cascade mirror qua
+        `mirror_of_id on delete cascade`.
+    - **2.5 — `unique(mirror_of_id)` + `check(mirror_of_id <> id)`**: mô
+      hình nghiệp vụ 1-1 (1 luồng thiết bị ↔ 1 luồng trung kế mirror) trước
+      đây không được CSDL giữ — 2 luồng trung kế có thể cùng trỏ
+      `mirror_of_id` về 1 luồng thiết bị, xóa luồng gốc sẽ cascade xóa CẢ
+      HAI dù luồng thứ 2 có thể là 1 đấu nối khác. Kiểm tra dữ liệu sống
+      2026-08-04 (script đọc trực tiếp Supabase) TRƯỚC khi thêm ràng buộc:
+      119 dòng có `mirror_of_id`, 0 self-reference, 0 nhóm trùng — an toàn
+      thêm ngay, không cần dọn dữ liệu trước.
+    - Migration đã được người dùng tự chạy tay trong Supabase SQL Editor,
+      xác nhận thành công 2026-08-04.
+    - **Kiểm chứng**: `tsc --noEmit` sạch, `npm run build` sạch. 3 script
+      audit chạy lại — 0 gap mới, 2 dòng còn lại ở `audit-trunk-trunk-sync`
+      là ca cũ đã biết (mục 65), không phải regression.
+    - **KHÔNG làm trong đợt này** (ngoài phạm vi 2.3/2.4/2.5): chuyển
+      `confirmMove()`/`saveEdit()` sang RPC (audit mục 2.3 xếp ưu tiên
+      3/4, không nằm trong bảng lộ trình Đợt 2 chính thức — để đợt sau nếu
+      cần); đổi mô hình `transit_links` sang khóa theo `circuit_id` (Phụ lục
+      A của brief Đợt 1 — cố ý để đợt sau).
+    - **Đợt 3 của audit (`3.1` Bật Supabase Auth, `3.2` tách quyền DELETE ở
+      CSDL) mâu thuẫn trực tiếp với `CLAUDE.md`**: *"Không tự thêm
+      authentication ở giai đoạn MVP"*. Đây là xung đột giữa 1 đề xuất
+      trong tài liệu audit (viết trước, chưa biết nguyên tắc MVP hiện hành)
+      và 1 quy ước dự án đang có hiệu lực — KHÔNG tự ý làm 3.1/3.2 khi chưa
+      hỏi lại người dùng xác nhận có muốn đổi nguyên tắc MVP hay không.
+      Phần còn lại của Đợt 3 (3.3-3.5, thuần UI — chuyển nút xóa xuống khung
+      "Thao tác nguy hiểm" cuối trang, gõ xác nhận + giới hạn 20 dòng cho
+      xóa hàng loạt, đưa "Xóa" khỏi hàng nút `PortTable`) không phụ thuộc
+      Auth, có thể làm độc lập.
+
+67. **Đợt 3 (tiếp) — Bật Supabase Auth thật (3.1/3.2 của audit)**. Hỏi lại
+    người dùng theo đúng mục 66 đã ghi — **2026-08-06 người dùng xác nhận
+    bật ngay, chấp nhận đổi nguyên tắc "không auth ở MVP"** (chỉ 1 tài khoản,
+    chính người dùng). `CLAUDE.md` đã cập nhật ghi lại quyết định này.
+    - **Phát hiện thêm khi tự rà lại (ngoài phạm vi audit gốc)**: bảng
+      `device_aliases` (migration `20260801000001`) **chưa từng bật RLS,
+      không có policy nào** — mở hoàn toàn qua GRANT mặc định của Supabase,
+      cùng mức rủi ro như 10 bảng có `mvp_allow_all` dù không cùng tên. Xử
+      lý cùng đợt, không bỏ sót — xem migration bên dưới.
+    - **Bài toán kiến trúc cốt lõi**: 16 file `lib/*.ts` dùng chung (fetch/
+      mutation, gọi từ HẦU HẾT mọi trang lúc SSR) trước đây import thẳng 1
+      singleton `supabase` (anon key) — không còn đúng khi có phiên đăng
+      nhập, vì các hàm này được gọi từ CẢ Server Component (cần client đọc
+      cookie qua `next/headers`, chỉ hợp lệ trong phạm vi 1 request) LẪN
+      Client Component (cần client trình duyệt tự mang cookie) LẪN **9 script
+      CLI** chạy `tsx` (không có `next/headers`, cần service-role key như cũ).
+      1 singleton module-level không thể đúng cho cả 3.
+    - **Giải pháp đã chọn — dependency injection bắt buộc, không dùng
+      accessor "tự phát hiện môi trường"**: mọi hàm trong 16 file (+ 1 file
+      bị sót lúc rà đầu — `lib/reverseDeviceTrunkAudit.ts`) nhận tham số
+      `client: SupabaseClient` **bắt buộc** (không default) làm tham số ĐẦU
+      TIÊN, dùng kỹ thuật shadow biến (`const supabase = client;` ngay đầu
+      thân hàm) để phần thân hàm bên trong (mọi `supabase.from(...)`) không
+      cần đổi gì thêm. Bắt buộc (không default) là cố ý: 1 tham số có default
+      rủi ro 1 nơi gọi âm thầm dùng nhầm client và nhận về rỗng thay vì lỗi
+      rõ ràng — đúng bẫy `mvp_allow_all` từng che giấu; tham số bắt buộc biến
+      lỗi quên truyền thành **lỗi biên dịch `tsc`**, dùng chính `tsc --noEmit`
+      làm lưới an toàn dò hết mọi chỗ gọi thiếu, không cần tự liệt kê tay.
+    - **3 client cụ thể**:
+      - `lib/supabase.ts` (giữ nguyên tên/đường dẫn) — đổi `createClient` →
+        `createBrowserClient` (`@supabase/ssr`), vẫn giữ NGUYÊN override
+        `cache: "no-store"` đã có từ trước (bài học cache cũ, không được
+        mất). Dùng cho mọi Client Component `"use client"` — 9 file (`PortTable.tsx`,
+        `DeviceCircuitList.tsx`...) không cần sửa gì cho chính import này.
+      - `lib/supabase-server.ts` (mới) — `createSupabaseServerClient()`,
+        dùng `createServerClient` + `cookies()` từ `next/headers`. CỐ Ý
+        KHÔNG cache/không phải singleton — tạo mới mỗi lần gọi, chỉ gọi được
+        trong Server Component/Route Handler/Server Action/middleware, tránh
+        đúng lớp lỗi "1 request dùng nhầm session của request khác trên 1
+        lambda ấm" (giống bài học `no-store` cho `fetch`, lần này nguy hiểm
+        hơn vì rò rỉ session giữa người dùng khác nhau).
+      - `scripts/lib/supabaseAdmin.ts` (mới) — `getSupabaseAdmin()`, service
+        role key, gom 9 script trước đây tự dựng client rời rạc về 1 hàm
+        dùng chung.
+    - **Triển khai** (chia nhỏ theo file, chạy song song bằng nhiều agent,
+      xác nhận từng phần bằng `tsc --noEmit` trước khi gộp):
+      16+1 file `lib/*.ts` thêm tham số `client` bắt buộc → 9 trang
+      `app/**/page.tsx` (Server Component, thêm `const supabase = await
+      createSupabaseServerClient();` đầu component, một số trang có hàm phụ
+      module-level như `getRacks`/`getRackAndPorts`/`getDashboardData` cũng
+      phải nhận thêm tham số `supabase`) → 12 Client Component (truyền thẳng
+      biến `supabase` — trình duyệt — đã có sẵn trong scope vào các hàm) →
+      9 script CLI (đổi sang `getSupabaseAdmin()`, kể cả các script trước đây
+      "vô tình vẫn compile được" vì tự `import("../lib/supabase")` rồi dùng
+      client đó trực tiếp — lỗi loại này KHÔNG bị `tsc` bắt được vì kiểu vẫn
+      là `SupabaseClient`, phải tự rà tay bằng grep, không chỉ dựa lỗi biên
+      dịch). Tổng cộng ~29 file caller, hàng trăm chỗ gọi.
+    - `middleware.ts` (mới) — chặn MỌI route chưa đăng nhập TRƯỚC khi trang
+      kịp gọi Supabase, dùng `supabase.auth.getUser()` (KHÔNG dùng
+      `getSession()` — `getUser()` xác thực lại với Auth server, `getSession()`
+      chỉ tin JWT cục bộ, bẫy đã biết của chính docs Supabase). `matcher`
+      loại trừ `_next/static`, `_next/image`, `favicon.ico`, `/login`.
+    - `app/login/page.tsx` (mới) — form email+password đơn giản, dùng lại
+      class `.input`/`.btn-primary` sẵn có. Không signup/quên mật khẩu — 1
+      tài khoản duy nhất, tạo tay qua Supabase Dashboard.
+    - `components/Sidebar.tsx` + `app/layout.tsx` — thay dòng tĩnh "Giai
+      đoạn MVP · single-user" bằng email người dùng thật (đọc qua
+      `createSupabaseServerClient()` ở `RootLayout`, giờ là async, truyền
+      xuống prop `userEmail`) + nút "Đăng xuất" (`supabase.auth.signOut()`
+      rồi điều hướng `/login`).
+    - Migration mới `supabase/migrations/20260806000001_authenticated_rls.sql`
+      (người dùng tự chạy tay — Claude không có quyền DDL, đúng quy ước dự
+      án): xóa `mvp_allow_all` trên 10 bảng, thêm `authenticated_select`/
+      `authenticated_insert`/`authenticated_update`; bật RLS mới hoàn toàn +
+      2 policy (không update, không cần) cho `device_aliases`; tách riêng
+      `admin_delete` (kiểm `auth.jwt() -> 'app_metadata' ->> 'role' =
+      'admin'`) trên 7 bảng THẬT có `.delete()` từ app (`devices`, `circuits`,
+      `port_circuit_links`, `transit_links`, `ports`, `racks`,
+      `device_position_map` — xác nhận bằng grep, không đoán); 4 bảng không
+      có delete thật (`stations`, `import_batches`, `device_dedup_ignored`,
+      `device_aliases`) không thêm policy delete nào (mặc định chặn). Kèm
+      câu lệnh mẫu gán `app_metadata.role = "admin"` cho tài khoản duy nhất
+      — **thiếu bước này thì mọi nút Xóa (kể cả 2 RPC Đợt 2) ngưng hoạt
+      động cho chính người dùng**.
+    - **Kiểm chứng đã làm**: `npx tsc --noEmit` sạch tuyệt đối (lưới an toàn
+      chính, xem lý do "bắt buộc không default" ở trên). `npm run build`
+      sạch — 15 trang, `middleware` build thành công (85.2kB); ghi nhận `/`
+      chuyển từ `○` (static) sang `ƒ` (dynamic) vì `RootLayout` giờ đọc
+      session mỗi request — đúng, cần thiết, không phải lỗi.
+    - **⚠️ ĐIỂM DỪNG — RLS CHƯA khóa**: toàn bộ việc ở trên (16+1 file lib,
+      ~29 file caller, middleware, login, Sidebar) đã xong và đã verify bằng
+      `tsc`/`build`, nhưng **migration `20260806000001` CHƯA chạy** —
+      `mvp_allow_all` vẫn còn nguyên trên CSDL sống tại thời điểm ghi mục
+      này. Việc còn lại là CỦA NGƯỜI DÙNG, theo đúng thứ tự: (1) tạo 1 tài
+      khoản thật qua Supabase Dashboard; (2) `npm run dev`, tự đăng nhập,
+      xác nhận luồng redirect/login hoạt động ĐÚNG khi RLS còn mở (chỉ xác
+      nhận plumbing đăng nhập, chưa xác nhận RLS); (3) gán
+      `app_metadata.role = "admin"` cho tài khoản đó; (4) chạy migration
+      `20260806000001` tay trong Supabase SQL Editor; (5) test lại toàn bộ
+      đọc/ghi/xóa (kể cả 2 RPC) + chạy lại vài script audit xác nhận vẫn ra
+      đúng số liệu (service role key, không bị RLS chặn).
+    - **Chưa làm trong đợt này** (đúng phạm vi đã chốt): UI nhiều vai trò
+      (Admin/Edit/Viewer), signup tự phục vụ, luồng quên-mật-khẩu, rate-limit
+      đăng nhập, ẩn Sidebar ở `/login`. Phần UI thuần của Đợt 3 (3.3-3.5,
+      mục 66) cũng chưa làm — làm sau đợt Auth này.
+
+68. **Đợt 3 (mở rộng) — 3 cấp quyền viewer/operator/admin (2026-08-06, cùng
+    ngày với mục 67)**. Sau khi người dùng tự tạo tài khoản + đăng nhập thành
+    công (tài khoản admin đầu tiên), người dùng yêu cầu thêm: "cho tôi sang
+    các chế độ view, chế độ operator để tôi test" — tức 3 cấp quyền thay vì
+    chỉ 1 mức admin như mục 67 vừa thiết kế, và cần có tài khoản thật để tự
+    test bằng cách đăng xuất/đăng nhập lại (không phải giả lập trong UI —
+    xem lý do bên dưới).
+    - **Rà lại 4 kiểu xóa thật trong app** (grep `.delete(` toàn bộ `.tsx`)
+      trước khi thiết kế policy, để đảm bảo "operator xóa được từng luồng,
+      không xóa được cả ODF/thiết bị" ánh xạ ĐÚNG vào bảng CSDL chứ không chỉ
+      đoán theo tên chức năng:
+      | Thao tác | Cách xóa | File |
+      |---|---|---|
+      | Xóa 1 luồng trung kế | RPC `delete_trunk_circuit` | `PortTable.tsx` |
+      | Xóa 1/nhiều luồng thiết bị | `.from("circuits").delete()` trực tiếp | `DeviceCircuitList.tsx` |
+      | Xóa cả ODF/rack | `.from("ports").delete()` + `.from("racks").delete()` | `DeleteRackButton.tsx` |
+      | Xóa cả thiết bị | RPC `delete_devices_with_circuits` | `DeviceCategoryClient.tsx` |
+      May mắn: cả 2 RPC Đợt 2 đều `security invoker`, và `delete_trunk_circuit`
+      chỉ đụng `circuits`/`port_circuit_links`/`transit_links` + update
+      `ports.status` — KHÔNG đụng bảng `devices`/`racks` — nên chỉ cần chia
+      policy DELETE theo bảng là ánh xạ đúng "xóa từng luồng" vs "xóa cả
+      rack/thiết bị" mà KHÔNG cần sửa code RPC hay component nào.
+    - **Sửa `supabase/migrations/20260806000001_authenticated_rls.sql`**
+      (vẫn CHƯA chạy lần nào — sửa trực tiếp file cũ vì chưa từng áp dụng
+      lên CSDL sống, không cần migration nối tiếp):
+      - `authenticated_select` giữ nguyên (mọi tài khoản đăng nhập đọc được,
+        kể cả viewer — đọc không có rủi ro).
+      - `authenticated_insert`/`authenticated_update` đổi tên
+        `write_operator_admin`/`update_operator_admin`, điều kiện thêm
+        `auth.jwt() -> 'app_metadata' ->> 'role' in ('operator', 'admin')` —
+        viewer không ghi được gì (kể cả sửa nhỏ), tránh viewer bấm Lưu giữa
+        form dài rồi nhận lỗi RLS khó hiểu.
+      - DELETE tách 2 mức thay vì 1: `operator_delete` (role operator HOẶC
+        admin) trên `circuits`, `port_circuit_links`, `transit_links`,
+        `device_position_map`; `admin_delete` (role admin) trên `devices`,
+        `ports`, `racks` — đúng bảng ánh xạ ở trên.
+      - `device_aliases` insert cũng đổi theo `write_operator_admin`.
+    - **`scripts/create-role-test-accounts.ts`** (mới, `npm run
+      create-role-accounts`) — dùng Admin API (`supabase.auth.admin.createUser`,
+      service role key, KHÔNG phải DDL) để tự tạo 2 tài khoản thật kèm gán
+      sẵn `app_metadata.role` lúc tạo, không cần vào Dashboard tay: bắt buộc
+      `--base-email=`, tự suy ra 2 địa chỉ theo kiểu alias Gmail "+"
+      (`base+operator@...`, `base+viewer@...` — Gmail coi là tài khoản đăng
+      nhập khác nhau nhưng mail vẫn về đúng hộp thư chính, không cần 2 email
+      thật riêng biệt để test). Mật khẩu sinh ngẫu nhiên
+      (`crypto.randomBytes`), chỉ in ra console MỘT LẦN lúc `--commit`, không
+      lưu ở đâu khác. Dry-run mặc định (in dự kiến, chưa tạo gì) theo đúng
+      quy ước script khác trong `scripts/`.
+    - **`components/Sidebar.tsx` + `app/layout.tsx`** — thêm badge role cạnh
+      email (đọc `user.app_metadata.role` qua `createSupabaseServerClient()`
+      ở `RootLayout`, đã fetch `user` sẵn từ mục 67, chỉ thêm 1 dòng lấy
+      `role`): "Admin"/"Operator"/"Viewer (chỉ xem)", hoặc "chưa gán quyền"
+      (màu hổ phách) nếu tài khoản chưa có `app_metadata.role` — ca này xảy
+      ra với chính tài khoản admin đầu tiên cho tới khi người dùng tự chạy
+      câu lệnh gán role tay ở cuối migration. Badge CHỈ để hiển thị đang
+      đăng nhập bằng tài khoản nào khi tự test đổi vai trò (đăng xuất/đăng
+      nhập lại bằng tài khoản khác) — không phải chốt chặn quyền, RLS mới là
+      nơi chặn thật.
+    - **Vì sao không làm "nút chuyển chế độ" giả lập ngay trong UI** (thay vì
+      bắt đăng xuất/đăng nhập lại bằng tài khoản khác): role nằm trong JWT
+      cấp lúc đăng nhập, phía client KHÔNG thể tự đổi role của chính JWT
+      đang có (đúng nguyên lý bảo mật của toàn bộ Đợt 3 — nếu đổi được thì
+      RLS coi như vô nghĩa). Một nút "xem thử như Viewer" mà không đổi JWT
+      thật chỉ ẩn/hiện vài nút trên UI — không kiểm chứng được RLS có chặn
+      đúng hay không, hàng chục điểm ghi (insert/update) ở khắp component sẽ
+      không được che theo, và người dùng bấm Lưu vẫn thấy có vẻ hoạt động (vì
+      JWT thật vẫn là admin) — sai lệch với thứ đang thật sự được test. Đăng
+      nhập lại bằng tài khoản operator/viewer thật là cách DUY NHẤT kiểm
+      chứng đúng.
+    - **Chưa làm** (cùng lý do phạm vi đã ghi ở mục 67, giờ áp dụng luôn cho
+      cả viewer/operator): UI tự ẩn/khóa nút Sửa/Xóa theo role (viewer hiện
+      tại vẫn thấy đủ nút, chỉ bị RLS chặn khi bấm — lỗi hiện ra là thông
+      điệp Postgres thô "new row violates row-level security policy...",
+      chưa dịch tiếng Việt, xem Đợt 4 "dịch lỗi Postgres" ở mục 66), gom nút
+      "Xóa cả rack"/"Xóa cả thiết bị" vào khung "Thao tác nguy hiểm" riêng
+      (Đợt 3.3, mục 66 — xem mục 70, đã làm xong 2026-08-07).
+    - **Kiểm chứng cần làm sau khi người dùng tự chạy migration + script**:
+      đăng nhập bằng tài khoản operator → xóa 1 luồng OK, bấm "Xóa rack"/"Xóa
+      thiết bị" phải BỊ chặn (lỗi RLS hiện ra, không xóa được); đăng nhập
+      bằng tài khoản viewer → mọi nút Lưu/Xóa đều bị chặn, chỉ xem được.
+
+69. **Sửa lỗi migration 20260806000001 áp dụng nhầm bản CŨ (2026-08-07)**.
+    Người dùng chạy `20260806000001_authenticated_rls.sql` (bản 3 cấp) trong
+    Supabase SQL Editor, báo lỗi `policy "authenticated_select" for table
+    "stations" already exists` — nghĩa là 1 policy trùng tên đã tồn tại
+    TRƯỚC khi câu lệnh này chạy. Suy luận + xác minh: bản CŨ của chính file
+    này (1 cấp — trước khi sửa lại thành viewer/operator/admin ở mục 68) đã
+    được áp dụng lên CSDL sống ở 1 thời điểm nào đó trước đó (không rõ chính
+    xác lúc nào), tạo ra policy `authenticated_insert`/`authenticated_update`
+    (MỞ cho MỌI tài khoản đã đăng nhập, không lọc theo role) và `admin_delete`
+    phạm vi cũ (gồm cả `circuits`/`port_circuit_links`/`transit_links`/
+    `device_position_map`, tức operator KHÔNG xóa được luồng — sai ý muốn).
+    Khi chạy bản mới, câu lệnh ĐẦU TIÊN trong `do $$` của Part A
+    (`create policy "authenticated_select"`, tên KHÔNG đổi giữa 2 bản) va
+    ngay vào bản ghi cũ đã tồn tại → toàn bộ phần còn lại của Part A/B/C
+    KHÔNG chạy được, dừng ngay từ câu đầu.
+    - **Xác minh thật trên CSDL sống** (script tạm, xóa ngay sau khi chạy):
+      đăng nhập bằng tài khoản viewer test (`ongtienonline+viewer@gmail.com`)
+      rồi thử `insert` vào `stations` — **thành công (status 201)**, xác
+      nhận đúng giả thuyết trên (viewer đang ghi được, sai với thiết kế 3
+      cấp). Không dùng anon key để test việc này vì anon select/insert 0
+      dòng/bị chặn xảy ra ở CẢ 2 trường hợp "có policy đúng" lẫn "không có
+      policy nào" (RLS mặc định chặn hết khi không có policy khớp) — phải
+      đăng nhập thật bằng 1 tài khoản có role cụ thể mới phân biệt được.
+    - **Fix**: migration mới
+      `supabase/migrations/20260807000001_fix_role_policies.sql` — viết
+      idempotent hoàn toàn (`drop policy if exists` bằng CẢ tên cũ lẫn tên
+      mới trước mỗi `create`), an toàn chạy lại bất kể CSDL đang ở trạng thái
+      nào (`mvp_allow_all` gốc, bản cũ 1 cấp của `20260806000001`, hay đã
+      đúng bản mới rồi). Người dùng cần chạy file này (SAU khi
+      `20260806000001` đã chạy, bất kể lỗi hay không) để đưa CSDL về đúng
+      trạng thái 3 cấp mong muốn.
+    - **Bài học quy trình**: từ nay khi 1 file migration ĐÃ được gửi cho
+      người dùng chạy tay rồi mới cần sửa nội dung (như ca đổi 1 cấp → 3
+      cấp ở mục 68, sửa TRƯỚC khi xác nhận người dùng đã chạy hay chưa) —
+      nên viết migration mới riêng thay vì sửa đè file cũ, HOẶC nếu sửa đè
+      thì phải viết idempotent (`drop if exists` mọi tên, cũ lẫn mới) ngay
+      từ đầu, không giả định "chưa ai chạy file này bao giờ".
+    - **Kiểm chứng sau khi người dùng chạy `20260807000001`** (script tạm,
+      đăng nhập thật bằng 2 tài khoản test, xóa ngay sau khi chạy) — cả 8
+      phép thử đều đúng: operator select/insert/xóa-từng-luồng (`circuits`,
+      `device_position_map`...) OK, operator xóa `racks` **bị chặn đúng**;
+      viewer select OK, insert/xóa đều **bị chặn đúng**. Lưu ý phát sinh khi
+      viết script test: `DELETE` bị RLS chặn ở Postgres **KHÔNG báo lỗi**,
+      chỉ lặng lẽ xóa 0 dòng (khác hẳn `INSERT` bị chặn thì có lỗi rõ ràng
+      "row violates row-level security policy") — lần chạy thử ĐẦU TIÊN của
+      script test này chỉ kiểm tra `error` nên báo FAIL giả (tưởng nhầm là
+      lỗi bảo mật thật) — phải sửa lại dùng `.select()` sau `.delete()` để
+      đếm ĐÚNG số dòng bị xóa mới kết luận được. Cũng dọn luôn 1 dòng rác
+      `stations.code = '__rls_probe__'` sót lại từ lúc kiểm tra RLS ở bước
+      trước đó (viewer từng ghi được vào bảng thật lúc policy còn ở bản cũ).
+
+70. **Đợt 3.3-3.5 (audit, mục 66) — UI thuần, không phụ thuộc Auth
+    (2026-08-07)**. 3 việc còn lại của Đợt 3 audit, làm sau khi 3 cấp quyền
+    (mục 68-69) đã ổn định:
+    - **`lib/dangerousConfirm.ts`** (mới) — `confirmBulkDelete(message,
+      count, maxRows=20)` thay `confirm()` OK/Cancel thường cho các nút
+      "Xóa đã chọn" (bulk): quá `maxRows` thì chặn hẳn (alert, không cho xóa,
+      phải bớt lựa chọn), trong hạn thì bắt gõ đúng chữ "XÓA" qua
+      `window.prompt()` thay vì chỉ OK/Cancel — xóa hàng loạt khó hoàn tác
+      hơn xóa 1 dòng nên cần rào chắn mạnh hơn 1 cú Enter. **Chỉ áp dụng cho
+      2 nút xóa HÀNG LOẠT** (`DeviceCircuitList.deleteSelectedCircuits`,
+      `DeviceCategoryClient.deleteSelectedDevices`) — nút xóa 1 dòng đơn lẻ
+      (`PortTable.deleteGroup`, `DeviceCircuitList.deleteCircuit`) vẫn giữ
+      `confirm()` thường như cũ, không đổi (đúng phạm vi audit: chỉ bulk mới
+      cần rào chắn thêm).
+    - **`components/ui/DangerZone.tsx`** (mới) — khung "⚠️ Thao tác nguy
+      hiểm" dùng `<details>` gốc trình duyệt (thu gọn mặc định, không cần
+      `"use client"`/state riêng). Bọc `DeleteRackButton` ở
+      `app/odf-trunk/[rackId]/page.tsx` — trước đây nút "Xóa rack này" nằm
+      lộ thiên ngay dưới `RackAdminPanel`, giờ phải bấm mở khung mới thấy.
+    - **`components/odf-trunk/PortTable.tsx`** — nút "Xóa" (xóa 1 luồng
+      trung kế) trước đây nằm NGAY CẠNH "Sửa" trong hàng nút chính của mỗi
+      dòng, dễ bấm nhầm (đúng lo ngại của audit). Thêm state
+      `dangerOpenKey: string | null` (key = id các port nối nhau của group,
+      đã có sẵn biến `key` này trong `.map()`, chỉ tái dùng) — mặc định hiện
+      nút "⋯" thay chỗ "Xóa", bấm "⋯" mới lộ ra nút "Xóa" thật ở đúng dòng đó
+      (dòng khác vẫn đóng, vì so khớp theo `key`). Không đổi hành vi
+      `deleteGroup()` bên trong (vẫn `confirm()` thường — đây là xóa 1 dòng,
+      không phải bulk).
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (15
+      trang + middleware, không đổi số route).
+    - **Không làm gì thêm ngoài phạm vi 3.3-3.5** — không đổi UI xóa 1 dòng ở
+      nơi khác, không thêm giới hạn dòng cho các thao tác không phải xóa.
+
+71. **Đợt 4 (audit, mục 66) — 2/4 việc: `error.tsx`/`loading.tsx` + dịch lỗi
+    Postgres (2026-08-07)**. 2 việc còn lại của Đợt 4 (trang `/circuit/[id]`,
+    gom Sidebar) chưa làm — nội dung gốc audit cho 2 việc đó không còn giữ
+    được đầy đủ qua các lần nén ngữ cảnh phiên làm việc, đang chờ người dùng
+    dán lại nguyên văn để làm đúng ý thay vì đoán.
+    - **`app/error.tsx`** (mới) — error boundary cho toàn bộ `app/` (Next.js
+      App Router convention), bắt lỗi ném ra lúc render Server Component
+      (trước đây không có gì, 1 lỗi làm sập cả trang thành "Application
+      error" trắng xóa, chỉ còn cách F5). Hiện thông điệp đã dịch qua
+      `translatePgError` + nút "Thử lại" (`reset()`). Chưa làm
+      `app/global-error.tsx` (bắt lỗi ở chính `layout.tsx`) — chưa gặp ca đó
+      thật, để sau nếu cần.
+    - **`app/loading.tsx`** (mới) — hiện trong lúc Server Component của route
+      đang chờ dữ liệu (trước đây màn hình trắng, dễ hiểu lầm app treo).
+    - **`lib/translatePgError.ts`** (mới) — dịch các mẫu lỗi Postgres/
+      PostgREST hay gặp nhất sang tiếng Việt: vi phạm RLS (rất liên quan sau
+      khi khóa 3 cấp quyền ở mục 68-69 — viewer/operator thao tác vượt quyền
+      giờ sẽ thấy thông điệp rõ ràng thay vì "row-level security policy..."
+      khó hiểu), trùng khóa duy nhất, vi phạm khóa ngoại, JWT hết hạn, lỗi
+      mạng. Không nhận diện được mẫu nào thì trả nguyên văn — không che giấu
+      lỗi lạ.
+    - **Áp dụng vào 54 chỗ `setError(...)` trên 15 file** (dùng 1 agent con
+      quét toàn bộ, tự tôi kiểm tra lại bằng `git diff` sau khi xong) — chỉ
+      bọc đúng phần `.message` gốc (giữ nguyên câu tiếng Việt viết tay bao
+      quanh, không dịch đè), KHÔNG đụng các `setError(...)` là validate tay
+      (vd "Vui lòng nhập tên thiết bị") hay `setError(null)`. Riêng
+      `app/login/page.tsx` giữ nguyên bản dịch tay có sẵn cho
+      "Invalid login credentials" → "Sai email hoặc mật khẩu.", chỉ bọc
+      nhánh lỗi CHƯA dịch còn lại.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (tự chạy
+      lại, không chỉ tin báo cáo của agent con).
+    - **Phát hiện chưa xử lý (ghi lại, chưa sửa)**: `DELETE` bị RLS chặn ở
+      Postgres KHÔNG báo lỗi (chỉ lặng lẽ xóa 0 dòng, xem mục 69) — nghĩa là
+      nếu 1 tài khoản không đủ quyền bấm nút xóa 1 dòng (không phải bulk),
+      UI hiện tại KHÔNG báo lỗi rõ ràng, chỉ có `router.refresh()`/tự đóng
+      form như xóa thành công, dòng dữ liệu thật ra vẫn còn. Muốn sửa đúng
+      cần thêm `.select()` sau mọi `.delete()` đơn lẻ rồi kiểm tra số dòng
+      ảnh hưởng — CHƯA làm vì ngoài phạm vi "dịch lỗi" của Đợt 4, cần bàn
+      riêng (ảnh hưởng nhiều file: `PortTable.deleteGroup`,
+      `DeviceCircuitList.deleteCircuit`, `DeleteRackButton`...).
+
+72. **Đợt 4 (tiếp) — trang `/circuit/[id]` sửa lại đúng bản gốc (2026-08-07)**.
+    Bản đầu (viết khi chưa có lại văn bản audit gốc) chỉ là 1 permalink
+    chỉ-xem đơn giản cho 1 luồng — người dùng dán lại nguyên văn
+    `HSKT-audit-2026-08-03.md` mục 3.2, hóa ra ý gốc RỘNG hơn nhiều: xem
+    **toàn tuyến 1 đấu nối thiết bị↔trung kế trên cùng khung nhìn**, so sánh
+    2 hồ sơ cạnh nhau (mockup có chuỗi hình: Thiết bị → ODF thiết bị → ODF
+    trung kế → Tuyến cáp, cộng bảng so sánh 2 cột nêu rõ trường nào lệch).
+    Viết lại hoàn toàn theo đúng bản gốc:
+    - **Cặp ĐÃ liên kết thật** (`mirror_of_id` có sẵn) — tái dùng NGUYÊN
+      `findLinkedDeviceTrunkPairs(trunkPorts, deviceCircuits)`
+      (`lib/circuitPairSync.ts`, đã có sẵn, không viết logic so sánh mới —
+      đúng chỉ định audit gốc "toàn bộ dữ liệu đã có sẵn trong
+      CircuitPairDetail... phần lớn công việc chỉ là dựng giao diện"), tìm
+      đúng cặp khớp `id` (chấp nhận CẢ `deviceCircuitId` lẫn
+      `trunkCircuitId`) rồi dựng: khối chuỗi 4 ô nối mũi tên (Thiết bị/Trib →
+      Vị trí ODF thiết bị → Vị trí ODF trung kế → Mã rack tuyến cáp), 2 dòng
+      "Phương án ứng cứu"/"Trạm thực hiện" (lấy riêng từ luồng trung kế qua 1
+      truy vấn nhỏ — 2 trường này không nằm trong `CircuitPairDetail`, không
+      phải trường được đối chiếu 2 bên), và bảng so sánh 2 cột "Hồ sơ đấu
+      nối (thiết bị)" / "Hồ sơ ODF trung kế" — mỗi dòng tô vàng khi
+      `nameMatch`/`ownPositionMatch`/`nextPositionMatch`/`tribMatch` báo
+      lệch (`false`), lấy thẳng từ `CircuitPairDetail`, không tính lại.
+    - **Chấp nhận chi phí tải dữ liệu**: hàm `findPair()` tải
+      `fetchAllOdfPorts` + `fetchDeviceCircuits` (~9.000 dòng, cùng cỡ
+      `app/odf-trunk/[rackId]/page.tsx`) — audit mục 5.1 phê bình đúng chi
+      phí này nhưng ở TRANG DANH SÁCH lặp lại nhiều lần; đây là trang chi
+      tiết/permalink tải 1 lần khi có người bấm vào, không lặp lại, nên chấp
+      nhận được. Tối ưu riêng (RPC/materialized view) để dành Đợt 5.
+    - **Không phải cặp đã liên kết thật** (chỉ 1 bên, hoặc "candidate" khớp
+      vị trí nhưng CHƯA xác nhận) — rơi về `SingleView` (bản permalink đơn
+      giản của lần viết đầu, giữ lại làm fallback thay vì bỏ). Cố tình
+      KHÔNG hiện khung so sánh cho candidate — đúng tinh thần tooltip
+      `MirrorLinkBadge` hiện có: candidate phải xác nhận qua tab Chất lượng
+      dữ liệu trước, tránh trang permalink ngầm định "đã đúng" 1 quan hệ
+      chưa ai xác nhận.
+    - **`components/ui/MirrorLinkBadge.tsx`** — thêm prop `circuitId`, huy
+      hiệu "🔗 Đã liên kết" giờ là `<Link href="/circuit/{id}">` (đúng ý audit
+      gốc: "MirrorLinkBadge bấm vào đây" là 1 trong 3 đích đến chính của
+      trang này). Ca "candidate" cố tình KHÔNG link (lý do ở trên). Cập nhật
+      2 nơi gọi: `PortTable.tsx`, `DeviceCircuitList.tsx`.
+    - **CHƯA làm** (đúng 2 đích đến còn lại audit gốc liệt kê): gắn link từ
+      kết quả Cmd+K (`CommandPalette.tsx`) và từ các tab "Chất lượng dữ
+      liệu" — để riêng, cần khảo sát thêm dữ liệu mỗi nơi đã có sẵn circuit
+      id hay chưa trước khi gắn, tránh lan phạm vi 1 lần sửa.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (16
+      route — 1 route `/circuit/[id]` duy nhất, không đổi so với bản đầu).
+
+73. **Đợt 4 (tiếp) — gom Sidebar: XÁC NHẬN CÓ MÂU THUẪN THẬT (2026-08-07)**.
+    Người dùng dán lại nguyên văn audit mục 3.3 — xác nhận đúng nghi ngờ đã
+    ghi trước đó: đề xuất gốc là gộp "ODF Trung kế" + "ODF Thiết bị" (2 mục
+    sidebar) thành 1 mục "Hồ sơ" duy nhất, chuyển đổi giữa 2 chế độ xem
+    ("Theo rack" / "Theo luồng") bằng nút gạt NGAY TRONG trang thay vì 2 mục
+    sidebar riêng — điều này ĐỐI NGHỊCH TRỰC TIẾP với yêu cầu người dùng
+    2026-07-28 đã ghi rõ trong chính comment của `components/Sidebar.tsx`:
+    tách "Hồ sơ ODF Thiết bị" (xem theo rack) và "Hồ sơ đấu nối" (đổi tên từ
+    "Sửa luồng thiết bị", xem/sửa theo luồng) thành 2 mục RIÊNG. Cùng 1 cặp
+    trang, 2 yêu cầu ngược chiều nhau ở 2 thời điểm khác nhau. Không tự ý
+    chọn bên nào — đây đúng dạng xung đột "audit vs quyết định người dùng đã
+    có hiệu lực" từng gặp ở Đợt 3 (mục 66, xung đột nguyên tắc MVP no-auth) —
+    phải hỏi lại. Phần còn lại của đề xuất (gộp "Cài đặt"/"Danh mục thiết
+    bị"/"Thư viện vị trí thiết bị"/"Import Export" vào 1 nhóm "Quản trị", bỏ
+    mục "Tìm kiếm nhanh" khỏi sidebar vì đã có Cmd+K) KHÔNG xung đột gì đã
+    biết — có thể làm độc lập nếu người dùng đồng ý, tách riêng khỏi phần
+    gộp 2 mục ODF đang mâu thuẫn.
+
+    **Người dùng chọn: giữ "Hồ sơ ODF Thiết bị"/"Hồ sơ đấu nối" tách riêng
+    (không gộp), làm phần còn lại.** Đã làm:
+    - `components/Sidebar.tsx` — 3 nhóm còn: "Thống kê" (Dashboard), "Hồ sơ"
+      (ODF Trung kế, ODF Thiết bị, Hồ sơ đấu nối — CHỈ 3 mục hằng ngày, bỏ
+      "Tìm kiếm nhanh"/"Chất lượng dữ liệu"), "Quản trị" (Chất lượng dữ liệu,
+      Danh mục thiết bị, **Thư viện vị trí thiết bị** — mục MỚI, trang
+      `/odf-device/vi-tri-thiet-bi` đã tồn tại từ trước nhưng CHƯA từng có
+      trong Sidebar, chỉ vào được qua URL trực tiếp — audit gốc liệt kê mục
+      này trong nhóm Quản trị nên thêm luôn, Import/Export Excel, Cài đặt
+      chung).
+    - `components/ui/CommandPalette.tsx` — thêm dòng chân "Xem tất cả kết
+      quả tìm kiếm (bộ lọc đầy đủ) →" trỏ `/search`, thay chỗ mục "Tìm kiếm
+      nhanh" vừa bỏ khỏi Sidebar — giữ trang `/search` còn tới được (có bộ
+      lọc theo từng cột mà kết quả rút gọn của palette không có), đúng đề
+      xuất audit gốc.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (số
+      route không đổi — chỉ đổi điều hướng, không thêm/bớt trang).

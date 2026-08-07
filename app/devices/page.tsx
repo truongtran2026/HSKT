@@ -1,13 +1,19 @@
 import { fetchDevices, getAdn1StationId } from "@/lib/devices";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 import DeviceCategoryClient from "@/components/devices/DeviceCategoryClient";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
 export const dynamic = "force-dynamic";
 
 export default async function DevicesPage() {
-  const [devices, circuits, stationId] = await Promise.all([fetchDevices(), fetchDeviceCircuits(), getAdn1StationId()]);
+  const supabase = await createSupabaseServerClient();
+  const [devices, circuits, stationId] = await Promise.all([
+    fetchDevices(supabase),
+    fetchDeviceCircuits(supabase),
+    getAdn1StationId(supabase),
+  ]);
 
   return (
     <div>

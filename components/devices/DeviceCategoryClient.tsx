@@ -10,8 +10,10 @@ import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel } from "@/lib/devices";
 import { syncDevicePositionMapNames, deleteDevicePositionMapForNames } from "@/lib/devicePositionMap";
 import { mergeDeviceInto } from "@/lib/deviceDedup";
-import { findMirrorTrunkCircuits, cleanupAfterMirrorCascade, type MirrorTrunkMatch } from "@/lib/mirrorTrunkCircuits";
+import { findMirrorTrunkCircuits, type MirrorTrunkMatch } from "@/lib/mirrorTrunkCircuits";
+import { confirmBulkDelete } from "@/lib/dangerousConfirm";
 import { formatLastUpdated } from "@/lib/format";
+import { translatePgError } from "@/lib/translatePgError";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
 import ResizableTh from "@/components/ui/ResizableTh";
@@ -199,7 +201,7 @@ export default function DeviceCategoryClient({
       const { error: err } = await supabase.from("devices").update({ category: newCategory }).in("id", batch);
       if (err) {
         setBusy(false);
-        setError(err.message);
+        setError(translatePgError(err.message));
         return;
       }
     }
@@ -256,15 +258,15 @@ export default function DeviceCategoryClient({
         // Phần lõi chuyển luồng + xóa thiết bị nguồn tách sang lib/deviceDedup.ts
         // (yêu cầu người dùng 2026-07-29, dùng chung với trang "Chất lượng dữ
         // liệu" mới) — hành vi giữ nguyên 100%.
-        await mergeDeviceInto(d.id, targetId);
+        await mergeDeviceInto(supabase, d.id, targetId);
       }
 
       try {
-        await syncDevicePositionMapNames(oldNames, finalName);
+        await syncDevicePositionMapNames(supabase, oldNames, finalName);
       } catch (syncErr) {
         setError(
           `Đã đổi tên/gộp xong, nhưng đồng bộ thư viện "Vị trí thiết bị" thất bại: ${
-            syncErr instanceof Error ? syncErr.message : String(syncErr)
+            syncErr instanceof Error ? translatePgError(syncErr.message) : String(syncErr)
           }`
         );
       }
@@ -273,7 +275,7 @@ export default function DeviceCategoryClient({
       setBulkRename("");
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }
@@ -311,9 +313,9 @@ export default function DeviceCategoryClient({
     const circuitIdsToDelete = circuits.filter((c) => c.deviceId && selected.has(c.deviceId)).map((c) => c.id);
     let mirrors: MirrorTrunkMatch[];
     try {
-      mirrors = [...(await findMirrorTrunkCircuits(circuitIdsToDelete)).values()];
+      mirrors = [...(await findMirrorTrunkCircuits(supabase, circuitIdsToDelete)).values()];
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
       return;
     }
     const deviceLabel = selected.size === 1 ? "thiết bị này" : `${selected.size} thiết bị đã chọn`;
@@ -323,52 +325,44 @@ export default function DeviceCategoryClient({
       mirrors.length > 0
         ? ` Trong đó ${mirrors.length} luồng đã có "mirror" tự sinh bên Hồ sơ ODF Trung kế — sẽ bị xóa theo, (các) port trung kế tương ứng trở về trạng thái trống.`
         : "";
-    if (!confirm(`Xóa vĩnh viễn ${deviceLabel}?${circuitWarning}${mirrorWarning} Không thể hoàn tác.`)) return;
+    // confirmBulkDelete (Đợt 3.4 audit, 2026-08-07) thay confirm() OK/Cancel
+    // thường — bắt gõ "XÓA" + giới hạn 20 dòng/lần.
+    if (!confirmBulkDelete(`Xóa vĩnh viễn ${deviceLabel}?${circuitWarning}${mirrorWarning} Không thể hoàn tác.`, selected.size))
+      return;
 
     setBusy(true);
     try {
       const ids = [...selected];
       const names = selectedDevices.map((d) => d.name);
-      const chunkSize = 200;
 
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const batch = ids.slice(i, i + chunkSize);
-        const { error: circErr } = await supabase.from("circuits").delete().in("device_id", batch);
-        if (circErr) throw circErr;
-      }
+      // Phần CƠ HỌC (xóa circuits theo device_id, dọn port/transit_links của
+      // mirror trung kế bị cascade xóa theo, xóa devices) gộp thành 1 RPC
+      // nguyên tử (Đợt 2, 2026-08-04, xem migration 20260804000003) — trước
+      // đây là nhiều lời gọi Supabase rời rạc (kể cả chia batch 200), mất
+      // mạng/đóng tab giữa chừng để lại thiết bị đã mất luồng nhưng còn tồn
+      // tại, hoặc ngược lại. RPC nhận thẳng mảng id, không cần tự chia batch
+      // (Postgres xử lý `= any(uuid[])` tốt với mảng lớn hơn 200 nhiều).
+      const { error: rpcErr } = await supabase.rpc("delete_devices_with_circuits", { p_device_ids: ids });
+      if (rpcErr) throw rpcErr;
 
-      if (mirrors.length > 0) {
-        try {
-          await cleanupAfterMirrorCascade(mirrors);
-        } catch (syncErr) {
-          setError(
-            `Đã xóa thiết bị xong (mirror trung kế đã tự xóa theo), nhưng dọn port/transit_links thất bại: ${
-              syncErr instanceof Error ? syncErr.message : String(syncErr)
-            }`
-          );
-        }
-      }
-
+      // Phần dọn device_position_map (khớp theo TÊN đã chuẩn hóa qua
+      // normalizeDeviceNameKey() — hàm JS, chưa có bản SQL tương đương nên
+      // KHÔNG đưa vào RPC) vẫn giữ nguyên là bước best-effort riêng sau khi
+      // RPC đã thành công, đúng hành vi cũ.
       try {
-        await deleteDevicePositionMapForNames(names);
+        await deleteDevicePositionMapForNames(supabase, names);
       } catch (syncErr) {
         setError(
           `Đã xóa thiết bị xong, nhưng dọn thư viện "Vị trí thiết bị" thất bại: ${
-            syncErr instanceof Error ? syncErr.message : String(syncErr)
+            syncErr instanceof Error ? translatePgError(syncErr.message) : String(syncErr)
           }`
         );
-      }
-
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const batch = ids.slice(i, i + chunkSize);
-        const { error: devErr } = await supabase.from("devices").delete().in("id", batch);
-        if (devErr) throw devErr;
       }
 
       setSelected(new Set());
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }
@@ -411,18 +405,18 @@ export default function DeviceCategoryClient({
       if (failed?.error) throw new Error(failed.error.message);
 
       try {
-        await syncDevicePositionMapNames(g.variants.map((v) => v.text), finalName);
+        await syncDevicePositionMapNames(supabase, g.variants.map((v) => v.text), finalName);
       } catch (syncErr) {
         setError(
           `Đã gán thiết bị xong, nhưng đồng bộ thư viện "Vị trí thiết bị" thất bại: ${
-            syncErr instanceof Error ? syncErr.message : String(syncErr)
+            syncErr instanceof Error ? translatePgError(syncErr.message) : String(syncErr)
           }`
         );
       }
 
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setPendingBusyKey(null);
     }

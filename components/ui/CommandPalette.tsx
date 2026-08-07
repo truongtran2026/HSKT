@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchAllTrunkPorts, type TrunkPortRow } from "@/lib/trunkPorts";
 import { fetchDevices, deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
@@ -9,6 +10,7 @@ import { derivePortStatus, type DerivedPortStatus } from "@/lib/portStatus";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeVN } from "@/lib/text";
 import { compareRackCode } from "@/lib/rackCode";
+import { supabase } from "@/lib/supabase";
 
 // Nút "🔍" ở Sidebar.tsx bắn sự kiện này để mở palette — dùng CustomEvent
 // thay vì lift state lên app/layout.tsx, vì layout.tsx là Server Component
@@ -133,7 +135,7 @@ export default function CommandPalette() {
     loadedOnceRef.current = true;
     setLoading(true);
     setLoadError(null);
-    Promise.all([fetchAllTrunkPorts(), fetchDevices()])
+    Promise.all([fetchAllTrunkPorts(supabase), fetchDevices(supabase)])
       .then(([p, d]) => {
         setPorts(p);
         setDevices(d);
@@ -367,6 +369,19 @@ export default function CommandPalette() {
                 </span>
               </div>
             ))}
+          </div>
+
+          {/* Thay chỗ mục "Tìm kiếm nhanh" vừa bỏ khỏi Sidebar (Đợt 4 audit
+              mục 3.3, 2026-08-07) — trang /search vẫn còn, chỉ chuyển đường
+              vào đây, kèm bộ lọc theo cột mà kết quả rút gọn ở trên không có. */}
+          <div className="border-t border-slate-200 px-3 py-2">
+            <Link
+              href="/search"
+              onClick={() => setOpen(false)}
+              className="text-xs text-primary-600 hover:underline"
+            >
+              Xem tất cả kết quả tìm kiếm (bộ lọc đầy đủ) →
+            </Link>
           </div>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { distance } from "fastest-levenshtein";
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeVN } from "@/lib/text";
 import { matchTrunkPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -141,7 +141,10 @@ export async function findUnlinkedMirrorPairs(
 // lẫn device-device bên dưới) — gắn mirror_of_id rồi (tùy chọn) đồng bộ CHỈ
 // name+interface_type từ 1 bên sang bên kia, tránh viết lại 2 lần cùng 1
 // logic rồi lệch nhau sau này.
-async function applyMirrorLink(originId: string, mirrorId: string, syncFrom?: "origin" | "mirror"): Promise<void> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+async function applyMirrorLink(client: SupabaseClient, originId: string, mirrorId: string, syncFrom?: "origin" | "mirror"): Promise<void> {
+  const supabase = client;
   const { error } = await supabase.from("circuits").update({ mirror_of_id: originId }).eq("id", mirrorId);
   if (error) throw error;
   if (!syncFrom) return;
@@ -157,8 +160,8 @@ async function applyMirrorLink(originId: string, mirrorId: string, syncFrom?: "o
   if (syncErr) throw syncErr;
 }
 
-export async function linkMirrorPair(deviceCircuitId: string, trunkCircuitId: string, syncNameFrom?: "device" | "trunk"): Promise<void> {
-  await applyMirrorLink(deviceCircuitId, trunkCircuitId, syncNameFrom === "device" ? "origin" : syncNameFrom === "trunk" ? "mirror" : undefined);
+export async function linkMirrorPair(client: SupabaseClient, deviceCircuitId: string, trunkCircuitId: string, syncNameFrom?: "device" | "trunk"): Promise<void> {
+  await applyMirrorLink(client, deviceCircuitId, trunkCircuitId, syncNameFrom === "device" ? "origin" : syncNameFrom === "trunk" ? "mirror" : undefined);
 }
 
 // ============================================================================
@@ -247,6 +250,6 @@ export function findUnlinkedDeviceDevicePairs(deviceCircuits: DeviceCircuitRow[]
   return result.sort((a, b) => b.similarity - a.similarity);
 }
 
-export async function linkDeviceDevicePair(circuitAId: string, circuitBId: string, syncNameFrom?: "a" | "b"): Promise<void> {
-  await applyMirrorLink(circuitAId, circuitBId, syncNameFrom === "a" ? "origin" : syncNameFrom === "b" ? "mirror" : undefined);
+export async function linkDeviceDevicePair(client: SupabaseClient, circuitAId: string, circuitBId: string, syncNameFrom?: "a" | "b"): Promise<void> {
+  await applyMirrorLink(client, circuitAId, circuitBId, syncNameFrom === "a" ? "origin" : syncNameFrom === "b" ? "mirror" : undefined);
 }

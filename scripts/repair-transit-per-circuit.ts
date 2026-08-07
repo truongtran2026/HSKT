@@ -28,8 +28,10 @@ loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 const COMMIT = process.argv.includes("--commit");
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { writeTransitForPorts } = await import("../lib/transitLinks");
+
+  const supabase = getSupabaseAdmin();
 
   console.log(`[repair-transit-per-circuit] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu...");
@@ -134,7 +136,7 @@ async function main() {
     console.log(`  [SẼ VÁ] circuit ${circuitId}: điền "${canonical}" cho ${missingPorts.length} port đang trống (${missingPorts.join(", ")})`);
     willFill++;
     if (COMMIT) {
-      await writeTransitForPorts(portIds, canonical);
+      await writeTransitForPorts(supabase, portIds, canonical);
     }
   }
   console.log(`Tổng: ${willFill} circuit ${COMMIT ? "đã vá" : "sẽ vá"}, ${protectedCount} circuit được BẢO VỆ (đã có ≥2 giá trị khác nhau — không đụng), ${alreadyOk} circuit đã đủ dữ liệu.`);

@@ -3,17 +3,19 @@ import { fetchDevices } from "@/lib/devices";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceAliases } from "@/lib/deviceAliases";
 import DevicePositionMapClient from "@/components/odf-device/DevicePositionMapClient";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
 export const dynamic = "force-dynamic";
 
 export default async function DevicePositionMapPage() {
+  const supabase = await createSupabaseServerClient();
   const [rows, devices, trunkPorts, deviceAliases] = await Promise.all([
-    fetchDevicePositionMap(),
-    fetchDevices(),
-    fetchAllOdfPorts(),
-    fetchDeviceAliases(),
+    fetchDevicePositionMap(supabase),
+    fetchDevices(supabase),
+    fetchAllOdfPorts(supabase),
+    fetchDeviceAliases(supabase),
   ]);
 
   return (

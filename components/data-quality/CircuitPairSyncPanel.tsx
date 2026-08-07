@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CircuitPairDetail } from "@/lib/circuitPairSync";
 import { applySyncFromTrunk, applySyncFromDevice } from "@/lib/circuitPairSync";
+import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 // Panel dùng CHUNG (yêu cầu người dùng 2026-08-02: "kiểm tra 01 luồng" phải
 // so đúng 3 điểm dữ liệu theo ánh xạ vật lý, không phải chỉ so tên rồi mới
@@ -28,12 +30,12 @@ export default function CircuitPairSyncPanel({ detail, onApplied }: { detail: Ci
     setBusy(true);
     setError(null);
     try {
-      if (source === "trunk") await applySyncFromTrunk(detail);
-      else await applySyncFromDevice(detail);
+      if (source === "trunk") await applySyncFromTrunk(supabase, detail);
+      else await applySyncFromDevice(supabase, detail);
       router.refresh();
       onApplied?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,5 @@
 import { distance } from "fastest-levenshtein";
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import type { DeviceRow } from "@/lib/devices";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -105,7 +105,10 @@ export function findFuzzyDuplicateDevices(
 // nguyên tên đang có) — mỗi nơi tự gọi syncDevicePositionMapNames() riêng
 // sau khi hàm này chạy xong, giữ đúng hành vi "lưu xong mới đồng bộ, đồng bộ
 // lỗi không coi là lưu thất bại" đã có ở applyBulkRename.
-export async function mergeDeviceInto(sourceId: string, targetId: string): Promise<void> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function mergeDeviceInto(client: SupabaseClient, sourceId: string, targetId: string): Promise<void> {
+  const supabase = client;
   const { error: relinkErr } = await supabase.from("circuits").update({ device_id: targetId }).eq("device_id", sourceId);
   if (relinkErr) throw relinkErr;
   const { error: delErr } = await supabase.from("devices").delete().eq("id", sourceId);
@@ -132,7 +135,8 @@ export function ignoredPairKey(idA: string, idB: string): string {
   return sortedPair(idA, idB).join("|");
 }
 
-export async function fetchIgnoredDevicePairs(): Promise<IgnoredDevicePair[]> {
+export async function fetchIgnoredDevicePairs(client: SupabaseClient): Promise<IgnoredDevicePair[]> {
+  const supabase = client;
   const { data, error } = await supabase.from("device_dedup_ignored").select("id, device_a_id, device_b_id");
   if (error) throw error;
   return ((data ?? []) as RawIgnoredPair[]).map((r) => ({ id: r.id, deviceAId: r.device_a_id, deviceBId: r.device_b_id }));
@@ -142,7 +146,8 @@ export async function fetchIgnoredDevicePairs(): Promise<IgnoredDevicePair[]> {
 // 2 thiết bị thật khác nhau, đừng gợi ý lại cặp này nữa. Lưu DB (không phải
 // state trình duyệt) để còn nguyên sau F5/đổi máy, cùng tinh thần transit_
 // links.format_ack ở mục 26.
-export async function ignoreDevicePair(idA: string, idB: string): Promise<void> {
+export async function ignoreDevicePair(client: SupabaseClient, idA: string, idB: string): Promise<void> {
+  const supabase = client;
   const [a, b] = sortedPair(idA, idB);
   const { error } = await supabase.from("device_dedup_ignored").insert({ device_a_id: a, device_b_id: b });
   if (error) throw error;

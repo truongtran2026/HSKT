@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Dữ liệu 1 port trung kế đã chuẩn hóa — dùng chung cho trang Tìm kiếm nhanh
 // (giai đoạn 5) và Dashboard (giai đoạn 6), để cả 2 nơi cùng 1 nguồn dữ liệu
@@ -72,7 +72,15 @@ function firstOf<T>(v: T | T[] | null | undefined): T | null {
 // .range() có thể LẤY TRÙNG 1 dòng ở 2 trang liền kề (đã gặp thực tế: đúng
 // 10 port bị trùng, gây ra hiện tượng 1 port "Đang dùng" lại lọt vào danh
 // sách lọc "Cổng trống").
-async function fetchAllRawPorts(domainFilter?: "trunk" | "device"): Promise<RawRow[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC (không default) — hàm này
+// được gọi từ cả Server Component (cần client đọc cookie phiên), Client
+// Component (client trình duyệt), và script CLI (service role key). Không
+// còn 1 singleton `supabase` import sẵn để tự chọn đúng — bắt buộc truyền vào
+// biến lỗi "quên truyền đúng client" thành lỗi biên dịch tsc thay vì âm thầm
+// trả về rỗng lúc chạy. Xem lib/supabase.ts / lib/supabase-server.ts /
+// scripts/lib/supabaseAdmin.ts.
+async function fetchAllRawPorts(client: SupabaseClient, domainFilter?: "trunk" | "device"): Promise<RawRow[]> {
+  const supabase = client;
   const pageSize = 1000;
   const all: RawRow[] = [];
   for (let from = 0; ; from += pageSize) {
@@ -128,8 +136,9 @@ function toTrunkPortRow(row: RawRow): TrunkPortRow {
 // Chỉ ODF trung kế (giai đoạn 5/6 theo CLAUDE.md — Tìm kiếm nhanh/Dashboard,
 // không liên quan ODF/DDF nội bộ nên KHÔNG đổi hàm này, tránh ảnh hưởng 2 nơi
 // đó ngoài ý muốn).
-export async function fetchAllTrunkPorts(): Promise<TrunkPortRow[]> {
-  const rawRows = await fetchAllRawPorts("trunk");
+export async function fetchAllTrunkPorts(client: SupabaseClient): Promise<TrunkPortRow[]> {
+  const supabase = client;
+  const rawRows = await fetchAllRawPorts(supabase, "trunk");
   return rawRows.map(toTrunkPortRow);
 }
 
@@ -138,8 +147,9 @@ export async function fetchAllTrunkPorts(): Promise<TrunkPortRow[]> {
 // "Vị trí ODF" ở DeviceCircuitList.tsx và PortTable.tsx, vì cả 2 nơi cần khớp
 // được CẢ 2 loại rack thật (khác đúng 1 chỗ: khớp domain='device' KHÔNG được
 // coi là "đấu thẳng ra trung kế" — xem rackDomain trên TrunkPositionMatch).
-export async function fetchAllOdfPorts(): Promise<TrunkPortRow[]> {
-  const rawRows = await fetchAllRawPorts();
+export async function fetchAllOdfPorts(client: SupabaseClient): Promise<TrunkPortRow[]> {
+  const supabase = client;
+  const rawRows = await fetchAllRawPorts(supabase);
   return rawRows.map(toTrunkPortRow);
 }
 

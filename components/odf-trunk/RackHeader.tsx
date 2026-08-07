@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { formatRackCodeDisplay } from "@/lib/rackCode";
+import { translatePgError } from "@/lib/translatePgError";
 
 export interface RackHeaderData {
   id: string;
@@ -26,7 +27,7 @@ export default function RackHeader({ rack }: { rack: RackHeaderData }) {
     const { error: err } = await supabase.from("racks").update({ cable_route_name: routeName.trim() || null }).eq("id", rack.id);
     setBusy(false);
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     setEditing(false);

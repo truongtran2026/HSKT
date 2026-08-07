@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllOdfPorts, matchTrunkPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
 import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
@@ -36,7 +36,10 @@ interface RawMirrorRow {
   port_circuit_links: { port_id: string }[] | { port_id: string } | null;
 }
 
-export async function findMirrorTrunkCircuits(originIds: string[]): Promise<Map<string, MirrorTrunkMatch>> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function findMirrorTrunkCircuits(client: SupabaseClient, originIds: string[]): Promise<Map<string, MirrorTrunkMatch>> {
+  const supabase = client;
   const result = new Map<string, MirrorTrunkMatch>();
   if (originIds.length === 0) return result;
 
@@ -59,7 +62,8 @@ export async function findMirrorTrunkCircuits(originIds: string[]): Promise<Map<
 // `on delete cascade`, không cần xóa tay ở đây nữa): (1) transit_links của
 // các port sắp giải phóng (cùng lý do mục 16 — port trống thì "Chuyển tiếp"
 // cũ vô nghĩa), (2) đưa ports.status các port đó về `unused`.
-export async function cleanupAfterMirrorCascade(matches: MirrorTrunkMatch[]): Promise<void> {
+export async function cleanupAfterMirrorCascade(client: SupabaseClient, matches: MirrorTrunkMatch[]): Promise<void> {
+  const supabase = client;
   const portIds = matches.flatMap((m) => m.portIds);
   if (portIds.length === 0) return;
 
@@ -87,7 +91,8 @@ export async function cleanupAfterMirrorCascade(matches: MirrorTrunkMatch[]): Pr
 // kế) — caller (component) chịu trách nhiệm hỏi xác nhận TRƯỚC khi gọi hàm
 // này, dùng CHÍNH findMirrorTrunkCircuits() ở trên để biết trước những mirror
 // nào sẽ mất theo (truyền lại qua tham số, tránh gọi lại 2 lần).
-export async function deleteTrunkCircuitToResync(trunkCircuitId: string, cascadedMirrors: MirrorTrunkMatch[]): Promise<void> {
+export async function deleteTrunkCircuitToResync(client: SupabaseClient, trunkCircuitId: string, cascadedMirrors: MirrorTrunkMatch[]): Promise<void> {
+  const supabase = client;
   const { data: linkRows, error: linkErr } = await supabase.from("port_circuit_links").select("port_id").eq("circuit_id", trunkCircuitId);
   if (linkErr) throw linkErr;
   const ownPortIds = (linkRows ?? []).map((r) => r.port_id);
@@ -109,7 +114,7 @@ export async function deleteTrunkCircuitToResync(trunkCircuitId: string, cascade
     if (transitErr) throw transitErr;
   }
 
-  if (cascadedMirrors.length > 0) await cleanupAfterMirrorCascade(cascadedMirrors);
+  if (cascadedMirrors.length > 0) await cleanupAfterMirrorCascade(client, cascadedMirrors);
 }
 
 function odfPartOf(raw: string | null): string | null {
@@ -188,6 +193,7 @@ export function findTrunkMirrorCandidates(
 // qua mirror_of_id + findMirrorTrunkCircuits/cleanupAfterMirrorCascade ở trên
 // (chỉ cần gắn đúng mirror_of_id lúc tạo, không cần thêm gì cho chiều xóa).
 export async function autoCreateTrunkMirrorForCircuit(
+  client: SupabaseClient,
   sourceCircuitId: string
 ): Promise<
   | { status: "created"; rackCode: string; portNumbers: number[] }
@@ -201,8 +207,9 @@ export async function autoCreateTrunkMirrorForCircuit(
     }
   | { status: "error"; message: string }
 > {
-  const trunkPorts = await fetchAllOdfPorts();
-  const circuits = await fetchDeviceCircuits();
+  const supabase = client;
+  const trunkPorts = await fetchAllOdfPorts(client);
+  const circuits = await fetchDeviceCircuits(client);
   const sourceCircuit = circuits.find((c) => c.id === sourceCircuitId);
   if (!sourceCircuit) return { status: "no-gap" };
 
@@ -284,7 +291,7 @@ export async function autoCreateTrunkMirrorForCircuit(
       // thứ 2 (nếu có) không có "Chuyển tiếp" dù cùng 1 luồng. An toàn 100%
       // ở đây vì circuit vừa insert xong, chưa có dữ liệu cũ nào để bảo vệ.
       try {
-        await writeTransitForPorts(orderedPortIds, rawText);
+        await writeTransitForPorts(client, orderedPortIds, rawText);
       } catch (e) {
         return { status: "error", message: e instanceof Error ? e.message : String(e) };
       }
@@ -352,9 +359,10 @@ function circuitInScope(c: Pick<DeviceCircuitRow, "deviceName" | "devicePosition
 // chưa có), "TÊN KHÁC" -> KHÔNG tự xóa/tạo lại (quá rủi ro khi chạy hàng
 // loạt không giám sát từng dòng) — chỉ liệt kê vào `conflicts` để người dùng
 // tự vào từng luồng xử lý qua nút "Gỡ liên kết"/"Kiểm tra đồng bộ".
-export async function syncAllTrunkMirrorGaps(scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
-  const trunkPorts = await fetchAllOdfPorts();
-  const circuits = await fetchDeviceCircuits();
+export async function syncAllTrunkMirrorGaps(client: SupabaseClient, scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
+  const supabase = client;
+  const trunkPorts = await fetchAllOdfPorts(client);
+  const circuits = await fetchDeviceCircuits(client);
   const rackIdByCode = new Map<string, string>();
   for (const p of trunkPorts) rackIdByCode.set(p.rackCode, p.rackId);
 
@@ -441,7 +449,7 @@ export async function syncAllTrunkMirrorGaps(scope?: MirrorScanScope): Promise<M
       if (rawText) {
         // Ghi cho TOÀN BỘ port (2026-08-04) — xem giải thích ở nhánh trên.
         try {
-          await writeTransitForPorts(orderedPortIds, rawText);
+          await writeTransitForPorts(client, orderedPortIds, rawText);
         } catch (e) {
           summary.errors.push(`${sourceCircuit.name}: tạo xong nhưng ghi Chuyển tiếp lỗi: ${e instanceof Error ? e.message : String(e)}`);
         }
@@ -465,12 +473,13 @@ export async function syncAllTrunkMirrorGaps(scope?: MirrorScanScope): Promise<M
 // tạo đúng theo bên vừa lưu (KHÔNG viết lại logic tạo ở đây, tránh lệch nhau
 // như bài học architecture.md mục 9).
 export async function replaceOccupantAndCreateTrunkMirror(
+  client: SupabaseClient,
   occupantCircuitId: string,
   sourceCircuitId: string
 ): ReturnType<typeof autoCreateTrunkMirrorForCircuit> {
-  const cascaded = await findMirrorTrunkCircuits([occupantCircuitId]);
-  await deleteTrunkCircuitToResync(occupantCircuitId, [...cascaded.values()]);
-  return autoCreateTrunkMirrorForCircuit(sourceCircuitId);
+  const cascaded = await findMirrorTrunkCircuits(client, [occupantCircuitId]);
+  await deleteTrunkCircuitToResync(client, occupantCircuitId, [...cascaded.values()]);
+  return autoCreateTrunkMirrorForCircuit(client, sourceCircuitId);
 }
 
 // Phát hiện 2026-07-31 (người dùng, sau khi tự phát hiện cùng lỗ hổng đã sửa
@@ -485,6 +494,7 @@ export async function replaceOccupantAndCreateTrunkMirror(
 // trunk-circuits.ts (không đọc lại toàn bộ transit_links như script, chỉ cần
 // đúng (các) port của CIRCUIT vừa lưu — đủ và nhanh hơn cho 1 lượt lưu đơn lẻ).
 export async function autoCreateTrunkTrunkMirrorForCircuit(
+  client: SupabaseClient,
   sourceCircuitId: string
 ): Promise<
   | { status: "created"; rackCode: string; portNumbers: number[] }
@@ -498,6 +508,7 @@ export async function autoCreateTrunkTrunkMirrorForCircuit(
     }
   | { status: "error"; message: string }
 > {
+  const supabase = client;
   const { data: sourceCircuitRow, error: sourceErr } = await supabase
     .from("circuits")
     .select("name, interface_type, counterpart_text")
@@ -519,7 +530,7 @@ export async function autoCreateTrunkTrunkMirrorForCircuit(
     .in("source_port_id", sourcePortIds);
   if (transitErr) return { status: "error", message: transitErr.message };
 
-  const trunkPorts = await fetchAllOdfPorts();
+  const trunkPorts = await fetchAllOdfPorts(client);
   const rackIdByCode = new Map<string, string>();
   for (const p of trunkPorts) rackIdByCode.set(p.rackCode, p.rackId);
 
@@ -605,12 +616,13 @@ export async function autoCreateTrunkTrunkMirrorForCircuit(
 // Đối xứng `replaceOccupantAndCreateTrunkMirror` ở trên, cho cặp trung
 // kế-trung kế (bước 3/6, cùng 1 cách xử lý DUY NHẤT cho mọi loại cặp).
 export async function replaceOccupantAndCreateTrunkTrunkMirror(
+  client: SupabaseClient,
   occupantCircuitId: string,
   sourceCircuitId: string
 ): ReturnType<typeof autoCreateTrunkTrunkMirrorForCircuit> {
-  const cascaded = await findMirrorTrunkCircuits([occupantCircuitId]);
-  await deleteTrunkCircuitToResync(occupantCircuitId, [...cascaded.values()]);
-  return autoCreateTrunkTrunkMirrorForCircuit(sourceCircuitId);
+  const cascaded = await findMirrorTrunkCircuits(client, [occupantCircuitId]);
+  await deleteTrunkCircuitToResync(client, occupantCircuitId, [...cascaded.values()]);
+  return autoCreateTrunkTrunkMirrorForCircuit(client, sourceCircuitId);
 }
 
 // Đối xứng `syncAllTrunkMirrorGaps` ở trên, cho cặp trung kế-trung kế (quét
@@ -618,9 +630,10 @@ export async function replaceOccupantAndCreateTrunkTrunkMirror(
 // cho từng luồng — hàm đó tự fetch trunkPorts MỖI LẦN gọi, quá tốn nếu lặp
 // hàng trăm/nghìn lần). Phải tự phân trang `port_circuit_links`/`transit_links`
 // (mặc định PostgREST chỉ trả 1000 dòng/lần — xem lib/deviceCircuits.ts).
-export async function syncAllTrunkTrunkMirrorGaps(scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
+export async function syncAllTrunkTrunkMirrorGaps(client: SupabaseClient, scope?: MirrorScanScope): Promise<MirrorGapScanSummary> {
+  const supabase = client;
   const summary: MirrorGapScanSummary = { created: 0, linked: 0, conflicts: [], errors: [] };
-  const trunkPorts = await fetchAllOdfPorts();
+  const trunkPorts = await fetchAllOdfPorts(client);
   const rackIdByCode = new Map<string, string>();
   const rackCodeByPortId = new Map<string, string>();
   const portNumberByPortId = new Map<string, number>();

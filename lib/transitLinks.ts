@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
 
@@ -121,7 +121,14 @@ function firstOf<T>(v: T | T[] | null | undefined): T | null {
 // rackId — đây là "từ điển tra ngược" cho matchBareTrunkLink/matchTrunkPosition
 // bên dưới, vì 1 dòng "Chuyển tiếp" của rack A hoàn toàn có thể trỏ sang 1
 // port ở rack B. Thu nhỏ trunkPorts theo rackId sẽ làm sai kết quả đối chiếu.
-export async function fetchNonConformingTransitLinks(trunkPorts: TrunkPortRow[], rackId?: string): Promise<NonConformingTransitLink[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function fetchNonConformingTransitLinks(
+  client: SupabaseClient,
+  trunkPorts: TrunkPortRow[],
+  rackId?: string
+): Promise<NonConformingTransitLink[]> {
+  const supabase = client;
   const pageSize = 1000;
   const all: RawRow[] = [];
 
@@ -229,7 +236,8 @@ export interface WriteTransitResult {
 // PortTable.saveEdit() (chỉ gộp ô khi 2 port đã ĐANG giống nhau nên hiếm khi
 // trúng nhánh này) và mirror tự tạo (luôn là port hoàn toàn mới, không có gì
 // để bảo vệ).
-export async function writeTransitForPorts(portIds: string[], rawText: string | null): Promise<WriteTransitResult> {
+export async function writeTransitForPorts(client: SupabaseClient, portIds: string[], rawText: string | null): Promise<WriteTransitResult> {
+  const supabase = client;
   if (portIds.length === 0) return { status: "written" };
   const text = (rawText ?? "").trim();
 

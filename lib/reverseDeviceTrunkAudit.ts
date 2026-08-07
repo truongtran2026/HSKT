@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllTrunkPorts } from "@/lib/trunkPorts";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 
@@ -36,8 +37,9 @@ export interface TrunkCircuitMissingDeviceMirror {
   parsedDeviceText: string;
 }
 
-export async function findTrunkCircuitsMissingDeviceMirror(): Promise<TrunkCircuitMissingDeviceMirror[]> {
-  const [trunkPorts, deviceCircuits] = await Promise.all([fetchAllTrunkPorts(), fetchDeviceCircuits()]);
+// Đợt 3 (2026-08-06): tham số `client` bắt buộc — xem lib/devices.ts.
+export async function findTrunkCircuitsMissingDeviceMirror(client: SupabaseClient): Promise<TrunkCircuitMissingDeviceMirror[]> {
+  const [trunkPorts, deviceCircuits] = await Promise.all([fetchAllTrunkPorts(client), fetchDeviceCircuits(client)]);
   const deviceCircuitNames = new Set(deviceCircuits.map((c) => c.name));
 
   const byCircuit = new Map<string, { name: string; rackId: string; rackCode: string; firstPortId: string; portNumbers: number[] }>();

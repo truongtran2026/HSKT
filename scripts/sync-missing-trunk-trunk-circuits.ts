@@ -32,15 +32,17 @@ loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 const COMMIT = process.argv.includes("--commit");
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchAllOdfPorts, matchBareTrunkLink } = await import("../lib/trunkPorts");
+
+  const supabase = getSupabaseAdmin();
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
 
   console.log(`[sync-missing-trunk-trunk-circuits] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu port + transit_links...");
 
-  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts();
+  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts(supabase);
   const portById = new Map<string, TrunkPortRow>(trunkPorts.map((p) => [p.portId, p]));
   const rackIdByCode = new Map<string, string>();
   for (const p of trunkPorts) rackIdByCode.set(p.rackCode, p.rackId);

@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey, looseDeviceNameSegments } from "@/lib/deviceNotes";
 import type { DeviceRow } from "@/lib/devices";
 
@@ -12,7 +12,10 @@ export interface DeviceAliasRow {
   normalizedKey: string;
 }
 
-export async function fetchDeviceAliases(): Promise<DeviceAliasRow[]> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+export async function fetchDeviceAliases(client: SupabaseClient): Promise<DeviceAliasRow[]> {
+  const supabase = client;
   const { data, error } = await supabase.from("device_aliases").select("id, device_id, alias_text, normalized_key");
   if (error) throw error;
   return (data ?? []).map((r) => ({
@@ -26,7 +29,8 @@ export async function fetchDeviceAliases(): Promise<DeviceAliasRow[]> {
 // Ghi 1 cách gõ đã xác nhận — ignoreDuplicates để KHÔNG âm thầm cướp 1
 // normalized_key đã trỏ tới thiết bị khác nếu chẳng may trùng (an toàn hơn
 // upsert ghi đè), lỗi (nếu có) không chặn luồng lưu chính ở nơi gọi.
-export async function saveDeviceAlias(deviceId: string, aliasText: string): Promise<void> {
+export async function saveDeviceAlias(client: SupabaseClient, deviceId: string, aliasText: string): Promise<void> {
+  const supabase = client;
   const normalizedKey = normalizeDeviceNameKey(aliasText);
   if (!normalizedKey) return;
   const { error } = await supabase

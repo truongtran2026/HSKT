@@ -24,12 +24,14 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchAllOdfPorts, matchBareTrunkLink } = await import("../lib/trunkPorts");
+
+  const supabase = getSupabaseAdmin();
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
 
-  const trunkPorts = await fetchAllOdfPorts();
+  const trunkPorts = await fetchAllOdfPorts(supabase);
   const portById = new Map<string, TrunkPortRow>(trunkPorts.map((p) => [p.portId, p]));
 
   interface RawRack {

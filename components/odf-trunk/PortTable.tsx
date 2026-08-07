@@ -30,6 +30,7 @@ import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
+import { translatePgError } from "@/lib/translatePgError";
 
 export interface PortView {
   id: string;
@@ -377,6 +378,11 @@ export default function PortTable({
     });
   }
   const [error, setError] = useState<string | null>(null);
+  // Đợt 3.3 audit (2026-08-07) — "Xóa" trước đây nằm ngay cạnh "Sửa" trong
+  // hàng nút chính, dễ bấm nhầm. Giờ ẩn sau nút "⋯", chỉ hiện đúng 1 dòng
+  // tại 1 thời điểm (key = group.ports id nối nhau, xem `key` trong .map bên
+  // dưới) — bấm dòng khác/thao tác khác tự đóng lại vì key không khớp nữa.
+  const [dangerOpenKey, setDangerOpenKey] = useState<string | null>(null);
   // Nhảy tới + tô sáng tạm 1 port cụ thể qua hash "#port-<id>" (yêu cầu người
   // dùng 2026-07-28: link từ khung cảnh báo "Chuyển tiếp chưa đúng chuẩn
   // form" ở trang danh sách rack) — cùng cơ chế rowAnchor/highlightId đã có ở
@@ -567,7 +573,7 @@ export default function PortTable({
           );
           if (useExisting) {
             canonicalName = looseCandidate.name;
-            await saveDeviceAlias(looseCandidate.id, deviceName);
+            await saveDeviceAlias(supabase, looseCandidate.id, deviceName);
           }
         }
         if (!canonicalName) {
@@ -580,10 +586,10 @@ export default function PortTable({
         }
       }
       if (!canonicalName) return; // không thể xảy ra (mọi nhánh trên đều gán), chỉ để TypeScript hẹp kiểu an toàn
-      await growDevicePositionMapByTrib(canonicalName, port, odf);
+      await growDevicePositionMapByTrib(supabase, canonicalName, port, odf);
     } catch (e) {
       setError(
-        `Đã lưu "Chuyển tiếp", nhưng chuẩn hóa thiết bị/thư viện thất bại: ${e instanceof Error ? e.message : String(e)}`
+        `Đã lưu "Chuyển tiếp", nhưng chuẩn hóa thiết bị/thư viện thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`
       );
     }
   }
@@ -644,7 +650,7 @@ export default function PortTable({
         // lib/transitLinks.ts) — gộp đúng vòng lặp cũ (ghi giống nhau cho mọi
         // port đang active) vào 1 hàm dùng chung với các nơi ghi khác, thêm
         // sẵn bảo vệ 11 luồng khuếch đại/DWDM có Tx/Rx đi khác port thật.
-        await writeTransitForPorts(activePortIds, transitOnly || null);
+        await writeTransitForPorts(supabase, activePortIds, transitOnly || null);
         if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly);
         refreshAndThen(() => setEdit(null));
         return;
@@ -731,7 +737,7 @@ export default function PortTable({
       // ghi DUY NHẤT (2026-08-04, xem lib/transitLinks.ts) — có bảo vệ sẵn 11
       // luồng khuếch đại/DWDM đã xác nhận Tx/Rx đi khác port thật.
       const transitText = edit.transitText.trim();
-      await writeTransitForPorts(activePortIds, transitText || null);
+      await writeTransitForPorts(supabase, activePortIds, transitText || null);
       if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
 
       // Tự tạo mirror trung kế-trung kế nếu "Chuyển tiếp" vừa lưu trỏ sang 1
@@ -740,7 +746,7 @@ export default function PortTable({
       // hổng: cơ chế này trước giờ chỉ chạy qua script dọn dữ liệu, chưa gắn
       // UI). Không chặn việc lưu dù bước này lỗi — chỉ báo cho người dùng.
       try {
-        const trunkResult = await autoCreateTrunkTrunkMirrorForCircuit(circuitId);
+        const trunkResult = await autoCreateTrunkTrunkMirrorForCircuit(supabase, circuitId);
         if (trunkResult.status === "occupied") {
           // Bước 3/6 (yêu cầu người dùng 2026-08-02) — bên vừa lưu là chuẩn:
           // tên khớp hệt -> tự liên kết ngay; khác tên -> xác nhận xóa bên
@@ -751,7 +757,7 @@ export default function PortTable({
               .from("circuits")
               .update({ mirror_of_id: circuitId })
               .eq("id", trunkResult.occupantCircuitId);
-            if (linkErr) setError(`Đã lưu "Chuyển tiếp", nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${linkErr.message}`);
+            if (linkErr) setError(`Đã lưu "Chuyển tiếp", nhưng tự liên kết với luồng trung kế trùng tên thất bại: ${translatePgError(linkErr.message)}`);
           } else {
             const ok = confirm(
               `Port ${trunkResult.rackCode} (${trunkResult.portNumbers.join(",")}) đang có luồng trung kế khác: "${
@@ -760,18 +766,18 @@ export default function PortTable({
             );
             if (ok) {
               try {
-                const retry = await replaceOccupantAndCreateTrunkTrunkMirror(trunkResult.occupantCircuitId, circuitId);
-                if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${retry.message}`);
+                const retry = await replaceOccupantAndCreateTrunkTrunkMirror(supabase, trunkResult.occupantCircuitId, circuitId);
+                if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${translatePgError(retry.message)}`);
               } catch (e) {
-                setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? e.message : String(e)}`);
+                setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
               }
             }
           }
         } else if (trunkResult.status === "error") {
-          setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${trunkResult.message}`);
+          setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${translatePgError(trunkResult.message)}`);
         }
       } catch (e) {
-        setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${e instanceof Error ? e.message : String(e)}`);
+        setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo mirror bên port đích thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
       }
 
       // Tự đồng bộ TÊN sang luồng thiết bị ĐÃ liên kết — KHÔNG hỏi confirm()
@@ -786,7 +792,7 @@ export default function PortTable({
         if (newTrunkName.trim() !== pairDetail.deviceName.trim()) {
           const transitSplitNow = splitOdfDeviceStructure(transitText);
           try {
-            await applySyncFromTrunk({
+            await applySyncFromTrunk(supabase, {
               ...pairDetail,
               trunkName: newTrunkName,
               trunkTransitOdfPart: transitSplitNow.matched ? transitSplitNow.odfPart ?? null : pairDetail.trunkTransitOdfPart,
@@ -796,14 +802,14 @@ export default function PortTable({
                 : pairDetail.trunkTransitDevicePortText,
             });
           } catch (e) {
-            setError(`Đã lưu luồng, nhưng đồng bộ tên sang thiết bị thất bại: ${e instanceof Error ? e.message : String(e)}`);
+            setError(`Đã lưu luồng, nhưng đồng bộ tên sang thiết bị thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
           }
         }
       }
 
       refreshAndThen(() => setEdit(null));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setSaving(false);
     }
@@ -821,10 +827,10 @@ export default function PortTable({
     setSaving(true);
     setError(null);
     try {
-      await unlinkCircuitMirror(circuitId);
+      await unlinkCircuitMirror(supabase, circuitId);
       refreshAndThen();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setSaving(false);
     }
@@ -852,17 +858,13 @@ export default function PortTable({
     setSaving(true);
     setError(null);
     try {
-      const portIds = linkedPorts.map((p) => p.id);
-      const { error: linkErr } = await supabase.from("port_circuit_links").delete().eq("circuit_id", circuit.id);
-      if (linkErr) throw linkErr;
-      const { error: circuitErr } = await supabase.from("circuits").delete().eq("id", circuit.id);
-      if (circuitErr) throw circuitErr;
-      const { error: statusErr } = await supabase.from("ports").update({ status: "unused" }).in("id", portIds);
-      if (statusErr) throw statusErr;
-      if (transitLinkIds.length > 0) {
-        const { error: transitErr } = await supabase.from("transit_links").delete().in("id", transitLinkIds);
-        if (transitErr) throw transitErr;
-      }
+      // 4 bước (xóa port_circuit_links, xóa circuits, update ports.status,
+      // xóa transit_links) gộp thành 1 lời gọi RPC nguyên tử (Đợt 2,
+      // 2026-08-04, xem migration 20260804000003) — trước đây là 4 lời gọi
+      // Supabase độc lập từ trình duyệt, mất mạng/đóng tab giữa chừng để lại
+      // trạng thái dở dang (circuit đã xóa nhưng port vẫn 'in_use').
+      const { error: rpcErr } = await supabase.rpc("delete_trunk_circuit", { p_circuit_id: circuit.id });
+      if (rpcErr) throw rpcErr;
       // Xóa 1 luồng trung kế ĐANG LÀ mirror của 1 luồng thiết bị (mirrorOfId
       // có sẵn) giải phóng port nhưng luồng thiết bị vẫn còn nguyên dữ liệu
       // trỏ tới đúng vị trí đó — người dùng phát hiện 2026-08-02 (chủ động
@@ -875,9 +877,9 @@ export default function PortTable({
       // trả "no-gap", vô hại).
       if (circuit.mirrorOfId) {
         try {
-          const recreated = await autoCreateTrunkMirrorForCircuit(circuit.mirrorOfId);
+          const recreated = await autoCreateTrunkMirrorForCircuit(supabase, circuit.mirrorOfId);
           if (recreated.status === "error") {
-            setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${recreated.message}`);
+            setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${translatePgError(recreated.message)}`);
           } else if (recreated.status === "occupied") {
             setError(
               `Đã xóa luồng, nhưng vị trí ${recreated.rackCode} (${recreated.portNumbers.join(
@@ -886,12 +888,12 @@ export default function PortTable({
             );
           }
         } catch (e) {
-          setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${e instanceof Error ? e.message : String(e)}`);
+          setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
         }
       }
       refreshAndThen();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setSaving(false);
     }
@@ -952,7 +954,7 @@ export default function PortTable({
       .eq("domain", "trunk")
       .order("code", { ascending: true });
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     setMove((m) => (m ? { ...m, racks: (data ?? []) as MoveState["racks"] } : m));
@@ -981,7 +983,7 @@ export default function PortTable({
       .eq("rack_id", targetRackId)
       .order("port_number", { ascending: true });
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       setMove((m) => (m ? { ...m, targetPortsLoading: false } : m));
       return;
     }
@@ -1069,7 +1071,7 @@ export default function PortTable({
 
       refreshAndThen(() => setMove(null));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setSaving(false);
     }
@@ -1274,7 +1276,7 @@ export default function PortTable({
                       {circuit ? (
                         <>
                           {circuit.name}
-                          <MirrorLinkBadge status={mirrorLinkStatuses?.[circuit.id]} />
+                          <MirrorLinkBadge status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />
                         </>
                       ) : (
                         <span className="text-slate-300">— trống —</span>
@@ -1325,9 +1327,20 @@ export default function PortTable({
                             <button className="text-primary-600 hover:underline" onClick={() => openEditExisting(group)} disabled={busy}>
                               Sửa
                             </button>
-                            <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
-                              Xóa
-                            </button>
+                            {dangerOpenKey === key ? (
+                              <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
+                                Xóa
+                              </button>
+                            ) : (
+                              <button
+                                className="text-slate-400 hover:underline"
+                                onClick={() => setDangerOpenKey(key)}
+                                disabled={busy}
+                                title="Hiện nút xóa luồng này"
+                              >
+                                ⋯
+                              </button>
+                            )}
                             <button className="text-slate-500 hover:underline" onClick={() => copyGroup(group)} disabled={busy}>
                               Copy
                             </button>
@@ -1544,7 +1557,7 @@ function EditRow({
     setTransitDeviceName(looseDeviceCandidate.name);
     onChange({ ...edit, transitText: buildTransitText(transitOdfPart, looseDeviceCandidate.name, transitDevicePort) });
     try {
-      await saveDeviceAlias(looseDeviceCandidate.id, typedName);
+      await saveDeviceAlias(supabase, looseDeviceCandidate.id, typedName);
     } catch {
       // Không chặn UI nếu lưu alias lỗi — tên thiết bị đã áp dụng đúng rồi,
       // chỉ là lần gõ SAU sẽ phải gợi ý lại (không mất dữ liệu luồng).

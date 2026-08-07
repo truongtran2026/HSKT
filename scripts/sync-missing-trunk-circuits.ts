@@ -50,11 +50,13 @@ loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 const COMMIT = process.argv.includes("--commit");
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchAllOdfPorts } = await import("../lib/trunkPorts");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
   const { findTrunkMirrorCandidates, buildTransitRawTextFromDevice } = await import("../lib/mirrorTrunkCircuits");
   const { writeTransitForPorts } = await import("../lib/transitLinks");
+
+  const supabase = getSupabaseAdmin();
 
   type TrunkPortRow = Awaited<ReturnType<typeof fetchAllOdfPorts>>[number];
   type DeviceCircuitRow = Awaited<ReturnType<typeof fetchDeviceCircuits>>[number];
@@ -65,8 +67,8 @@ async function main() {
 
   console.log(`[sync-missing-trunk-circuits] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu port + luồng thiết bị...");
-  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts();
-  const circuits: DeviceCircuitRow[] = await fetchDeviceCircuits();
+  const trunkPorts: TrunkPortRow[] = await fetchAllOdfPorts(supabase);
+  const circuits: DeviceCircuitRow[] = await fetchDeviceCircuits(supabase);
 
   const rackIdByCode = new Map<string, string>();
   for (const p of trunkPorts) rackIdByCode.set(p.rackCode, p.rackId);
@@ -191,7 +193,7 @@ async function main() {
     const rawText = buildTransitRawTextFromDevice(cand.sourceCircuit);
     if (rawText) {
       try {
-        await writeTransitForPorts(orderedPortIds, rawText);
+        await writeTransitForPorts(supabase, orderedPortIds, rawText);
       } catch (e) {
         console.log(`  [CẢNH BÁO] "${cand.sourceCircuit.name}" [${cand.field}] -> tạo luồng+link OK nhưng ghi Chuyển tiếp lỗi: ${e instanceof Error ? e.message : String(e)}`);
       }

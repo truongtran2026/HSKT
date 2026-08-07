@@ -1,9 +1,10 @@
-import { supabase } from "@/lib/supabase";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import { derivePortStatus } from "@/lib/portStatus";
 import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackListTable";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Bắt buộc cho MỌI trang lấy dữ liệu từ Supabase: nếu không có dòng này,
 // Next.js cache lại kết quả fetch đầu tiên và không bao giờ lấy dữ liệu mới
@@ -32,7 +33,7 @@ function firstOf<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? v[0] ?? null : v;
 }
 
-async function getRacks(): Promise<RackListItem[]> {
+async function getRacks(supabase: SupabaseClient): Promise<RackListItem[]> {
   // ports(status, port_circuit_links(circuits(name))) — CẦN tên luồng thật
   // (không chỉ ports.status) để tính Đang dùng/Dự phòng đúng chuẩn
   // derivePortStatus() (yêu cầu người dùng 2026-07-28, cùng đợt sửa số liệu
@@ -69,11 +70,12 @@ async function getRacks(): Promise<RackListItem[]> {
 }
 
 export default async function OdfTrunkPage() {
-  const [racks, trunkPorts] = await Promise.all([getRacks(), fetchAllOdfPorts()]);
+  const supabase = await createSupabaseServerClient();
+  const [racks, trunkPorts] = await Promise.all([getRacks(supabase), fetchAllOdfPorts(supabase)]);
   // fetchNonConformingTransitLinks cần trunkPorts để đối chiếu phần ODF bên
   // trong (xem lib/transitLinks.ts) -> phải chờ trunkPorts xong trước, không
   // gộp chung Promise.all ở trên được (phụ thuộc kết quả nhau).
-  const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts);
+  const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts);
 
   return (
     <div>

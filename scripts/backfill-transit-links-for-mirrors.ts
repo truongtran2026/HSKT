@@ -36,14 +36,16 @@ loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 const COMMIT = process.argv.includes("--commit");
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
   const { writeTransitForPorts } = await import("../lib/transitLinks");
+
+  const supabase = getSupabaseAdmin();
 
   console.log(`[backfill-transit-links-for-mirrors] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu...");
 
-  const deviceCircuits = await fetchDeviceCircuits();
+  const deviceCircuits = await fetchDeviceCircuits(supabase);
   const deviceCircuitById = new Map(deviceCircuits.map((c) => [c.id, c]));
 
   // Mọi circuit CÓ mirror_of_id (là 1 mirror của ai đó), kèm luôn
@@ -131,7 +133,7 @@ async function main() {
     }
 
     try {
-      await writeTransitForPorts(allPortIds, rawText);
+      await writeTransitForPorts(supabase, allPortIds, rawText);
     } catch (e) {
       console.log(`  [LỖI] "${row.name}" -> ghi transit_links thất bại: ${e instanceof Error ? e.message : String(e)}`);
       errors++;

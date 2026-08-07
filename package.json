@@ -27,9 +27,11 @@
     "audit-device-device-sync": "tsx scripts/audit-device-device-sync.ts",
     "sync-missing-device-device-circuits": "tsx scripts/sync-missing-device-device-circuits.ts",
     "backfill-transit-links-for-mirrors": "tsx scripts/backfill-transit-links-for-mirrors.ts",
-    "repair-transit-per-circuit": "tsx scripts/repair-transit-per-circuit.ts"
+    "repair-transit-per-circuit": "tsx scripts/repair-transit-per-circuit.ts",
+    "create-role-accounts": "tsx scripts/create-role-test-accounts.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.45.4",
     "fastest-levenshtein": "^1.0.16",
     "next": "^14.2.15",

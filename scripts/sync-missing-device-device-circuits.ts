@@ -33,17 +33,19 @@ loadEnv({ path: path.join(__dirname, "..", ".env.local") });
 const COMMIT = process.argv.includes("--commit");
 
 async function main() {
-  const { supabase } = await import("../lib/supabase");
+  const { getSupabaseAdmin } = await import("./lib/supabaseAdmin");
   const { fetchDeviceCircuits } = await import("../lib/deviceCircuits");
   const { fetchDevices } = await import("../lib/devices");
   const { findMissingDeviceMirrors, buildMirrorNextPosition } = await import("../lib/deviceDeviceSync");
   const { normalizeDevicePositionKey } = await import("../lib/deviceNotes");
 
+  const supabase = getSupabaseAdmin();
+
   console.log(`[sync-missing-device-device-circuits] Chế độ: ${COMMIT ? "COMMIT (ghi thật)" : "DRY RUN"}`);
   console.log("Đang tải dữ liệu luồng thiết bị + danh mục thiết bị...");
 
-  const circuits = await fetchDeviceCircuits();
-  const devices = await fetchDevices();
+  const circuits = await fetchDeviceCircuits(supabase);
+  const devices = await fetchDevices(supabase);
   const { gaps, mismatches } = findMissingDeviceMirrors(circuits, devices);
 
   console.log(`Tìm thấy ${gaps.length} ứng viên cần tạo luồng mirror (khớp lúc quét ban đầu).`);

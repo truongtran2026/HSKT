@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { translatePgError } from "@/lib/translatePgError";
 
 export default function RackAdminPanel({
   rackId,
@@ -47,7 +48,7 @@ export default function RackAdminPanel({
       if (rackErr) throw rackErr;
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
     } finally {
       setBusy(false);
     }
@@ -112,7 +113,11 @@ export default function RackAdminPanel({
       router.push(`/odf-trunk/${newRackId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg.includes("23505") || msg.toLowerCase().includes("duplicate key") ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.` : msg);
+      setError(
+        msg.includes("23505") || msg.toLowerCase().includes("duplicate key")
+          ? `Mã rack "${trimmedCode}" đã tồn tại — mã rack phải là duy nhất.`
+          : translatePgError(msg)
+      );
       setBusy(false);
     }
   }

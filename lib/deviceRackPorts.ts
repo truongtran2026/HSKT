@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchTrunkPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { isStandbyCircuitName } from "@/lib/text";
@@ -61,7 +61,10 @@ function keyOf(rackCode: string, portNumber: number): string {
 // fetchDeviceRackPortRefs (1 rack, trang chi tiết) và
 // fetchDeviceRackPortStatusCounts (TẤT CẢ rack, trang danh sách) — tránh lặp
 // lại query + so khớp riêng cho từng rack (112 rack domain='device' hiện có).
-async function fetchAllDeviceRackPortRefs(trunkPorts: TrunkPortRow[]): Promise<Map<string, DeviceRackPortRefs>> {
+// Đợt 3 (2026-08-06): tham số `client` BẮT BUỘC — xem giải thích đầy đủ ở
+// lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
+async function fetchAllDeviceRackPortRefs(client: SupabaseClient, trunkPorts: TrunkPortRow[]): Promise<Map<string, DeviceRackPortRefs>> {
+  const supabase = client;
   const { data, error } = await supabase.from("circuits").select("id, name, device_position_own, device_position_next");
   if (error) throw error;
   const circuits = (data ?? []) as RawCircuit[];
@@ -92,10 +95,11 @@ async function fetchAllDeviceRackPortRefs(trunkPorts: TrunkPortRow[]): Promise<M
 // Build map portNumber -> { own, next } cho ĐÚNG 1 rack (so theo rackCode đã
 // chuẩn hóa) — dùng ở trang chi tiết rack (DeviceRackPortView).
 export async function fetchDeviceRackPortRefs(
+  client: SupabaseClient,
   rackCode: string,
   trunkPorts: TrunkPortRow[]
 ): Promise<Map<number, DeviceRackPortRefs>> {
-  const all = await fetchAllDeviceRackPortRefs(trunkPorts);
+  const all = await fetchAllDeviceRackPortRefs(client, trunkPorts);
   const normalizedTarget = rackCode.replace(/\s+/g, "").toUpperCase();
   const result = new Map<number, DeviceRackPortRefs>();
   for (const [key, refs] of all) {
@@ -116,10 +120,11 @@ export async function fetchDeviceRackPortRefs(
 // isStandbyCircuitName() ("DP..."/"dự phòng") -> Dự phòng; có luồng tham
 // chiếu (bất kỳ tên khác) -> Đang dùng; không ai nhắc tới -> Trống.
 export async function fetchDeviceRackPortStatusCounts(
+  client: SupabaseClient,
   racks: { id: string; code: string; portCount: number }[],
   trunkPorts: TrunkPortRow[]
 ): Promise<Map<string, RackPortStatusCounts>> {
-  const all = await fetchAllDeviceRackPortRefs(trunkPorts);
+  const all = await fetchAllDeviceRackPortRefs(client, trunkPorts);
   const result = new Map<string, RackPortStatusCounts>();
   for (const rack of racks) {
     let inUse = 0;

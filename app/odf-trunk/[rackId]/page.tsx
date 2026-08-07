@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import { fetchCircuitOptions } from "@/lib/circuitOptions";
 import { fetchDevices } from "@/lib/devices";
 import { fetchDeviceAliases } from "@/lib/deviceAliases";
@@ -15,9 +14,12 @@ import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import PortTable, { type PortView } from "@/components/odf-trunk/PortTable";
 import DeviceRackPortView from "@/components/odf-device/DeviceRackPortView";
 import DeleteRackButton from "@/components/odf-device/DeleteRackButton";
+import DangerZone from "@/components/ui/DangerZone";
 import RackHeader from "@/components/odf-trunk/RackHeader";
 import RackAdminPanel from "@/components/odf-trunk/RackAdminPanel";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ, đặc biệt quan trọng ở đây vì trang này còn hiển thị dữ liệu vừa
@@ -94,7 +96,7 @@ function normalizePort(raw: RawPort): PortView {
   };
 }
 
-async function getRackAndPorts(rackId: string) {
+async function getRackAndPorts(supabase: SupabaseClient, rackId: string) {
   const { data: rack, error: rackErr } = await supabase
     .from("racks")
     .select("id, code, cable_route_name, odf_type, port_count, station_id, domain")
@@ -122,14 +124,15 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — "Chuyển tiếp" có thể
   // trỏ tới rack trung kế HOẶC ODF/DDF nội bộ (domain='device'), cần cả 2 để
   // nhận diện/chuẩn hóa đúng (yêu cầu người dùng 2026-07-27).
+  const supabase = await createSupabaseServerClient();
   const [data, options, devices, deviceAliases, devicePositionMap, trunkPorts, deviceCircuits] = await Promise.all([
-    getRackAndPorts(params.rackId),
-    fetchCircuitOptions(),
-    fetchDevices(),
-    fetchDeviceAliases(),
-    fetchDevicePositionMap(),
-    fetchAllOdfPorts(),
-    fetchDeviceCircuits(),
+    getRackAndPorts(supabase, params.rackId),
+    fetchCircuitOptions(supabase),
+    fetchDevices(supabase),
+    fetchDeviceAliases(supabase),
+    fetchDevicePositionMap(supabase),
+    fetchAllOdfPorts(supabase),
+    fetchDeviceCircuits(supabase),
   ]);
   if (!data) notFound();
   // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng port (yêu cầu người
@@ -155,7 +158,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // text qua lib/deviceRackPorts.ts) thay thế, yêu cầu người dùng 2026-07-28.
   const backHref = rack.domain === "device" ? "/odf-device" : "/odf-trunk";
   const backLabel = rack.domain === "device" ? "← Hồ sơ ODF Thiết bị" : "← Danh sách rack";
-  const devicePortRefs = rack.domain === "device" ? await fetchDeviceRackPortRefs(rack.code, trunkPorts) : null;
+  const devicePortRefs = rack.domain === "device" ? await fetchDeviceRackPortRefs(supabase, rack.code, trunkPorts) : null;
   // Lọc xuống đúng rack đang xem (yêu cầu người dùng 2026-07-28: khung cảnh
   // báo "Chuyển tiếp chưa chuẩn form" cũng phải hiện ở trang chi tiết, không
   // chỉ ở danh sách rack) — rack domain='device' luôn ra mảng rỗng (transit_
@@ -166,7 +169,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // .filter() ở JS như trước — trunkPorts vẫn truyền ĐẦY ĐỦ toàn trạm (không
   // thu nhỏ), vì hàm này cần nó làm từ điển tra ngược cho các "Chuyển tiếp"
   // trỏ sang rack khác.
-  const nonConformingTransit = await fetchNonConformingTransitLinks(trunkPorts, rack.id);
+  const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts, rack.id);
 
   return (
     <div>
@@ -195,8 +198,13 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       {/* Xóa rack (yêu cầu người dùng 2026-07-28) — CHỈ domain='device': xóa
           rack trung kế rủi ro hơn nhiều (dữ liệu Excel gốc thật, có
           port_circuit_links/transit_links thật gắn theo, ngoài phạm vi yêu
-          cầu lần này). */}
-      {rack.domain === "device" && <DeleteRackButton rackId={rack.id} rackCode={rack.code} />}
+          cầu lần này). Gom vào DangerZone (Đợt 3.3 audit, 2026-08-07) — thu
+          gọn mặc định, tránh bấm nhầm khi lướt trang. */}
+      {rack.domain === "device" && (
+        <DangerZone>
+          <DeleteRackButton rackId={rack.id} rackCode={rack.code} />
+        </DangerZone>
+      )}
 
       <div className="mt-6">
         <TransitFormatWarning items={nonConformingTransit} />

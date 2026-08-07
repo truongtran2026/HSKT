@@ -12,6 +12,7 @@ import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/li
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
+import { translatePgError } from "@/lib/translatePgError";
 import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
@@ -213,7 +214,7 @@ export default function DevicePositionMapClient({
           setRenameBusy(false);
           return;
         }
-        const stationId = await getAdn1StationId();
+        const stationId = await getAdn1StationId(supabase);
         const { error: insErr } = await supabase
           .from("devices")
           .insert({ station_id: stationId, name: target, category: renameCategory.trim() || null, source: "manual" });
@@ -335,7 +336,7 @@ export default function DevicePositionMapClient({
     });
     setBusy(false);
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
 
@@ -385,7 +386,7 @@ export default function DevicePositionMapClient({
       .eq("id", editId);
     setBusy(false);
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     setEditId(null);
@@ -399,7 +400,7 @@ export default function DevicePositionMapClient({
     const { error: err } = await supabase.from("device_position_map").delete().eq("id", r.id);
     setBusy(false);
     if (err) {
-      setError(err.message);
+      setError(translatePgError(err.message));
       return;
     }
     router.refresh();

@@ -8,6 +8,7 @@ import { findUnlinkedMirrorPairs, findUnlinkedDeviceDevicePairs } from "@/lib/un
 import { computeMirrorLinkStatuses } from "@/lib/mirrorLinkStatus";
 import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
 import DeviceCircuitList from "@/components/odf-device/DeviceCircuitList";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
@@ -20,15 +21,16 @@ export const dynamic = "force-dynamic";
 // 2026-07-28, cùng đợt sửa Sidebar) — vẫn là nơi DUY NHẤT thao tác chi tiết
 // luồng, chỉ đổi tên cho rõ nghĩa hơn.
 export default async function SuaLuongThietBiPage() {
+  const supabase = await createSupabaseServerClient();
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — cần CẢ rack trung kế
   // lẫn ODF/DDF nội bộ (domain='device') để "Vị trí ODF (tiếp theo)" nhận
   // diện/chuẩn hóa được cả 2 loại (yêu cầu người dùng 2026-07-27).
   const [circuits, devices, devicePositionMap, trunkPorts, deviceAliases] = await Promise.all([
-    fetchDeviceCircuits(),
-    fetchDevices(),
-    fetchDevicePositionMap(),
-    fetchAllOdfPorts(),
-    fetchDeviceAliases(),
+    fetchDeviceCircuits(supabase),
+    fetchDevices(supabase),
+    fetchDevicePositionMap(supabase),
+    fetchAllOdfPorts(supabase),
+    fetchDeviceAliases(supabase),
   ]);
   // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng (yêu cầu người dùng
   // 2026-08-02) — tái dùng ĐÚNG 2 hàm rà soát đã có ở /data-quality (mục
