@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
 import { supabase } from "@/lib/supabase";
@@ -73,7 +73,6 @@ export default function Sidebar({
   userRole: string | null;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   // Ghim/bỏ ghim (yêu cầu người dùng 2026-07-28: tăng bề rộng khung nhìn khi
   // cần cập nhật hồ sơ) — mặc định pinned=true (giữ đúng hành vi cũ cho lần
   // mở đầu tiên), đọc lại lựa chọn đã lưu ở useEffect (localStorage chỉ có ở
@@ -190,7 +189,10 @@ export default function Sidebar({
             type="button"
             onClick={async () => {
               await supabase.auth.signOut();
-              router.push("/login");
+              // window.location thay vì router.push() (cùng lý do đã sửa ở
+              // app/login/page.tsx, 2026-08-07) — đảm bảo layout gốc render
+              // lại từ đầu với cookie phiên đã xóa, không để sót email cũ.
+              window.location.href = "/login";
             }}
             className="shrink-0 rounded border border-primary-500 px-2 py-0.5 text-primary-100 hover:bg-primary-600/60 hover:text-white"
           >

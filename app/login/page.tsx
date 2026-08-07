@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
 
@@ -10,7 +9,6 @@ import { translatePgError } from "@/lib/translatePgError";
 // Vì vậy KHÔNG có link đăng ký/quên mật khẩu ở đây — thêm sau nếu có nhiều
 // người dùng hơn (xem architecture.md, mục ghi lại đợt này).
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,11 +24,15 @@ export default function LoginPage() {
       setBusy(false);
       return;
     }
-    // router.refresh() để cây Server Component (đọc phiên qua
-    // lib/supabase-server.ts) render lại với phiên đăng nhập MỚI trước khi
-    // điều hướng — không thì trang "/" có thể vẫn thấy trạng thái cũ.
-    router.refresh();
-    router.push("/");
+    // Tải lại TOÀN TRANG (không dùng router.refresh()+router.push() kiểu
+    // client-side) — phát hiện 2026-08-07: người dùng báo đăng nhập xong vẫn
+    // vào được các trang bình thường (phiên thật đã đúng), nhưng Sidebar
+    // (nằm ở app/layout.tsx, đọc user qua createSupabaseServerClient()) đôi
+    // khi vẫn hiện "—" thay vì email — 2 lệnh client-side không đảm bảo layout
+    // gốc kịp render lại với cookie phiên MỚI trước khi điều hướng xong. Tải
+    // lại toàn trang thì chắc chắn: request mới hoàn toàn, cookie vừa set đã
+    // có sẵn, layout gốc render đúng ngay từ đầu, không còn khoảng hở nào.
+    window.location.href = "/";
   }
 
   return (
