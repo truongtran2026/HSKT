@@ -3905,3 +3905,75 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       xuất audit gốc.
     - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (số
       route không đổi — chỉ đổi điều hướng, không thêm/bớt trang).
+
+74. **Đợt 4 (tiếp) — thêm nút "Thêm thiết bị" ở Danh mục thiết bị (2026-08-07)**.
+    `components/devices/DeviceCategoryClient.tsx` trước đây chỉ tạo được
+    thiết bị GIÁN TIẾP (qua gõ tên chưa chuẩn ở ô "Thiết bị (tiếp theo)" bên
+    luồng, hoặc tự sinh lúc import) — chưa có nút tạo tay trực tiếp tại trang
+    danh mục. Thêm nút "+ Thêm thiết bị" hiện form inline (Tên thiết bị *, Tọa
+    độ, Lĩnh vực) ngay trước phần lọc "Lĩnh vực" — tự thêm tiền tố `ADN1.`
+    nếu chưa gõ, chặn trùng tên qua `normalizeDeviceNameKey()` (bảng
+    `devices` không có ràng buộc unique thật ở DB, phải tự kiểm client-side),
+    `source: "manual"`. Sửa tên/xóa thiết bị đã có sẵn từ trước (tick chọn
+    dòng), không cần viết thêm.
+    - **Đồng bộ tên khi sửa/xóa thiết bị sang các tab khác** (yêu cầu người
+      dùng): đã kiểm tra, KHÔNG cần thêm code — trường `deviceName` hiển thị
+      ở mọi nơi liên kết qua `device_id` (luồng có chọn thiết bị thật) lấy
+      bằng JOIN SQL trực tiếp tới `devices.name` lúc tải trang, nên đổi tên
+      thiết bị tự động đúng ngay ở mọi nơi, không có bản sao/cache nào cần
+      đồng bộ tay. Xóa thiết bị đã có RPC `delete_devices_with_circuits`
+      (Đợt 2) xử lý cascade đúng.
+    - **CHƯA làm (theo yêu cầu người dùng)**: `circuits.name` là text tự gõ,
+      KHÔNG tự suy ra từ `devices.name` — đổi tên thiết bị không rewrite lại
+      những luồng cũ có nhắc tên thiết bị trong chuỗi tên luồng. Đã đo thử
+      (script tạm, không lưu lại): phần lớn tên luồng KHÔNG chứa nguyên văn
+      tên thiết bị dạng khớp được an toàn (lệch dấu, vd "ADN1" ≠ "AĐN1",
+      lệch định dạng) — đề xuất tự động thay thế, người dùng từ chối
+      ("còn tên cũ thì để đó tôi hiệu chỉnh dần") — để nguyên, không tự động.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch.
+
+75. **Đợt 4 (tiếp) — BUG THẬT: luồng thiết bị mới nhập không hiện ở trang
+    rack `/odf-device/{rackId}` (phát hiện + sửa 2026-08-07)**.
+    Người dùng báo: nhập luồng mới ở "Hồ sơ đấu nối" (`/odf-device/sua-luong`)
+    xong, vào đúng rack ODF/DDF liên quan ở `/odf-device` thì port KHÔNG hiện
+    tên luồng — dù xác nhận đã lưu `circuits` thật (không phải hiểu nhầm
+    "Thư viện vị trí thiết bị" `/odf-device/vi-tri-thiet-bi` chỉ là bảng gợi ý
+    autofill, không tạo luồng thật — điều này ĐÚNG thiết kế, đã giải thích
+    riêng, không phải bug).
+
+    Điều tra bằng script tạm (đọc CSDL thật qua service-role key, không sửa
+    gì, xóa sau khi xong) xác nhận **root cause thật**: hàm
+    `fetchAllDeviceRackPortRefs()` (`lib/deviceRackPorts.ts`) — quét TOÀN BỘ
+    bảng `circuits` để đối chiếu ngược "port này có luồng nào nhắc tới không"
+    cho các rack `domain='device'` (rack này không có `port_circuit_links`
+    thật, xem mục 8) — trước đây gọi `.from("circuits").select(...)`
+    **KHÔNG phân trang**. PostgREST mặc định cắt kết quả về tối đa **1000
+    dòng**. Bảng `circuits` lúc kiểm tra đã có **2196 dòng** — 1000 dòng
+    PostgREST trả về không theo thứ tự `updated_at` (không có `.order()`),
+    nên các luồng MỚI nhất (vừa thêm hôm nay) gần như chắc chắn rơi ngoài lô
+    1000 dòng đó → bị loại thẳng khỏi map tra cứu → port đúng ra có luồng lại
+    hiện trống, y hệt triệu chứng người dùng báo. Xác nhận bằng script: sau
+    khi thêm `.order("id").range(...)` phân trang đủ, luồng mới
+    (`100GE ADN1.P2 (18/1/6) - 2T9.ASBR1 (13/1/3)`, vị trí "ODF 9/19
+    (33,34)") xuất hiện đúng trong map, trước đó thì không.
+
+    Đã rà toàn bộ các chỗ khác gọi `.from("circuits").select(...)` trong
+    `lib/`/`app/` (5+1 file) — tất cả đều lọc bằng `.eq()`/`.single()`/`.in()`
+    (không bao giờ trả >1000 dòng) hoặc đã tự phân trang sẵn
+    (`lib/deviceCircuits.ts fetchDeviceCircuits`) — **chỉ 1 hàm này bị sót**,
+    không phải lỗi lặp lại nhiều nơi.
+
+    **Fix**: `lib/deviceRackPorts.ts` — đổi query trong
+    `fetchAllDeviceRackPortRefs()` sang vòng lặp phân trang `pageSize=1000` +
+    `.order("id").range(from, from+pageSize-1)`, đúng mẫu đã dùng ở
+    `fetchDevicePositionMap()`/`fetchDeviceCircuits()` trong cùng dự án —
+    không đổi logic đối chiếu (`matchTrunkPosition`, `record()`) nào khác.
+    - **Bài học chung**: bất kỳ hàm nào gọi `supabase.from(...).select(...)`
+      KHÔNG có `.eq()`/`.single()`/`.limit()` rõ ràng đều PHẢI phân trang —
+      PostgREST cắt ngầm ở 1000 dòng, không báo lỗi, không cảnh báo, dữ liệu
+      "biến mất" một cách im lặng đúng kiểu lỗi này. Cỡ bảng vượt 1000 dòng
+      chỉ là vấn đề thời gian khi dự án còn nhập liệu tiếp — nên soát lại
+      định kỳ khi thêm hàm `fetch*` mới.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch. Script tạm xác nhận map tra
+      cứu rack "ODF 9/19" từ 6 dòng (thiếu) lên 34 dòng (đủ) sau khi sửa,
+      đúng port 33/34/45/46 của các luồng mới thêm hôm nay đã hiện tên luồng.

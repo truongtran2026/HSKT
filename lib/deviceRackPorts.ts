@@ -65,9 +65,26 @@ function keyOf(rackCode: string, portNumber: number): string {
 // lib/devices.ts / lib/trunkPorts.ts (không lặp lại toàn bộ đoạn ở đây).
 async function fetchAllDeviceRackPortRefs(client: SupabaseClient, trunkPorts: TrunkPortRow[]): Promise<Map<string, DeviceRackPortRefs>> {
   const supabase = client;
-  const { data, error } = await supabase.from("circuits").select("id, name, device_position_own, device_position_next");
-  if (error) throw error;
-  const circuits = (data ?? []) as RawCircuit[];
+  // BUG phát hiện 2026-08-07 (người dùng báo luồng thiết bị mới nhập không
+  // hiện ở /odf-device): query này trước đây KHÔNG phân trang — Supabase/
+  // PostgREST mặc định cắt về tối đa 1000 dòng. Bảng circuits đã hơn 2000
+  // dòng, nên các luồng mới nhất (không nằm trong 1000 dòng đầu PostgREST trả
+  // về, không theo thứ tự updated_at) bị BỎ SÓT hoàn toàn khỏi map này -> port
+  // đúng ra có luồng lại hiện trống. Phân trang giống các hàm khác trong file
+  // này (fetchDevicePositionMap...) để lấy ĐỦ toàn bộ.
+  const pageSize = 1000;
+  const circuits: RawCircuit[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("circuits")
+      .select("id, name, device_position_own, device_position_next")
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as RawCircuit[];
+    circuits.push(...page);
+    if (page.length < pageSize) break;
+  }
 
   const map = new Map<string, DeviceRackPortRefs>();
 
