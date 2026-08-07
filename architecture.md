@@ -3977,3 +3977,98 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     - **Kiểm chứng**: `npx tsc --noEmit` sạch. Script tạm xác nhận map tra
       cứu rack "ODF 9/19" từ 6 dòng (thiếu) lên 34 dòng (đủ) sau khi sửa,
       đúng port 33/34/45/46 của các luồng mới thêm hôm nay đã hiện tên luồng.
+
+76. **Ẩn/hiện cột + sinh text báo cáo (tick-to-text) + Lịch sử tra cứu dùng
+    chung (2026-08-07)**. Yêu cầu người dùng: (1) ẩn/hiện cột tùy chọn ở cả 3
+    bảng port/luồng chính; (2) tick 1 luồng ở Hồ sơ ODF trung kế HOẶC Hồ sơ
+    đấu nối ra ngay 1 đoạn text mô tả toàn tuyến theo đúng cú pháp viết tay
+    có sẵn (dùng báo cáo lãnh đạo); (3) lưu đoạn text đó vào "Lịch sử tra
+    cứu" DÙNG CHUNG cho cả 2 trang (không tách riêng), cập nhật đè khi tra
+    lại luồng đã lưu.
+
+    - **`lib/circuitReportText.ts`** (mới, pure function không đụng
+      Supabase/React) — 2 hàm sinh text theo 2 cú pháp khác nhau tùy trang:
+      - `buildTrunkPortReportText()` (đứng ở 1 port/nhóm port của 1 rack
+        trung kế): phân loại bằng ĐÚNG 2 hàm đã dùng sẵn để hiện cột "Chuyển
+        tiếp" (`splitOdfDeviceStructure`, `matchBareTrunkLink` —
+        `lib/parsers/transit-text.ts`/`lib/trunkPorts.ts`, không viết parser
+        mới): có thiết bị tại ADN1 (structure 2 khớp) → `Thiết bị (port) ->
+        Vị trí ODF thiết bị -> ODF rack đang xem -> Đối phương` (vị trí port
+        trung kế hiện tại KHÔNG kèm tên tuyến cáp, vì Đối phương đã mô tả đủ
+        đầu xa); chỉ chuyển tiếp cáp không thiết bị (`matchBareTrunkLink`
+        khớp sang rack trung kế khác) → `ODF rack hiện tại - tên tuyến cáp
+        (sợi nếu khác port) -> ODF rack đích - tên tuyến cáp đích` (CẢ 2 đầu
+        đều kèm tên tuyến cáp, vì không có Đối phương/thiết bị mô tả thay).
+      - `buildDeviceCircuitReportText()` (đứng ở 1 dòng luồng thiết bị, Hồ sơ
+        đấu nối): ghép thẳng `deviceName (trib) -> devicePositionOwn ->
+        devicePositionNext` — `devicePositionNext` GIỮ NGUYÊN VERBATIM (đã
+        đúng định dạng sẵn do chính app ghi khi lưu form, không tính lại) TRỪ
+        1 trường hợp: nếu nó khớp `splitOdfDeviceStructure` VÀ phần "thiết
+        bị" tách ra không phải 1 tên tuyến cáp thật (kiểm bằng
+        `matchTrunkPosition(odfPart, trunkPorts).cableRouteName ===
+        deviceName` — rack domain='device' luôn `cableRouteName=null` nên
+        không bao giờ nhầm) → tách hyphen `"<odf> - <thiết bị>(<port>)"`
+        thành 2 đoạn nối mũi tên riêng thay vì giữ nguyên 1 cụm nối bằng "-".
+      - **Đã test tay bằng CHÍNH các ví dụ người dùng đưa** (case 1.1, 1.2,
+        ví dụ 2.1/2.2/2.3 trong yêu cầu gốc) qua script tạm trước khi lắp vào
+        UI — khớp nguyên văn ngoại trừ 2 chỗ cosmetic không phải quy tắc
+        thật: (a) khoảng trắng thừa trong ví dụ người dùng gõ tay; (b) số
+        port đệm 2 chữ số khi ≥2 port (theo đúng quy ước có sẵn của
+        `formatCanonicalOdfPosition`, vd "(01,02)") thay vì không đệm như ví
+        dụ gõ tay "(1,2)" — giữ theo quy ước app cho nhất quán.
+    - **`lib/useColumnVisibility.ts`** (mới) — copy y hệt cấu trúc
+      `lib/useColumnWidths.ts` (localStorage, `Record<K, boolean>`) —
+      **`components/ui/ColumnPicker.tsx`** (mới) — dropdown checkbox phẳng
+      "Cột hiển thị (n/m)", copy pattern "bấm ra ngoài để đóng" từ
+      `GroupedMultiSelect.tsx` (đơn giản hơn — không nhóm/tìm kiếm, mỗi bảng
+      <10 cột). Áp vào `PortTable.tsx` (7 cột tùy chọn, storage key
+      `"odf-trunk-col-visibility"`), `DeviceCircuitList.tsx` (6 cột tùy
+      chọn, `"device-circuit-col-visibility"` — cột "Thiết bị" giữ NGUYÊN cơ
+      chế ẩn/hiện riêng đã có theo bộ lọc thiết bị, không trộn 2 cơ chế),
+      `DeviceRackPortView.tsx` (chỉ cột "Ghi chú",
+      `"device-rack-port-col-visibility"` — đổi thành `"use client"` để có
+      state, kéo theo phải đổi prop `portRefs: Map<...>` → `portRefEntries:
+      [number, DeviceRackPortRefs][]` vì Map không nên truyền qua ranh giới
+      Server→Client Component, page.tsx gọi `[...map.entries()]` trước khi
+      truyền xuống). `PortTable.tsx`/`DeviceCircuitList.tsx` phải tính lại
+      `colSpan` ĐỘNG cho các dòng gộp-toàn-hàng (EditRow/MoveRow/dòng trống)
+      theo đúng số cột ĐANG hiện — trước đây hardcode `10`/`8`/`columnCount`
+      cố định.
+    - **Tick chọn + panel xem trước** — `PortTable.tsx` (trước đây CHƯA có
+      cột tick, thêm mới trước cột "Port", khóa theo `circuit.id` — 1 luồng
+      chiếm 2 port không liền kề (2 group hiển thị riêng) tick/bỏ đồng bộ cả
+      2 dòng vì cùng khóa) và `DeviceCircuitList.tsx` (TÁI DÙNG nguyên
+      `selected: Set<string>` đã có sẵn cho xóa hàng loạt — không tạo state
+      chọn mới, tick 1 luồng vừa phục vụ xóa vừa phục vụ sinh báo cáo cùng
+      lúc). **`components/ui/CircuitReportPanel.tsx`** (mới, dùng chung 2
+      nơi) — GỘP TẤT CẢ đoạn text của mọi luồng đang tick thành 1 danh sách
+      (quyết định người dùng qua AskUserQuestion 2026-08-07, không chỉ giữ
+      luồng tick gần nhất — phục vụ copy báo cáo nhiều luồng cùng lúc), mỗi
+      dòng có nút Copy riêng (+ nút "Copy tất cả") và tick "Lưu vào lịch sử"
+      (chỉ lưu khi tick, không tự lưu lúc vừa chọn luồng).
+    - **Lịch sử tra cứu dùng chung** — migration mới
+      `supabase/migrations/20260808000001_report_history.sql` (bảng
+      `report_history`: `circuit_id` (FK `circuits`, `on delete cascade`),
+      `report_text`, `accessed_at`, **`unique(circuit_id)`** — cơ chế cho
+      "cập nhật đè" người dùng chọn: client dùng `.upsert(...,{onConflict:
+      "circuit_id"})` thay vì tự kiểm tra tồn tại trước; RLS copy khung 3
+      cấp quyền `20260807000001` — select mọi authenticated, insert/update/
+      delete operator+admin). **`lib/reportHistory.ts`** (mới) —
+      `fetchReportHistory`/`upsertReportHistory`/`deleteReportHistoryEntry`.
+      **`components/ui/ReportHistoryDrawer.tsx`** (mới) — khung TRƯỢT (tái
+      dùng `SlideOverPanel.tsx` có sẵn), KHÔNG phải trang riêng/không thêm
+      mục Sidebar (quyết định người dùng qua AskUserQuestion — mở từ 1 nút
+      "Lịch sử tra cứu" đặt cạnh `ColumnPicker` trên CẢ 2 trang, cùng data
+      dù mở từ trang nào vì không lọc theo nguồn). Bảng gọn: đoạn text +
+      "Truy xuất lúc" (`formatLastUpdated`, tái dùng hàm định dạng ngày giờ
+      có sẵn, không viết hàm "X phút trước" riêng) + nút Copy/Xóa từng dòng.
+    - **Người dùng cần tự chạy migration `20260808000001_report_history.sql`
+      trong Supabase SQL Editor TRƯỚC** — thiếu bảng này thì tick "Lưu vào
+      lịch sử" và khung "Lịch sử tra cứu" báo lỗi (bảng chưa tồn tại), còn
+      lại (ẩn/hiện cột, tick sinh text, Copy) hoạt động bình thường không
+      cần migration.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (15
+      route, không đổi). Logic sinh text đã test khớp ví dụ thật (xem trên).
+      **Chưa test được UI thật bằng trình duyệt** trong phiên này (không có
+      công cụ tự động hóa trình duyệt) — cần người dùng tự bấm thử qua `npm
+      run dev`/production sau khi chạy migration.

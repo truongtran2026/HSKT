@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import type { DeviceRackCircuitRef, DeviceRackPortRefs } from "@/lib/deviceRackPorts";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import ColumnPicker from "@/components/ui/ColumnPicker";
 
 // Trang XEM (không sửa tại chỗ, yêu cầu người dùng 2026-07-28) cho rack
 // ODF/DDF thiết bị (domain='device'). Bảng đổi từ "Port / Thiết bị này (own)
@@ -54,62 +58,79 @@ function buildPortRows(portCount: number, portRefs: Map<number, DeviceRackPortRe
   return rows;
 }
 
+type VisibleCol = "notes";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { notes: true };
+const COLUMN_ITEMS = [{ key: "notes" as const, label: "Ghi chú" }];
+
 export default function DeviceRackPortView({
   portCount,
-  portRefs,
+  portRefEntries,
 }: {
   portCount: number;
-  portRefs: Map<number, DeviceRackPortRefs>;
+  // Mảng entries thay vì Map — component này là "use client" (cần state ẩn/
+  // hiện cột), Map không đi qua ranh giới Server->Client Component an toàn
+  // như array/object thường, nên page.tsx (server) chuyển Map -> entries
+  // trước khi truyền xuống.
+  portRefEntries: [number, DeviceRackPortRefs][];
 }) {
+  const portRefs = new Map(portRefEntries);
   const rows = buildPortRows(portCount, portRefs);
+  const { visible, toggle } = useColumnVisibility<VisibleCol>("device-rack-port-col-visibility", DEFAULT_VISIBLE);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table className="w-full table-fixed text-sm">
-        <colgroup>
-          <col style={{ width: 70 }} />
-          <col />
-          <col style={{ width: 220 }} />
-        </colgroup>
-        <thead className="bg-primary-50 text-primary-800">
-          <tr>
-            <th className="px-3 py-2 text-left font-medium">Port</th>
-            <th className="px-3 py-2 text-left font-medium">Tên luồng</th>
-            <th className="px-3 py-2 text-left font-medium">Ghi chú</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const key = row.portNumbers.join("-");
-            const portLabel = row.portNumbers.length === 2 ? `${row.portNumbers[0]}-${row.portNumbers[1]}` : String(row.portNumbers[0]);
-            return (
-              <tr key={key} className="border-t border-slate-100 align-top">
-                <td className="px-3 py-2 font-medium text-slate-700">{portLabel}</td>
-                <td className="px-3 py-2 break-words">
-                  {row.entries.length === 0 ? (
-                    <span className="text-slate-300">— trống —</span>
-                  ) : (
-                    row.entries.map((e, i) => (
-                      <div key={`${e.id}-${i}`}>
-                        <Link href={`/odf-device/sua-luong#${rowAnchor(e.id)}`} className="text-primary-600 hover:underline">
-                          {e.name}
-                        </Link>
-                      </div>
-                    ))
+    <div>
+      <div className="mb-2 flex justify-end">
+        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggle} />
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: 70 }} />
+            <col />
+            {visible.notes && <col style={{ width: 220 }} />}
+          </colgroup>
+          <thead className="bg-primary-50 text-primary-800">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Port</th>
+              <th className="px-3 py-2 text-left font-medium">Tên luồng</th>
+              {visible.notes && <th className="px-3 py-2 text-left font-medium">Ghi chú</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const key = row.portNumbers.join("-");
+              const portLabel = row.portNumbers.length === 2 ? `${row.portNumbers[0]}-${row.portNumbers[1]}` : String(row.portNumbers[0]);
+              return (
+                <tr key={key} className="border-t border-slate-100 align-top">
+                  <td className="px-3 py-2 font-medium text-slate-700">{portLabel}</td>
+                  <td className="px-3 py-2 break-words">
+                    {row.entries.length === 0 ? (
+                      <span className="text-slate-300">— trống —</span>
+                    ) : (
+                      row.entries.map((e, i) => (
+                        <div key={`${e.id}-${i}`}>
+                          <Link href={`/odf-device/sua-luong#${rowAnchor(e.id)}`} className="text-primary-600 hover:underline">
+                            {e.name}
+                          </Link>
+                        </div>
+                      ))
+                    )}
+                  </td>
+                  {visible.notes && (
+                    <td className="px-3 py-2 text-slate-500 break-words">
+                      {row.entries.length === 0 ? (
+                        "—"
+                      ) : (
+                        row.entries.map((e, i) => <div key={`${e.id}-${i}`}>Luồng sử dụng sợi {e.portNumbers.join(",")}</div>)
+                      )}
+                    </td>
                   )}
-                </td>
-                <td className="px-3 py-2 text-slate-500 break-words">
-                  {row.entries.length === 0 ? (
-                    "—"
-                  ) : (
-                    row.entries.map((e, i) => <div key={`${e.id}-${i}`}>Luồng sử dụng sợi {e.portNumbers.join(",")}</div>)
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -209,7 +209,7 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       <div className="mt-6">
         <TransitFormatWarning items={nonConformingTransit} />
         {devicePortRefs ? (
-          <DeviceRackPortView portCount={rack.port_count} portRefs={devicePortRefs} />
+          <DeviceRackPortView portCount={rack.port_count} portRefEntries={[...devicePortRefs.entries()]} />
         ) : (
           <PortTable
             rackId={rack.id}

@@ -20,6 +20,8 @@ import {
 } from "@/lib/mirrorTrunkCircuits";
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { buildTrunkPortReportText } from "@/lib/circuitReportText";
 import type { CircuitOptions } from "@/lib/circuitOptions";
 import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
 import { formatLastUpdated } from "@/lib/format";
@@ -27,6 +29,9 @@ import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import FilterInput from "@/components/ui/FilterInput";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
+import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
@@ -254,6 +259,28 @@ function resolveMoveTargetPort(
 type ResizableCol = "name" | "transit" | "responsePlan";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, transit: 200, responsePlan: 220 };
 
+// Ẩn/hiện cột tùy chọn (yêu cầu người dùng 2026-08-07) — "Port", "Tên luồng",
+// cột tick và "Thao tác" luôn hiện (không cho ẩn), 7 cột còn lại tùy chọn.
+type VisibleCol = "fiber" | "interface" | "transit" | "counterpart" | "responsePlan" | "station" | "notes";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  fiber: true,
+  interface: true,
+  transit: true,
+  counterpart: true,
+  responsePlan: true,
+  station: true,
+  notes: true,
+};
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "fiber", label: "Sợi" },
+  { key: "interface", label: "Giao tiếp" },
+  { key: "transit", label: "Chuyển tiếp" },
+  { key: "counterpart", label: "Đối phương" },
+  { key: "responsePlan", label: "PA ứng cứu" },
+  { key: "station", label: "Trạm thực hiện" },
+  { key: "notes", label: "Ghi chú" },
+];
+
 // Tiêu đề cột GỘP nhãn+sắp xếp+lọc vào ĐÚNG 1 <th> sticky — yêu cầu người
 // dùng 2026-07-28: rack dài tới cả trăm port, cuộn xuống phải giữ được tiêu
 // đề cột. Bắt buộc gộp 1 hàng duy nhất (không tách hàng lọc riêng bên dưới
@@ -404,7 +431,46 @@ export default function PortTable({
     return () => window.removeEventListener("hashchange", applyHash);
   }, []);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("odf-trunk-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("odf-trunk-col-visibility", DEFAULT_VISIBLE);
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
+  // Tick chọn luồng để sinh đoạn text báo cáo (yêu cầu người dùng 2026-08-07)
+  // — khóa theo circuit.id (không theo port), nên 1 luồng chiếm 2 port không
+  // liền kề (2 group hiển thị riêng) vẫn tick/bỏ tick đồng bộ ở cả 2 dòng.
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [historyOpen, setHistoryOpen] = useState(false);
+  function toggleTick(circuitId: string) {
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(circuitId)) next.delete(circuitId);
+      else next.add(circuitId);
+      return next;
+    });
+  }
+  // Rack đang xem, tra ra CHÍNH từ trunkPorts (đã tải sẵn toàn trạm) thay vì
+  // thêm prop mới — dùng cho phần "Chuyển tiếp chỉ là ODF trần" (trường hợp
+  // 1.2, cần tên tuyến cáp của CHÍNH rack này, xem lib/circuitReportText.ts).
+  const currentRackPort = trunkPorts.find((p) => p.rackId === rackId);
+  const currentRackCode = currentRackPort?.rackCode ?? "";
+  const currentRackCableRouteName = currentRackPort?.cableRouteName ?? null;
+  const reportItems = useMemo(() => {
+    return [...ticked].flatMap((circuitId) => {
+      const linked = linkedPortsFor(ports, circuitId);
+      if (linked.length === 0) return [];
+      const circuit = linked[0].circuit!;
+      const text = buildTrunkPortReportText({
+        rackCode: currentRackCode,
+        rackCableRouteName: currentRackCableRouteName,
+        portNumbers: linked.map((p) => p.portNumber),
+        fiberNumbers: linked.map((p) => p.fiberNumber),
+        circuitName: circuit.name,
+        counterpartText: circuit.counterpartText,
+        transitText: linked[0].transitText,
+        trunkPorts,
+      });
+      return [{ key: circuitId, text }];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticked, ports, currentRackCode, currentRackCableRouteName, trunkPorts]);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     port: "",
     fiber: "",
@@ -430,6 +496,14 @@ export default function PortTable({
     const arr = [...filteredGroups].sort((a, b) => compareValues(groupValue(a, sortKey), groupValue(b, sortKey)));
     return sortDir === "desc" ? arr.reverse() : arr;
   }, [filteredGroups, sortKey, sortDir]);
+
+  // Tổng số cột ĐANG hiện — dùng cho colSpan của EditRow/MoveRow/dòng trống
+  // (phải tính động vì 7 cột giờ ẩn/hiện được, không còn cố định 10 nữa).
+  // Cột luôn hiện: tick, Port, Tên luồng, Thao tác = 4.
+  const visibleColCount = 4 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
+  // Dòng "đang được ghép/sửa cùng port..." tự render tick+Port+(Sợi nếu hiện)
+  // làm ô riêng rồi mới colSpan phần còn lại.
+  const restColSpanAfterPortFiber = visibleColCount - 2 - (visible.fiber ? 1 : 0);
 
   // Toàn bộ port đang "dính" vào phiên sửa/tạo hiện tại — gồm portIds gốc +
   // port thứ 2 đang chọn ghép (kể cả khi port đó nằm ở 1 group HIỂN THỊ khác
@@ -1113,6 +1187,14 @@ export default function PortTable({
           </button>
         </div>
       )}
+      <div className="mb-3 flex items-center justify-end gap-2">
+        <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
+          Lịch sử tra cứu
+        </button>
+        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+      </div>
+      <CircuitReportPanel items={reportItems} />
+      <ReportHistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
       {/* max-h + overflow-auto (không chỉ overflow-x-auto) là bắt buộc để
           sticky hoạt động — cùng lý do đã ghi ở DeviceCircuitList.tsx: nếu
           không giới hạn chiều cao, khung này không bao giờ tự cuộn (trang
@@ -1120,21 +1202,27 @@ export default function PortTable({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-sm table-fixed">
           <colgroup>
+            <col style={{ width: 40 }} />
             <col style={{ width: 56 }} />
-            <col style={{ width: 56 }} />
+            {visible.fiber && <col style={{ width: 56 }} />}
             <col style={{ width: colWidths.name }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: colWidths.transit }} />
-            <col style={{ width: 170 }} />
-            <col style={{ width: colWidths.responsePlan }} />
-            <col style={{ width: 120 }} />
-            <col style={{ width: 170 }} />
+            {visible.interface && <col style={{ width: 90 }} />}
+            {visible.transit && <col style={{ width: colWidths.transit }} />}
+            {visible.counterpart && <col style={{ width: 170 }} />}
+            {visible.responsePlan && <col style={{ width: colWidths.responsePlan }} />}
+            {visible.station && <col style={{ width: 120 }} />}
+            {visible.notes && <col style={{ width: 170 }} />}
             <col style={{ width: 200 }} />
           </colgroup>
           <thead className="text-primary-800">
             <tr>
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold" title="Tick để sinh đoạn text báo cáo">
+                ✓
+              </th>
               <Th label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
-              <Th label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
+              {visible.fiber && (
+                <Th label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
+              )}
               <Th
                 label="Tên luồng"
                 sortKey="name"
@@ -1146,35 +1234,47 @@ export default function PortTable({
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
               />
-              <Th label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
-              <Th
-                label="Chuyển tiếp"
-                width={colWidths.transit}
-                onResize={(w) => resizeCol("transit", w)}
-                filterValue={filters.transit}
-                onFilterChange={(v) => setFilter("transit", v)}
-              />
-              <Th label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
-              <Th
-                label="PA ứng cứu"
-                sortKey="responsePlan"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.responsePlan}
-                onResize={(w) => resizeCol("responsePlan", w)}
-                filterValue={filters.responsePlan}
-                onFilterChange={(v) => setFilter("responsePlan", v)}
-              />
-              <Th label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
-              <Th label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
+              {visible.interface && (
+                <Th label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
+              )}
+              {visible.transit && (
+                <Th
+                  label="Chuyển tiếp"
+                  width={colWidths.transit}
+                  onResize={(w) => resizeCol("transit", w)}
+                  filterValue={filters.transit}
+                  onFilterChange={(v) => setFilter("transit", v)}
+                />
+              )}
+              {visible.counterpart && (
+                <Th label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
+              )}
+              {visible.responsePlan && (
+                <Th
+                  label="PA ứng cứu"
+                  sortKey="responsePlan"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.responsePlan}
+                  onResize={(w) => resizeCol("responsePlan", w)}
+                  filterValue={filters.responsePlan}
+                  onFilterChange={(v) => setFilter("responsePlan", v)}
+                />
+              )}
+              {visible.station && (
+                <Th label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
+              )}
+              {visible.notes && (
+                <Th label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
+              )}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
           <tbody>
             {sortedGroups.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy port nào khớp bộ lọc.
                 </td>
               </tr>
@@ -1200,7 +1300,7 @@ export default function PortTable({
                     onCancel={cancelEdit}
                     onUnlink={unlinkMirror}
                     busy={busy}
-                    colSpan={10}
+                    colSpan={visibleColCount}
                   />
                 );
               }
@@ -1216,7 +1316,7 @@ export default function PortTable({
                     onConfirm={confirmMove}
                     onCancel={cancelMove}
                     busy={busy}
-                    colSpan={10}
+                    colSpan={visibleColCount}
                   />
                 );
               }
@@ -1228,9 +1328,10 @@ export default function PortTable({
                 const primaryPortNumber = ports.find((p) => p.id === edit!.portIds[0])?.portNumber;
                 return group.ports.map((port) => (
                   <tr key={port.id} className="border-t border-slate-100 bg-primary-50/40 text-slate-400 italic">
+                    <td className="px-3 py-2" />
                     <td className="px-3 py-2">{port.portNumber}</td>
-                    <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>
-                    <td className="px-3 py-2" colSpan={8}>
+                    {visible.fiber && <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>}
+                    <td className="px-3 py-2" colSpan={restColSpanAfterPortFiber}>
                       Đang được ghép/sửa cùng port {primaryPortNumber} ở dòng đang sửa.
                     </td>
                   </tr>
@@ -1240,9 +1341,10 @@ export default function PortTable({
                 const primaryPortNumber = ports.find((p) => p.id === move!.sourcePortIds[0])?.portNumber;
                 return group.ports.map((port) => (
                   <tr key={port.id} className="border-t border-slate-100 bg-amber-50/40 text-slate-400 italic">
+                    <td className="px-3 py-2" />
                     <td className="px-3 py-2">{port.portNumber}</td>
-                    <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>
-                    <td className="px-3 py-2" colSpan={8}>
+                    {visible.fiber && <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>}
+                    <td className="px-3 py-2" colSpan={restColSpanAfterPortFiber}>
                       Đang được chuyển tuyến cùng port {primaryPortNumber} ở dòng phía trên.
                     </td>
                   </tr>
@@ -1269,8 +1371,15 @@ export default function PortTable({
                   // đã từng gặp lỗi cùng loại bên DeviceCircuitList.tsx).
                   className={`scroll-mt-24 border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
                 >
+                  {idx === 0 && (
+                    <td className="px-3 py-2" rowSpan={group.ports.length}>
+                      {circuit && (
+                        <input type="checkbox" checked={ticked.has(circuit.id)} onChange={() => toggleTick(circuit.id)} title="Tick để sinh đoạn text báo cáo" />
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
-                  <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>
+                  {visible.fiber && <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>}
                   {idx === 0 && (
                     <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
                       {circuit ? (
@@ -1283,38 +1392,39 @@ export default function PortTable({
                       )}
                     </td>
                   )}
-                  {idx === 0 && (
+                  {visible.interface && idx === 0 && (
                     <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
                       {circuit?.interfaceType ?? ""}
                     </td>
                   )}
-                  {transitMerged ? (
-                    idx === 0 && (
-                      <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
-                        {transitDisplayByPortId.get(group.ports[0].id) ?? ""}
+                  {visible.transit &&
+                    (transitMerged ? (
+                      idx === 0 && (
+                        <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
+                          {transitDisplayByPortId.get(group.ports[0].id) ?? ""}
+                        </td>
+                      )
+                    ) : (
+                      <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
+                        {transitDisplayByPortId.get(port.id) ?? ""}
                       </td>
-                    )
-                  ) : (
-                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
-                      {transitDisplayByPortId.get(port.id) ?? ""}
-                    </td>
-                  )}
-                  {idx === 0 && (
+                    ))}
+                  {visible.counterpart && idx === 0 && (
                     <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
                       {circuit?.counterpartText ?? ""}
                     </td>
                   )}
-                  {idx === 0 && (
+                  {visible.responsePlan && idx === 0 && (
                     <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
                       {circuit?.responsePlanText ?? ""}
                     </td>
                   )}
-                  {idx === 0 && (
+                  {visible.station && idx === 0 && (
                     <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
                       {circuit?.executionStationText ?? ""}
                     </td>
                   )}
-                  {idx === 0 && (
+                  {visible.notes && idx === 0 && (
                     <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
                       {circuit?.notes ?? ""}
                     </td>

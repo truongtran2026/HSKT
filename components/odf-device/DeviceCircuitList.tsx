@@ -26,12 +26,17 @@ import {
   type TrunkPositionMatch,
 } from "@/lib/trunkPorts";
 import { useColumnWidths } from "@/lib/useColumnWidths";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { buildDeviceCircuitReportText } from "@/lib/circuitReportText";
 import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
+import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
@@ -325,6 +330,28 @@ const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
   notes: 200,
 };
 
+// Ẩn/hiện cột tùy chọn (yêu cầu người dùng 2026-08-07) — tick, "Tên luồng",
+// "Thao tác" luôn hiện. "Thiết bị" KHÔNG nằm trong danh sách này — cột đó đã
+// có cơ chế ẩn/hiện riêng theo bộ lọc (showDeviceColumn ở trên), không trộn
+// 2 cơ chế lại với nhau.
+type VisibleCol = "trib" | "positionOwn" | "positionNext" | "interface" | "counterpart" | "notes";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  trib: true,
+  positionOwn: true,
+  positionNext: true,
+  interface: true,
+  counterpart: true,
+  notes: true,
+};
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "trib", label: "Trib" },
+  { key: "positionOwn", label: "Vị trí ODF (thiết bị)" },
+  { key: "positionNext", label: "Vị trí ODF (tiếp theo)" },
+  { key: "interface", label: "Giao tiếp" },
+  { key: "counterpart", label: "Đối phương" },
+  { key: "notes", label: "Ghi chú" },
+];
+
 export default function DeviceCircuitList({
   circuits,
   devices,
@@ -350,6 +377,8 @@ export default function DeviceCircuitList({
     "odf-device-circuits-col-widths",
     DEFAULT_COL_WIDTHS
   );
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-circuit-col-visibility", DEFAULT_VISIBLE);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
     trib: "",
@@ -928,7 +957,28 @@ export default function DeviceCircuitList({
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
   // vẫn cần cột này để phân biệt các dòng.
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
-  const columnCount = (showDeviceColumn ? 9 : 8) + 1; // +1 cho cột tick chọn
+  const columnCount = (showDeviceColumn ? 9 : 8) + 1 - COLUMN_ITEMS.filter((c) => !visible[c.key]).length; // +1 cho cột tick chọn
+
+  // Đoạn text báo cáo sinh sẵn cho các luồng ĐANG TICK — tái dùng nguyên
+  // `selected` (vốn dùng cho xóa hàng loạt, yêu cầu người dùng 2026-08-07:
+  // "chưa có nút tick... ở hồ sơ này" ý nói bên PortTable.tsx, còn ở đây đã
+  // có sẵn tick nên dùng thẳng luôn, không cần state chọn mới).
+  const reportItems = useMemo(() => {
+    return [...selected].flatMap((id) => {
+      const c = circuits.find((row) => row.id === id);
+      if (!c) return [];
+      const text = buildDeviceCircuitReportText({
+        name: c.name,
+        deviceName: c.deviceName,
+        tribText: c.tribText,
+        devicePositionOwn: c.devicePositionOwn,
+        devicePositionNext: c.devicePositionNext,
+        trunkPorts,
+      });
+      return [{ key: id, text }];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, circuits, trunkPorts]);
 
   // Kiểm tra "1 vị trí ODF/DDF (thiết bị) không được gán cho 2 thiết bị khác
   // nhau" — CHỈ so sánh cột "Vị trí ODF (thiết bị)" (nơi CHÍNH thiết bị này
@@ -2256,7 +2306,16 @@ export default function DeviceCircuitList({
             </button>
           </>
         )}
+        <div className="ml-auto flex gap-2">
+          <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
+            Lịch sử tra cứu
+          </button>
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
+
+      <CircuitReportPanel items={reportItems} />
+      <ReportHistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
       {/* max-h + overflow-auto (thay vì chỉ overflow-x-auto) là bắt buộc để
           sticky hoạt động: overflow-x khác "visible" mà overflow-y vẫn
@@ -2270,13 +2329,13 @@ export default function DeviceCircuitList({
           <colgroup>
             <col style={{ width: 32 }} />
             <col style={{ width: colWidths.name }} />
-            <col style={{ width: 110 }} />
+            {visible.trib && <col style={{ width: 110 }} />}
             {showDeviceColumn && <col style={{ width: colWidths.device }} />}
-            <col style={{ width: colWidths.positionOwn }} />
-            <col style={{ width: colWidths.positionNext }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: colWidths.counterpart }} />
-            <col style={{ width: colWidths.notes }} />
+            {visible.positionOwn && <col style={{ width: colWidths.positionOwn }} />}
+            {visible.positionNext && <col style={{ width: colWidths.positionNext }} />}
+            {visible.interface && <col style={{ width: 90 }} />}
+            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
+            {visible.notes && <col style={{ width: colWidths.notes }} />}
             <col style={{ width: 130 }} />
           </colgroup>
           <thead className="text-primary-800">
@@ -2300,15 +2359,17 @@ export default function DeviceCircuitList({
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
-              <SortFilterTh
-                label="Trib"
-                sortKey="trib"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.trib}
-                onFilterChange={(v) => setFilter("trib", v)}
-              />
+              {visible.trib && (
+                <SortFilterTh
+                  label="Trib"
+                  sortKey="trib"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.trib}
+                  onFilterChange={(v) => setFilter("trib", v)}
+                />
+              )}
               {showDeviceColumn && (
                 <SortFilterTh
                   label="Thiết bị"
@@ -2322,55 +2383,65 @@ export default function DeviceCircuitList({
                   onResize={(w) => resizeCol("device", w)}
                 />
               )}
-              <SortFilterTh
-                label="Vị trí ODF (thiết bị)"
-                sortKey="positionOwn"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.positionOwn}
-                onFilterChange={(v) => setFilter("positionOwn", v)}
-                width={colWidths.positionOwn}
-                onResize={(w) => resizeCol("positionOwn", w)}
-              />
-              <SortFilterTh
-                label="Vị trí ODF (tiếp theo)"
-                sortKey="positionNext"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.positionNext}
-                onFilterChange={(v) => setFilter("positionNext", v)}
-                width={colWidths.positionNext}
-                onResize={(w) => resizeCol("positionNext", w)}
-              />
-              <SortFilterTh
-                label="Giao tiếp"
-                sortKey="interface"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.interface}
-                onFilterChange={(v) => setFilter("interface", v)}
-              />
-              <SortFilterTh
-                label="Đối phương"
-                sortKey="counterpart"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.counterpart}
-                onFilterChange={(v) => setFilter("counterpart", v)}
-                width={colWidths.counterpart}
-                onResize={(w) => resizeCol("counterpart", w)}
-              />
-              <FilterOnlyTh
-                label="Ghi chú"
-                filterValue={filters.notes}
-                onFilterChange={(v) => setFilter("notes", v)}
-                width={colWidths.notes}
-                onResize={(w) => resizeCol("notes", w)}
-              />
+              {visible.positionOwn && (
+                <SortFilterTh
+                  label="Vị trí ODF (thiết bị)"
+                  sortKey="positionOwn"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.positionOwn}
+                  onFilterChange={(v) => setFilter("positionOwn", v)}
+                  width={colWidths.positionOwn}
+                  onResize={(w) => resizeCol("positionOwn", w)}
+                />
+              )}
+              {visible.positionNext && (
+                <SortFilterTh
+                  label="Vị trí ODF (tiếp theo)"
+                  sortKey="positionNext"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.positionNext}
+                  onFilterChange={(v) => setFilter("positionNext", v)}
+                  width={colWidths.positionNext}
+                  onResize={(w) => resizeCol("positionNext", w)}
+                />
+              )}
+              {visible.interface && (
+                <SortFilterTh
+                  label="Giao tiếp"
+                  sortKey="interface"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.interface}
+                  onFilterChange={(v) => setFilter("interface", v)}
+                />
+              )}
+              {visible.counterpart && (
+                <SortFilterTh
+                  label="Đối phương"
+                  sortKey="counterpart"
+                  activeKey={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.counterpart}
+                  onFilterChange={(v) => setFilter("counterpart", v)}
+                  width={colWidths.counterpart}
+                  onResize={(w) => resizeCol("counterpart", w)}
+                />
+              )}
+              {visible.notes && (
+                <FilterOnlyTh
+                  label="Ghi chú"
+                  filterValue={filters.notes}
+                  onFilterChange={(v) => setFilter("notes", v)}
+                  width={colWidths.notes}
+                  onResize={(w) => resizeCol("notes", w)}
+                />
+              )}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
@@ -2411,7 +2482,7 @@ export default function DeviceCircuitList({
                     <MirrorLinkBadge status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>
+                  {visible.trib && <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>}
                   {showDeviceColumn && (
                     <td className="px-4 py-2 text-slate-600 break-words">
                       {c.deviceName ?? "(chưa xác định)"}
@@ -2422,22 +2493,26 @@ export default function DeviceCircuitList({
                       )}
                     </td>
                   )}
-                  <td className={`px-4 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
-                    {c.devicePositionOwn ?? "—"}
-                    {ownConflict && (
-                      <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
-                        Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
+                  {visible.positionOwn && (
+                    <td className={`px-4 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+                      {c.devicePositionOwn ?? "—"}
+                      {ownConflict && (
+                        <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
+                          Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
+                        </div>
+                      )}
+                    </td>
+                  )}
+                  {visible.positionNext && <td className="px-4 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>}
+                  {visible.interface && <td className="px-4 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>}
+                  {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>}
+                  {visible.notes && (
+                    <td className="px-4 py-2 text-slate-500 max-w-xs">
+                      <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
+                        {c.notes ?? "—"}
                       </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-500 max-w-xs">
-                    <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
-                      {c.notes ?? "—"}
-                    </div>
-                  </td>
+                    </td>
+                  )}
                   <td className="px-4 py-2">
                     <div className="flex gap-2">
                       {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC
