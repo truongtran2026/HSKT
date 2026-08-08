@@ -22,15 +22,31 @@ import type { UnlinkedMirrorPair, UnlinkedDeviceDevicePair } from "@/lib/unlinke
 // nào.
 export type MirrorLinkStatus = "linked" | "candidate";
 
-// Chữ hiển thị/lọc DÙNG CHUNG cho cột "Liên kết" (PortTable.tsx,
-// DeviceCircuitList.tsx — yêu cầu người dùng 2026-08-08: tách khỏi tên luồng
-// thành 1 cột riêng, lọc được). Gộp "candidate" (có gợi ý, chưa xác nhận) và
-// "không có gì đối chiếu" chung thành "Chưa liên kết" — chỉ 2 giá trị lọc,
-// đúng yêu cầu; icon/tooltip vẫn phân biệt 3 trạng thái (xem
-// components/ui/MirrorLinkStatusIcon.tsx).
+// Chữ hiển thị DÙNG CHUNG khi xuất Excel cột "Trạng thái" liên kết
+// (PortTable.tsx, DeviceCircuitList.tsx) — bảng/UI không còn hiện chữ này
+// nữa (chỉ icon, xem components/ui/MirrorLinkStatusIcon.tsx), nhưng file
+// Excel xuất ra vẫn cần chữ đọc được, không phải icon.
 export function mirrorLinkStatusLabel(status: MirrorLinkStatus | undefined): "Đã liên kết" | "Chưa liên kết" {
   return status === "linked" ? "Đã liên kết" : "Chưa liên kết";
 }
+
+// Khóa lọc/sắp xếp DÙNG CHUNG cho cột "Trạng thái" liên kết — SỬA 2026-08-08
+// (người dùng: "hiện tại có 03 trạng thái... cho tôi chọn đi cho nhanh chứ
+// mỗi lần phải gõ chữ") — trước đó gộp candidate+không-có-gì thành 1 giá trị
+// lọc "Chưa liên kết" duy nhất; giờ tách lại đủ 3 khóa để làm dropdown chọn
+// (components/ui/FilterSelect.tsx) thay vì gõ chữ tự do. "none" = không có
+// trong Map trạng thái (không có gì để đối chiếu, KHÔNG phải lỗi).
+export type MirrorLinkFilterKey = "linked" | "candidate" | "none";
+
+export function mirrorLinkFilterKey(status: MirrorLinkStatus | undefined): MirrorLinkFilterKey {
+  return status ?? "none";
+}
+
+export const MIRROR_LINK_FILTER_OPTIONS: { value: MirrorLinkFilterKey; label: string }[] = [
+  { value: "linked", label: "Đã liên kết" },
+  { value: "candidate", label: "Chưa liên kết (có gợi ý)" },
+  { value: "none", label: "Chưa liên kết" },
+];
 
 export function computeMirrorLinkStatuses(
   trunkPorts: TrunkPortRow[],

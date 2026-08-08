@@ -2,6 +2,7 @@
 
 import type { SortDir } from "@/lib/useSort";
 import FilterInput from "@/components/ui/FilterInput";
+import FilterSelect from "@/components/ui/FilterSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 
 // Header CHUẨN dùng chung cho MỌI bảng dữ liệu trong app (quy định chung —
@@ -28,6 +29,7 @@ export default function DataTh<K extends string>({
   filterValue,
   onFilterChange,
   filterPlaceholder,
+  filterOptions,
   width,
   onResize,
   className = "",
@@ -41,6 +43,10 @@ export default function DataTh<K extends string>({
   filterValue?: string;
   onFilterChange?: (v: string) => void;
   filterPlaceholder?: string;
+  // Cột chỉ có vài giá trị rời rạc cố định (vd trạng thái) — cho CHỌN thay
+  // vì gõ chữ (yêu cầu người dùng 2026-08-08). Có mặt thì dùng FilterSelect
+  // thay FilterInput, dù vẫn cùng vị trí/kích thước trong <th>.
+  filterOptions?: { value: string; label: string }[];
   width?: number;
   onResize?: (width: number) => void;
   className?: string;
@@ -67,9 +73,12 @@ export default function DataTh<K extends string>({
           </span>
         )}
       </div>
-      {filterable && (
-        <FilterInput value={filterValue ?? ""} onChange={onFilterChange!} align={align} placeholder={filterPlaceholder} />
-      )}
+      {filterable &&
+        (filterOptions ? (
+          <FilterSelect value={filterValue ?? ""} onChange={onFilterChange!} options={filterOptions} />
+        ) : (
+          <FilterInput value={filterValue ?? ""} onChange={onFilterChange!} align={align} placeholder={filterPlaceholder} />
+        ))}
       {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
     </th>
   );

@@ -40,7 +40,13 @@ import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
-import { unlinkCircuitMirror, mirrorLinkStatusLabel, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import {
+  unlinkCircuitMirror,
+  mirrorLinkStatusLabel,
+  mirrorLinkFilterKey,
+  MIRROR_LINK_FILTER_OPTIONS,
+  type MirrorLinkStatus,
+} from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -104,7 +110,7 @@ function cellText(c: DeviceCircuitRow, key: FilterKey, mirrorLinkStatuses?: Reco
     case "name":
       return c.name;
     case "linkStatus":
-      return mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]);
+      return mirrorLinkFilterKey(mirrorLinkStatuses?.[c.id]);
     case "trib":
       return c.tribText;
     case "device":
@@ -276,7 +282,7 @@ const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
   notes: true,
 };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
-  { key: "linkStatus", label: "Liên kết" },
+  { key: "linkStatus", label: "Trạng thái" },
   { key: "trib", label: "Trib" },
   { key: "positionOwn", label: "Vị trí ODF (thiết bị)" },
   { key: "positionNext", label: "Vị trí ODF (tiếp theo)" },
@@ -910,7 +916,7 @@ export default function DeviceCircuitList({
     const cols: { label: string; getValue: (c: DeviceCircuitRow) => string | number | null }[] = [
       { label: "Tên luồng", getValue: (c) => c.name },
     ];
-    if (visible.linkStatus) cols.push({ label: "Liên kết", getValue: (c) => mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) });
+    if (visible.linkStatus) cols.push({ label: "Trạng thái", getValue: (c) => mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) });
     if (visible.trib) cols.push({ label: "Trib", getValue: (c) => c.tribText });
     if (showDeviceColumn) cols.push({ label: "Thiết bị", getValue: (c) => c.deviceName });
     if (visible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (c) => c.devicePositionOwn });
@@ -2335,14 +2341,14 @@ export default function DeviceCircuitList({
               />
               {visible.linkStatus && (
                 <DataTh
-                  label="Liên kết"
+                  label="Trạng thái"
                   sortKey="linkStatus"
                   activeSortKey={sortKey}
                   sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.linkStatus}
                   onFilterChange={(v) => setFilter("linkStatus", v)}
-                  filterPlaceholder="Đã/Chưa..."
+                  filterOptions={MIRROR_LINK_FILTER_OPTIONS}
                 />
               )}
               {visible.trib && (

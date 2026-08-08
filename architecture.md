@@ -4568,8 +4568,23 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   môi trường này) — cần người dùng tự bấm thử: vào `/odf-device`,
   `/odf-trunk/<1 rack>`, `/odf-device/sua-luong` xem phần đầu trang (form
   thêm rack/tiêu đề rack/tiêu đề+số đếm luồng) hiện nhanh, phần bảng port/
-  khung cảnh báo tự trôi vào sau; xem cột "Liên kết" mới ở 2 bảng (lọc thử
-  gõ "đã"/"chưa"); để ý góc dưới-phải màn hình có đồng hồ "⏱ Xms/Ys" đổi
-  theo mỗi lần chuyển trang; xem tiêu đề tab trình duyệt đổi đúng theo từng
-  trang; so sánh cảm quan style giữa vài bảng (RackListTable, PortTable,
-  DeviceCircuitList) xem đã đều tay hơn chưa.
+  khung cảnh báo tự trôi vào sau; xem cột "Trạng thái" mới ở 2 bảng (thử
+  dropdown lọc, không phải gõ chữ); để ý góc dưới-phải màn hình có đồng hồ
+  "⏱ Xms/Ys" đổi theo mỗi lần chuyển trang; xem tiêu đề tab trình duyệt đổi
+  đúng theo từng trang; so sánh cảm quan style giữa vài bảng (RackListTable,
+  PortTable, DeviceCircuitList) xem đã đều tay hơn chưa.
+
+  **Sửa tiếp cùng ngày** (người dùng phản hồi sau khi xem lại): đổi tên cột
+  "Liên kết" → "Trạng thái"; ô lọc đổi từ gõ chữ tự do sang CHỌN SẴN (dropdown)
+  — thêm `components/ui/FilterSelect.tsx` (mới) + `DataTh.tsx` thêm prop
+  `filterOptions?` (có thì render `FilterSelect` thay `FilterInput`, dùng
+  chung vị trí/kích thước trong `<th>`, không lệch hàng với cột khác). Giá
+  trị lọc tách lại đủ 3 khóa `"linked"|"candidate"|"none"`
+  (`lib/mirrorLinkStatus.ts` — `mirrorLinkFilterKey()`,
+  `MIRROR_LINK_FILTER_OPTIONS`) thay vì gộp còn 2 như đợt trước, khớp đúng 3
+  màu thật đang hiện (emerald/amber/slate). Icon trong bảng (component
+  `MirrorLinkStatusIcon.tsx`) bỏ hẳn chữ "Đã/Chưa liên kết" đi kèm — chỉ còn
+  icon + màu, giữ `title` (tooltip) để vẫn tra được ý nghĩa khi rê chuột.
+  Riêng cột xuất Excel vẫn giữ chữ người đọc được ("Đã liên kết"/"Chưa liên
+  kết", qua `mirrorLinkStatusLabel()` — không đổi, khác mục đích với khóa lọc
+  UI). Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch.

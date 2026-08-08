@@ -33,7 +33,13 @@ import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
-import { unlinkCircuitMirror, mirrorLinkStatusLabel, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import {
+  unlinkCircuitMirror,
+  mirrorLinkStatusLabel,
+  mirrorLinkFilterKey,
+  MIRROR_LINK_FILTER_OPTIONS,
+  type MirrorLinkStatus,
+} from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { translatePgError } from "@/lib/translatePgError";
@@ -130,7 +136,7 @@ function groupValue(g: Group, key: SortKey, mirrorLinkStatuses?: Record<string, 
     case "name":
       return c?.name ?? null;
     case "linkStatus":
-      return c ? mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) : null;
+      return c ? mirrorLinkFilterKey(mirrorLinkStatuses?.[c.id]) : null;
     case "interface":
       return c?.interfaceType ?? null;
     case "counterpart":
@@ -279,7 +285,7 @@ const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
   notes: true,
 };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
-  { key: "linkStatus", label: "Liên kết" },
+  { key: "linkStatus", label: "Trạng thái" },
   { key: "fiber", label: "Sợi" },
   { key: "interface", label: "Giao tiếp" },
   { key: "transit", label: "Chuyển tiếp" },
@@ -472,7 +478,7 @@ export default function PortTable({
     if (visible.fiber) cols.push({ label: "Sợi", getValue: (p) => p.fiberNumber });
     cols.push({ label: "Tên luồng", getValue: (p) => p.circuit?.name ?? "" });
     if (visible.linkStatus) {
-      cols.push({ label: "Liên kết", getValue: (p) => (p.circuit ? mirrorLinkStatusLabel(mirrorLinkStatuses?.[p.circuit.id]) : "") });
+      cols.push({ label: "Trạng thái", getValue: (p) => (p.circuit ? mirrorLinkStatusLabel(mirrorLinkStatuses?.[p.circuit.id]) : "") });
     }
     if (visible.interface) cols.push({ label: "Giao tiếp", getValue: (p) => p.circuit?.interfaceType ?? "" });
     if (visible.transit) cols.push({ label: "Chuyển tiếp", getValue: (p) => transitDisplay(p.transitText, trunkPorts) });
@@ -1234,14 +1240,14 @@ export default function PortTable({
               />
               {visible.linkStatus && (
                 <DataTh
-                  label="Liên kết"
+                  label="Trạng thái"
                   sortKey="linkStatus"
                   activeSortKey={sortKey}
                   sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.linkStatus}
                   onFilterChange={(v) => setFilter("linkStatus", v)}
-                  filterPlaceholder="Đã/Chưa..."
+                  filterOptions={MIRROR_LINK_FILTER_OPTIONS}
                 />
               )}
               {visible.interface && (
