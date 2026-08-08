@@ -719,7 +719,14 @@ export default function DeviceCategoryClient({
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Danh mục thiết bị" fileNamePrefix="Danh_muc_thiet_bi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+          <ColumnPicker
+            items={COLUMN_ITEMS}
+            order={colOrder}
+            visible={visible}
+            onToggle={toggleColumn}
+            onReorderColumn={moveColumn}
+            onResetOrder={resetColOrder}
+          />
         </div>
       </div>
 

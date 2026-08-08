@@ -269,11 +269,17 @@ const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
 };
 
 // Ẩn/hiện cột tùy chọn (yêu cầu người dùng 2026-08-07) — tick, "Tên luồng",
-// "Thao tác" luôn hiện. "Thiết bị" KHÔNG nằm trong danh sách này — cột đó đã
-// có cơ chế ẩn/hiện riêng theo bộ lọc (showDeviceColumn ở trên), không trộn
-// 2 cơ chế lại với nhau.
-type VisibleCol = "linkStatus" | "trib" | "positionOwn" | "positionNext" | "interface" | "counterpart" | "notes";
+// "Thao tác" luôn hiện. "Thiết bị" (2026-08-08) giờ nằm CHUNG danh sách này
+// như 7 cột kia (trước đây tách riêng, chỉ ẩn/hiện tự động theo bộ lọc,
+// không kéo-thả được — người dùng phản hồi "đã kéo thả thì kéo thả được hết
+// chứ sao chừa lại một vài cột", bỏ ngoại lệ) — vẫn GIỮ hành vi tự ẩn khi đã
+// lọc còn đúng 1 thiết bị (xem effectiveVisible/showDeviceColumn bên dưới):
+// hiệu lực hiện cột = tick người dùng (visible.device, mặc định bật) VÀ
+// showDeviceColumn cùng đúng, nên mặc định vẫn tự ẩn như trước, nhưng giờ có
+// thể kéo sang vị trí bất kỳ khi hiện.
+type VisibleCol = "device" | "linkStatus" | "trib" | "positionOwn" | "positionNext" | "interface" | "counterpart" | "notes";
 const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  device: true,
   linkStatus: true,
   trib: true,
   positionOwn: true,
@@ -283,6 +289,7 @@ const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
   notes: true,
 };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "device", label: "Thiết bị" },
   { key: "linkStatus", label: "Trạng thái" },
   { key: "trib", label: "Trib" },
   { key: "positionOwn", label: "Vị trí ODF (thiết bị)" },
@@ -331,7 +338,6 @@ export default function DeviceCircuitList({
     moveColumn,
     reset: resetColOrder,
   } = useColumnOrder<VisibleCol>("device-circuit-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
@@ -914,24 +920,31 @@ export default function DeviceCircuitList({
 
   // Chỉ ẩn cột "Thiết bị" khi đã lọc còn ĐÚNG 1 thiết bị cụ thể (dòng nào
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
-  // vẫn cần cột này để phân biệt các dòng.
+  // vẫn cần cột này để phân biệt các dòng. Hiệu lực HIỆN cột giờ là 2 điều
+  // kiện CÙNG đúng: tick người dùng ở Cài đặt cột (visible.device, mặc định
+  // bật) VÀ showDeviceColumn (tự động, theo bộ lọc) — giữ đúng hành vi cũ
+  // (tự ẩn khi lọc còn 1 thiết bị) trong khi vẫn cho kéo-thả/tự tắt tay được
+  // như 7 cột còn lại (2026-08-08, xem comment ở khai báo VisibleCol).
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
-  const columnCount = (showDeviceColumn ? 10 : 9) + 1 - COLUMN_ITEMS.filter((c) => !visible[c.key]).length; // +1 cho cột tick chọn
+  const effectiveVisible: Record<VisibleCol, boolean> = { ...visible, device: visible.device && showDeviceColumn };
+  const orderedVisible = colOrder.filter((key) => effectiveVisible[key]);
+  const columnCount = 3 + COLUMN_ITEMS.filter((c) => effectiveVisible[c.key]).length; // 3 = tick, Tên luồng, Thao tác
 
   // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng).
   const exportColumns = useMemo(() => {
     const cols: { label: string; getValue: (c: DeviceCircuitRow) => string | number | null }[] = [
       { label: "Tên luồng", getValue: (c) => c.name },
     ];
-    if (visible.linkStatus) cols.push({ label: "Trạng thái", getValue: (c) => mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) });
-    if (visible.trib) cols.push({ label: "Trib", getValue: (c) => c.tribText });
-    if (showDeviceColumn) cols.push({ label: "Thiết bị", getValue: (c) => c.deviceName });
-    if (visible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (c) => c.devicePositionOwn });
-    if (visible.positionNext) cols.push({ label: "Vị trí ODF (tiếp theo)", getValue: (c) => c.devicePositionNext });
-    if (visible.interface) cols.push({ label: "Giao tiếp", getValue: (c) => c.interfaceType });
-    if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (c) => c.counterpartText });
-    if (visible.notes) cols.push({ label: "Ghi chú", getValue: (c) => c.notes });
+    if (effectiveVisible.device) cols.push({ label: "Thiết bị", getValue: (c) => c.deviceName });
+    if (effectiveVisible.linkStatus) cols.push({ label: "Trạng thái", getValue: (c) => mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) });
+    if (effectiveVisible.trib) cols.push({ label: "Trib", getValue: (c) => c.tribText });
+    if (effectiveVisible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (c) => c.devicePositionOwn });
+    if (effectiveVisible.positionNext) cols.push({ label: "Vị trí ODF (tiếp theo)", getValue: (c) => c.devicePositionNext });
+    if (effectiveVisible.interface) cols.push({ label: "Giao tiếp", getValue: (c) => c.interfaceType });
+    if (effectiveVisible.counterpart) cols.push({ label: "Đối phương", getValue: (c) => c.counterpartText });
+    if (effectiveVisible.notes) cols.push({ label: "Ghi chú", getValue: (c) => c.notes });
     return cols;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, showDeviceColumn, mirrorLinkStatuses]);
 
   // Đoạn text báo cáo sinh sẵn cho các luồng ĐANG TICK — tái dùng nguyên
@@ -1878,13 +1891,14 @@ export default function DeviceCircuitList({
     );
   }
 
-  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — CHỈ áp dụng cho
-  // 7 cột trong VisibleCol/COLUMN_ITEMS. "Thiết bị" KHÔNG kéo-thả được (ẩn/
-  // hiện theo showDeviceColumn tự động, không qua ColumnPicker — xem comment
-  // ở khai báo VisibleCol) — giữ CỐ ĐỊNH ngay sau "Tên luồng", trước mọi cột
-  // tùy chọn khác.
+  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — áp dụng cho cả 8
+  // cột trong VisibleCol/COLUMN_ITEMS, kể cả "Thiết bị" (ẩn/hiện vẫn tự động
+  // theo showDeviceColumn, xem effectiveVisible ở trên, nhưng VỊ TRÍ giờ kéo
+  // được như mọi cột khác).
   function colWidthOf(key: VisibleCol): number {
     switch (key) {
+      case "device":
+        return colWidths.device;
       case "linkStatus":
         return 110;
       case "trib":
@@ -1917,6 +1931,8 @@ export default function DeviceCircuitList({
       onReorderColumn: moveColumn,
     } as const;
     switch (key) {
+      case "device":
+        return <DataTh {...common} width={colWidths.device} onResize={(w) => resizeCol("device", w)} label="Thiết bị" />;
       case "linkStatus":
         return <DataTh {...common} label="Trạng thái" filterOptions={MIRROR_LINK_FILTER_OPTIONS} />;
       case "trib":
@@ -1936,6 +1952,17 @@ export default function DeviceCircuitList({
 
   function renderCell(key: VisibleCol, c: DeviceCircuitRow) {
     switch (key) {
+      case "device":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {c.deviceName ?? "(chưa xác định)"}
+            {!c.deviceId && (
+              <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
+                (chưa chuẩn hóa)
+              </span>
+            )}
+          </td>
+        );
       case "linkStatus":
         return (
           <td key={key} className="px-3 py-2 text-xs">
@@ -2404,7 +2431,14 @@ export default function DeviceCircuitList({
             Lịch sử tra cứu
           </button>
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Hồ sơ đấu nối" fileNamePrefix="Ho_so_dau_noi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+          <ColumnPicker
+            items={COLUMN_ITEMS}
+            order={colOrder}
+            visible={visible}
+            onToggle={toggleColumn}
+            onReorderColumn={moveColumn}
+            onResetOrder={resetColOrder}
+          />
         </div>
       </div>
 
@@ -2428,7 +2462,6 @@ export default function DeviceCircuitList({
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: colWidths.name }} />
-            {showDeviceColumn && <col style={{ width: colWidths.device }} />}
             {orderedVisible.map((key) => (
               <col key={key} style={{ width: colWidthOf(key) }} />
             ))}
@@ -2455,19 +2488,6 @@ export default function DeviceCircuitList({
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
-              {showDeviceColumn && (
-                <DataTh
-                  label="Thiết bị"
-                  sortKey="device"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.device}
-                  onFilterChange={(v) => setFilter("device", v)}
-                  width={colWidths.device}
-                  onResize={(w) => resizeCol("device", w)}
-                />
-              )}
               {orderedVisible.map((key) => renderHeaderCell(key))}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
@@ -2508,16 +2528,6 @@ export default function DeviceCircuitList({
                     {displayName(c) || "—"}
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
-                  {showDeviceColumn && (
-                    <td className="px-3 py-2 text-slate-600 break-words">
-                      {c.deviceName ?? "(chưa xác định)"}
-                      {!c.deviceId && (
-                        <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
-                          (chưa chuẩn hóa)
-                        </span>
-                      )}
-                    </td>
-                  )}
                   {orderedVisible.map((key) => renderCell(key, c))}
                   <td className="px-3 py-2">
                     <div className="flex gap-2">

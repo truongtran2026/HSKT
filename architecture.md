@@ -4621,19 +4621,14 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     `RackListTable.tsx`, `DashboardClient.tsx` (TableView), `SearchClient.tsx`,
     `DeviceSearchClient.tsx`, `DevicePositionMapClient.tsx`,
     `DeviceCategoryClient.tsx`, `DeviceCircuitList.tsx`, `PortTable.tsx`.
-    - `DeviceCircuitList.tsx`: cột "Thiết bị" KHÔNG kéo-thả được (ẩn/hiện
-      theo `showDeviceColumn` tự động, không qua `ColumnPicker` — giữ CỐ
-      ĐỊNH ngay sau "Tên luồng", trước 7 cột còn lại trong `COLUMN_ITEMS`).
-    - `PortTable.tsx` (phức tạp nhất — nhóm port Tx/Rx rowSpan): "Sợi"
-      KHÔNG kéo-thả được (đứng cố định giữa "Port" và "Tên luồng", không
-      rowSpan gộp như 7 cột kia — gắn với TỪNG port, không phải thuộc tính
-      của luồng) — tách riêng `type ReorderableCol = Exclude<VisibleCol,
-      "fiber">`. `renderCell(key, {port, idx, group, circuit,
-      transitMerged})` xử lý ĐÚNG 2 kiểu rowSpan khác nhau trong cùng 1 hàm:
-      6/7 cột dùng `idx===0 → rowSpan={group.ports.length}, else → null`
+    - `PortTable.tsx` (phức tạp nhất — nhóm port Tx/Rx rowSpan): `renderCell(key,
+      {port, idx, group, circuit, transitMerged})` xử lý 3 kiểu render khác
+      nhau trong cùng 1 hàm: "Sợi" luôn hiện riêng từng port (không rowSpan,
+      gắn với TỪNG port vật lý chứ không phải thuộc tính của luồng); 6/8 cột
+      còn lại dùng `idx===0 → rowSpan={group.ports.length}, else → null`
       (rowSpan đã che dòng dưới); riêng "Chuyển tiếp" dùng luật gộp RIÊNG
       (`transitMerged`, rowSpan=2 CHỈ khi 2 port cùng nhóm có ĐÚNG cùng nội
-      dung — khác hẳn 6 cột kia, không rowSpan theo cả nhóm).
+      dung — khác hẳn các cột kia, không rowSpan theo cả nhóm).
     - `components/odf-device/DeviceRackPortView.tsx` — CHỦ Ý KHÔNG làm: chỉ
       có 1 cột tùy chọn duy nhất ("Ghi chú"), kéo-thả 1 phần tử không có ý
       nghĩa gì để đổi thứ tự.
@@ -4657,3 +4652,49 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     tự mặc định không — thử riêng ở `PortTable.tsx` (rack có luồng ghép 2
     port liền kề) để chắc rowSpan/"Chuyển tiếp" vẫn đúng sau khi kéo cột
     khác qua lại nhiều lần.
+  - **Bổ sung 2026-08-08 (cùng ngày, phản hồi người dùng)** — 2 việc:
+    1. **Bỏ 2 ngoại lệ "cột không kéo-thả được"**: người dùng phản hồi "đã
+       kéo thả thì kéo thả được hết chứ sao chừa lại một vài cột" — cả 2
+       ngoại lệ ban đầu (Sợi/`PortTable.tsx`, Thiết bị/`DeviceCircuitList.tsx`)
+       giờ kéo-thả được như mọi cột khác:
+       - `PortTable.tsx`: `type ReorderableCol = VisibleCol` (bỏ
+         `Exclude<..., "fiber">`), "Sợi" vào thẳng `REORDERABLE_COLUMNS`.
+         `renderCell()` thêm nhánh riêng cho `key === "fiber"` (render trước
+         nhánh `transit`, trước cả gate `idx!==0 → null` chung) — vẫn không
+         rowSpan, đúng bản chất "thuộc tính của port" chứ không đổi. Dòng
+         placeholder "đang được ghép/sửa cùng port..." (khi 1 port của cặp
+         không liền kề đang có form mở ở dòng khác) đổi từ tự vẽ riêng ô Sợi
+         + colSpan phần còn lại → chỉ còn tick+Port rồi colSpan HẾT phần sau
+         (đơn giản hơn, vì Sợi giờ nằm chung dòng `orderedVisible` như mọi
+         cột).
+       - `DeviceCircuitList.tsx`: "Thiết bị" vào thẳng `VisibleCol`/
+         `COLUMN_ITEMS` (đứng đầu danh sách) thay vì tách riêng. Hành vi TỰ
+         ẨN khi đã lọc còn đúng 1 thiết bị (`showDeviceColumn`) **vẫn giữ
+         nguyên** — không phải bỏ tính năng thông minh này, chỉ gộp cách
+         kiểm tra: `effectiveVisible.device = visible.device &&
+         showDeviceColumn` (2 điều kiện cùng đúng — tick người dùng ở Cài đặt
+         cột, mặc định bật, VÀ bộ lọc hiện có nhiều hơn 1 thiết bị). Toàn bộ
+         `orderedVisible`/`columnCount`/`exportColumns` đổi từ dùng `visible`
+         trực tiếp sang `effectiveVisible` để nhất quán.
+    2. **Kéo-thả NGAY TRONG dropdown Cài đặt cột (Gear)**: người dùng: "các
+       cột đánh từ trái sang phải thì trong nút Gear vẫn có thể kéo thả để
+       sắp xếp cột được chỉ khác là từ trên xuống dưới thì tương ứng với từ
+       trái sang phải trong bảng". `ColumnPicker.tsx` thêm 2 prop mới —
+       `order?: K[]` (thứ tự hiện tại, dùng `colOrder` có sẵn từ
+       `useColumnOrder`) và `onReorderColumn?: (dragged, target) => void`
+       (dùng thẳng `moveColumn` có sẵn — CÙNG state với header, không tạo
+       state riêng) — có mặt thì render danh sách checkbox theo ĐÚNG `order`
+       (không phải thứ tự khai báo tĩnh trong `items`) kèm icon kéo
+       `IconGripVertical` đầu mỗi dòng, thả vào dòng khác gọi
+       `onReorderColumn` y hệt cơ chế ở `DataTh.tsx`. Cả 2 optional (mặc
+       định fallback về `items` order, không kéo được) để
+       `DeviceRackPortView.tsx` (không dùng `useColumnOrder`, chỉ 1 cột tùy
+       chọn) không cần đổi gì. Áp dụng `order`/`onReorderColumn` cho 8/9
+       bảng còn lại — 2 cách kéo (ở tiêu đề cột VÀ ở dropdown Gear) dùng
+       chung 1 nguồn `moveColumn`/`colOrder`, luôn đồng bộ.
+    - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test kéo
+      thả bằng chuột thật (không có công cụ trình duyệt) — cần người dùng tự
+      thử kéo "Sợi" sang vị trí khác ở `PortTable.tsx` (rack có luồng ghép 2
+      port liền kề, xác nhận rowSpan/"Chuyển tiếp" vẫn đúng), kéo "Thiết bị"
+      ở `DeviceCircuitList.tsx`, và thử kéo-thả ngay trong dropdown Gear ở ít
+      nhất 1-2 bảng để xác nhận thứ tự đổi đúng đồng bộ với tiêu đề cột.

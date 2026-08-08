@@ -296,13 +296,13 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "notes", label: "Ghi chú" },
 ];
 
-// Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — "Sợi" KHÔNG nằm
-// trong tập kéo-thả được: nó đứng CỐ ĐỊNH giữa "Port" và "Tên luồng" (gắn
-// liền ý nghĩa với "Port" — sợi nào của port đó — không phải 1 thuộc tính
-// rời của luồng như 7 cột còn lại), và không render theo kiểu rowSpan gộp
-// nhóm Tx/Rx như các cột kia (luôn hiện riêng từng port, không gộp).
-type ReorderableCol = Exclude<VisibleCol, "fiber">;
-const REORDERABLE_COLUMNS: ReorderableCol[] = ["linkStatus", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
+// Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — áp dụng cho TOÀN
+// BỘ cột tùy chọn kể cả "Sợi" (trước đây cố định giữa "Port" và "Tên luồng",
+// người dùng phản hồi "đã kéo thả thì kéo thả được hết chứ sao chừa lại một
+// vài cột" — bỏ ngoại lệ). "Sợi" không gộp rowSpan như 7 cột kia (luôn hiện
+// riêng từng port) — renderCell() xử lý riêng case này, xem bên dưới.
+type ReorderableCol = VisibleCol;
+const REORDERABLE_COLUMNS: ReorderableCol[] = ["linkStatus", "fiber", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
 
 // Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
 // architecture.md) — trước đây có 1 bản `Th` viết riêng ở đây, đã gộp vào
@@ -509,9 +509,10 @@ export default function PortTable({
   // (phải tính động vì 7 cột giờ ẩn/hiện được, không còn cố định 10 nữa).
   // Cột luôn hiện: tick, Port, Tên luồng, Thao tác = 4.
   const visibleColCount = 4 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
-  // Dòng "đang được ghép/sửa cùng port..." tự render tick+Port+(Sợi nếu hiện)
-  // làm ô riêng rồi mới colSpan phần còn lại.
-  const restColSpanAfterPortFiber = visibleColCount - 2 - (visible.fiber ? 1 : 0);
+  // Dòng "đang được ghép/sửa cùng port..." tự render tick+Port làm ô riêng
+  // rồi mới colSpan phần còn lại ("Sợi" giờ nằm trong cột tùy chọn kéo-thả
+  // được, không còn cố định ngay sau Port nên không tách riêng nữa).
+  const restColSpanAfterPort = visibleColCount - 2;
 
   // Toàn bộ port đang "dính" vào phiên sửa/tạo hiện tại — gồm portIds gốc +
   // port thứ 2 đang chọn ghép (kể cả khi port đó nằm ở 1 group HIỂN THỊ khác
@@ -1163,6 +1164,8 @@ export default function PortTable({
     switch (key) {
       case "linkStatus":
         return 110;
+      case "fiber":
+        return 56;
       case "interface":
         return 90;
       case "transit":
@@ -1203,6 +1206,8 @@ export default function PortTable({
             filterOptions={MIRROR_LINK_FILTER_OPTIONS}
           />
         );
+      case "fiber":
+        return <DataTh {...common} sortKey="fiber" label="Sợi" filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />;
       case "interface":
         return (
           <DataTh {...common} sortKey="interface" label="Giao tiếp" filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
@@ -1257,6 +1262,15 @@ export default function PortTable({
     ctx: { port: PortView; idx: number; group: Group; circuit: PortView["circuit"]; transitMerged: boolean }
   ) {
     const { port, idx, group, circuit, transitMerged } = ctx;
+    // "Sợi" luôn hiện riêng từng port (không gộp rowSpan như 7 cột kia) —
+    // gắn với port vật lý, không phải thuộc tính của luồng.
+    if (key === "fiber") {
+      return (
+        <td key={key} className="px-3 py-2 text-slate-700">
+          {port.fiberNumber ?? "—"}
+        </td>
+      );
+    }
     if (key === "transit") {
       if (transitMerged) {
         return idx === 0 ? (
@@ -1362,7 +1376,14 @@ export default function PortTable({
             sheetName={`Rack ${currentRackCode || rackId}`}
             fileNamePrefix={`ODF_trung_ke_${currentRackCode || rackId}`}
           />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+          <ColumnPicker
+            items={COLUMN_ITEMS}
+            order={colOrder}
+            visible={visible}
+            onToggle={toggleColumn}
+            onReorderColumn={moveColumn}
+            onResetOrder={resetColOrder}
+          />
         </div>
       </div>
       <CircuitReportPanel items={reportItems} />
@@ -1376,7 +1397,6 @@ export default function PortTable({
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: 56 }} />
-            {visible.fiber && <col style={{ width: 56 }} />}
             <col style={{ width: colWidths.name }} />
             {orderedVisible.map((key) => (
               <col key={key} style={{ width: colWidthOf(key) }} />
@@ -1389,9 +1409,6 @@ export default function PortTable({
                 ✓
               </th>
               <DataTh label="Port" sortKey="port" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
-              {visible.fiber && (
-                <DataTh label="Sợi" sortKey="fiber" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
-              )}
               <DataTh
                 label="Tên luồng"
                 sortKey="name"
@@ -1466,8 +1483,7 @@ export default function PortTable({
                   <tr key={port.id} className="border-t border-slate-100 bg-primary-50/40 text-slate-400 italic">
                     <td className="px-3 py-2" />
                     <td className="px-3 py-2">{port.portNumber}</td>
-                    {visible.fiber && <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>}
-                    <td className="px-3 py-2" colSpan={restColSpanAfterPortFiber}>
+                    <td className="px-3 py-2" colSpan={restColSpanAfterPort}>
                       Đang được ghép/sửa cùng port {primaryPortNumber} ở dòng đang sửa.
                     </td>
                   </tr>
@@ -1479,8 +1495,7 @@ export default function PortTable({
                   <tr key={port.id} className="border-t border-slate-100 bg-amber-50/40 text-slate-400 italic">
                     <td className="px-3 py-2" />
                     <td className="px-3 py-2">{port.portNumber}</td>
-                    {visible.fiber && <td className="px-3 py-2">{port.fiberNumber ?? "—"}</td>}
-                    <td className="px-3 py-2" colSpan={restColSpanAfterPortFiber}>
+                    <td className="px-3 py-2" colSpan={restColSpanAfterPort}>
                       Đang được chuyển tuyến cùng port {primaryPortNumber} ở dòng phía trên.
                     </td>
                   </tr>
@@ -1515,7 +1530,6 @@ export default function PortTable({
                     </td>
                   )}
                   <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
-                  {visible.fiber && <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>}
                   {idx === 0 && (
                     <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
                       {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}

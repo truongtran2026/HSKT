@@ -504,7 +504,14 @@ function TableView({
     <div>
       <div className="mb-2 flex justify-end gap-2">
         <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
-        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+        <ColumnPicker
+          items={COLUMN_ITEMS}
+          order={colOrder}
+          visible={visible}
+          onToggle={toggleColumn}
+          onReorderColumn={moveColumn}
+          onResetOrder={resetColOrder}
+        />
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">

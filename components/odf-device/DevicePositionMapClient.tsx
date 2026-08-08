@@ -703,7 +703,14 @@ export default function DevicePositionMapClient({
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Vị trí thiết bị" fileNamePrefix="Thu_vien_vi_tri_thiet_bi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+          <ColumnPicker
+            items={COLUMN_ITEMS}
+            order={colOrder}
+            visible={visible}
+            onToggle={toggleColumn}
+            onReorderColumn={moveColumn}
+            onResetOrder={resetColOrder}
+          />
         </div>
       </div>
 

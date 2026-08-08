@@ -281,7 +281,14 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm Hồ sơ đấu nối" fileNamePrefix="Tim_kiem_Ho_so_dau_noi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
+          <ColumnPicker
+            items={COLUMN_ITEMS}
+            order={colOrder}
+            visible={visible}
+            onToggle={toggleColumn}
+            onReorderColumn={moveColumn}
+            onResetOrder={resetColOrder}
+          />
         </div>
       </div>
 
