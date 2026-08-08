@@ -5,6 +5,7 @@ import { normalizeVN } from "@/lib/text";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import FilterInput from "@/components/ui/FilterInput";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
@@ -404,6 +405,12 @@ function TableView({
   const filtered = useMemo(() => routes.filter((r) => matchesStatFilters(r, filters)), [routes, filters]);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("dashboard-table-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("dashboard-table-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<VisibleCol>("dashboard-table-col-order", COLUMN_ITEMS.map((c) => c.key));
+  const orderedVisible = colOrder.filter((key) => visible[key]);
 
   const exportColumns = useMemo(() => {
     const cols: { label: string; getValue: (r: RouteStat) => string | number | null }[] = [{ label: "Tuyến cáp", getValue: (r) => r.cableRouteName }];
@@ -416,21 +423,96 @@ function TableView({
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
+  const COL_WIDTH: Record<VisibleCol, number> = { total: 110, inUse: 130, standby: 130, empty: 110, ratio: 192 };
+
+  function renderHeaderCell(key: VisibleCol) {
+    const reorderProps = { reorderKey: key, onReorderColumn: moveColumn } as const;
+    switch (key) {
+      case "total":
+        return (
+          <DataTh key={key} label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} {...reorderProps} />
+        );
+      case "inUse":
+        return (
+          <DataTh
+            key={key}
+            label="Đang dùng"
+            align="right"
+            filterValue={filters.inUse}
+            onFilterChange={(v) => onFilterChange("inUse", v)}
+            {...reorderProps}
+          />
+        );
+      case "standby":
+        return (
+          <DataTh
+            key={key}
+            label="Dự phòng"
+            align="right"
+            filterValue={filters.standby}
+            onFilterChange={(v) => onFilterChange("standby", v)}
+            {...reorderProps}
+          />
+        );
+      case "empty":
+        return (
+          <DataTh key={key} label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} {...reorderProps} />
+        );
+      case "ratio":
+        // Không sort/lọc (chỉ hiện thanh biểu đồ) — vẫn qua DataTh để kéo-thả
+        // được như các cột khác.
+        return <DataTh key={key} label="Tỷ lệ" {...reorderProps} />;
+    }
+  }
+
+  function renderCell(key: VisibleCol, r: RouteStat) {
+    switch (key) {
+      case "total":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {r.total}
+          </td>
+        );
+      case "inUse":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-emerald-600">
+            {r.inUse} ({pct(r.inUse, r.total)}%)
+          </td>
+        );
+      case "standby":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-amber-600">
+            {r.standby} ({pct(r.standby, r.total)}%)
+          </td>
+        );
+      case "empty":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-500">
+            {r.empty} ({pct(r.empty, r.total)}%)
+          </td>
+        );
+      case "ratio":
+        return (
+          <td key={key} className="px-3 py-2">
+            <StackedBar r={r} />
+          </td>
+        );
+    }
+  }
+
   return (
     <div>
       <div className="mb-2 flex justify-end gap-2">
         <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
-        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.route }} />
-            {visible.total && <col style={{ width: 110 }} />}
-            {visible.inUse && <col style={{ width: 130 }} />}
-            {visible.standby && <col style={{ width: 130 }} />}
-            {visible.empty && <col style={{ width: 110 }} />}
-            {visible.ratio && <col style={{ width: 192 }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: COL_WIDTH[key] }} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
             <tr>
@@ -441,42 +523,14 @@ function TableView({
                 filterValue={filters.route}
                 onFilterChange={(v) => onFilterChange("route", v)}
               />
-              {visible.total && <DataTh label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} />}
-              {visible.inUse && (
-                <DataTh label="Đang dùng" align="right" filterValue={filters.inUse} onFilterChange={(v) => onFilterChange("inUse", v)} />
-              )}
-              {visible.standby && (
-                <DataTh label="Dự phòng" align="right" filterValue={filters.standby} onFilterChange={(v) => onFilterChange("standby", v)} />
-              )}
-              {visible.empty && <DataTh label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} />}
-              {visible.ratio && <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top text-left font-semibold">Tỷ lệ</th>}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
             </tr>
           </thead>
           <tbody>
             {filtered.map((r) => (
               <tr key={r.cableRouteName} className="border-t border-slate-100 hover:bg-primary-50/50">
                 <td className="px-3 py-2 text-slate-700 break-words">{r.cableRouteName}</td>
-                {visible.total && <td className="px-3 py-2 text-right text-slate-600">{r.total}</td>}
-                {visible.inUse && (
-                  <td className="px-3 py-2 text-right text-emerald-600">
-                    {r.inUse} ({pct(r.inUse, r.total)}%)
-                  </td>
-                )}
-                {visible.standby && (
-                  <td className="px-3 py-2 text-right text-amber-600">
-                    {r.standby} ({pct(r.standby, r.total)}%)
-                  </td>
-                )}
-                {visible.empty && (
-                  <td className="px-3 py-2 text-right text-slate-500">
-                    {r.empty} ({pct(r.empty, r.total)}%)
-                  </td>
-                )}
-                {visible.ratio && (
-                  <td className="px-3 py-2">
-                    <StackedBar r={r} />
-                  </td>
-                )}
+                {orderedVisible.map((key) => renderCell(key, r))}
               </tr>
             ))}
             {routes.length === 0 && (

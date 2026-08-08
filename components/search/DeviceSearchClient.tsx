@@ -7,6 +7,7 @@ import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import { isStandbyCircuitName } from "@/lib/text";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import DataTh from "@/components/ui/DataTh";
@@ -94,6 +95,12 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-device-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-device-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<VisibleCol>("search-device-col-order", COLUMN_ITEMS.map((c) => c.key));
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     device: "",
     trib: "",
@@ -137,6 +144,95 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
   }, [visible]);
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
+
+  function colWidthOf(key: VisibleCol): number {
+    if (key === "device") return 160;
+    if (key === "trib") return 90;
+    if (key === "positionOwn") return 150;
+    if (key === "positionNext") return colWidths.positionNext;
+    return colWidths.counterpart;
+  }
+
+  function renderHeaderCell(key: VisibleCol) {
+    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+    const common = {
+      key,
+      sortKey: key,
+      activeSortKey: sortKey as VisibleCol,
+      sortDir,
+      onSort: toggleSort as (k: VisibleCol) => void,
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (key) {
+      case "device":
+        return <DataTh {...common} label="Thiết bị" filterValue={filters.device} onFilterChange={(v) => setFilter("device", v)} />;
+      case "trib":
+        return <DataTh {...common} label="Trib" filterValue={filters.trib} onFilterChange={(v) => setFilter("trib", v)} />;
+      case "positionOwn":
+        return (
+          <DataTh {...common} label="Vị trí ODF (thiết bị)" filterValue={filters.positionOwn} onFilterChange={(v) => setFilter("positionOwn", v)} />
+        );
+      case "positionNext":
+        return (
+          <DataTh
+            {...common}
+            label="Vị trí ODF (tiếp theo)"
+            width={colWidths.positionNext}
+            onResize={(w) => resizeCol("positionNext", w)}
+            filterValue={filters.positionNext}
+            onFilterChange={(v) => setFilter("positionNext", v)}
+          />
+        );
+      case "counterpart":
+        return (
+          <DataTh
+            {...common}
+            label="Đối phương"
+            width={colWidths.counterpart}
+            onResize={(w) => resizeCol("counterpart", w)}
+            filterValue={filters.counterpart}
+            onFilterChange={(v) => setFilter("counterpart", v)}
+          />
+        );
+    }
+  }
+
+  function renderCell(key: VisibleCol, r: DeviceCircuitRow) {
+    switch (key) {
+      case "device":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.deviceName ?? "—"}
+          </td>
+        );
+      case "trib":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.tribText ?? "—"}
+          </td>
+        );
+      case "positionOwn":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.devicePositionOwn ?? "—"}
+          </td>
+        );
+      case "positionNext":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.devicePositionNext ?? "—"}
+          </td>
+        );
+      case "counterpart":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.counterpartText ?? "—"}
+          </td>
+        );
+    }
+  }
 
   return (
     <div>
@@ -185,7 +281,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm Hồ sơ đấu nối" fileNamePrefix="Tim_kiem_Ho_so_dau_noi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
 
@@ -194,11 +290,9 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.name }} />
-            {visible.device && <col style={{ width: 160 }} />}
-            {visible.trib && <col style={{ width: 90 }} />}
-            {visible.positionOwn && <col style={{ width: 150 }} />}
-            {visible.positionNext && <col style={{ width: colWidths.positionNext }} />}
-            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: colWidthOf(key) }} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
             <tr>
@@ -211,65 +305,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
-              {visible.device && (
-                <DataTh
-                  label="Thiết bị"
-                  sortKey="device"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.device}
-                  onFilterChange={(v) => setFilter("device", v)}
-                />
-              )}
-              {visible.trib && (
-                <DataTh
-                  label="Trib"
-                  sortKey="trib"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.trib}
-                  onFilterChange={(v) => setFilter("trib", v)}
-                />
-              )}
-              {visible.positionOwn && (
-                <DataTh
-                  label="Vị trí ODF (thiết bị)"
-                  sortKey="positionOwn"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.positionOwn}
-                  onFilterChange={(v) => setFilter("positionOwn", v)}
-                />
-              )}
-              {visible.positionNext && (
-                <DataTh
-                  label="Vị trí ODF (tiếp theo)"
-                  sortKey="positionNext"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.positionNext}
-                  onResize={(w) => resizeCol("positionNext", w)}
-                  filterValue={filters.positionNext}
-                  onFilterChange={(v) => setFilter("positionNext", v)}
-                />
-              )}
-              {visible.counterpart && (
-                <DataTh
-                  label="Đối phương"
-                  sortKey="counterpart"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.counterpart}
-                  onResize={(w) => resizeCol("counterpart", w)}
-                  filterValue={filters.counterpart}
-                  onFilterChange={(v) => setFilter("counterpart", v)}
-                />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
             </tr>
           </thead>
           <tbody>
@@ -280,11 +316,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
                     {r.name}
                   </Link>
                 </td>
-                {visible.device && <td className="px-3 py-2 text-slate-600 break-words">{r.deviceName ?? "—"}</td>}
-                {visible.trib && <td className="px-3 py-2 text-slate-600 break-words">{r.tribText ?? "—"}</td>}
-                {visible.positionOwn && <td className="px-3 py-2 text-slate-600 break-words">{r.devicePositionOwn ?? "—"}</td>}
-                {visible.positionNext && <td className="px-3 py-2 text-slate-600 break-words">{r.devicePositionNext ?? "—"}</td>}
-                {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{r.counterpartText ?? "—"}</td>}
+                {orderedVisible.map((key) => renderCell(key, r))}
               </tr>
             ))}
             {filtered.length === 0 && (

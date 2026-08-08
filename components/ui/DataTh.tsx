@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import type { SortDir } from "@/lib/useSort";
 import FilterInput from "@/components/ui/FilterInput";
 import FilterSelect from "@/components/ui/FilterSelect";
 import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
+import { IconGripVertical } from "@/components/ui/icons";
 
 // Header CHUẨN dùng chung cho MỌI bảng dữ liệu trong app (quy định chung —
 // xem architecture.md) — thay thế SortableTh/ResizableTh CŨ và các bản viết
@@ -19,6 +21,14 @@ import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
 // Fix: nhãn LUÔN 1 dòng + rút gọn bằng "..." (`truncate`, có `title` đầy đủ
 // khi bị cắt) — cột hẹp chỉ ảnh hưởng tới NỘI DUNG bên trong <td> (đã có
 // break-words ở mọi bảng), không bao giờ ảnh hưởng tới chiều cao <th>.
+//
+// Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08, xem lib/useColumnOrder.ts)
+// — CHỈ icon 6-chấm (IconGripVertical) là `draggable`, KHÔNG phải cả <th>:
+// nếu để cả <th> draggable thì việc bấm chọn chữ trong ô lọc/bấm nhãn để sắp
+// xếp dễ bị trình duyệt hiểu nhầm thành bắt đầu kéo. Icon grip chặn
+// `stopPropagation` khi bấm (không phải kéo) để không lỡ kích hoạt sắp xếp
+// của div cha. Toàn bộ <th> vẫn là VÙNG THẢ (onDragOver/onDrop) để dễ nhắm
+// khi thả, không bắt buộc thả trúng đúng icon nhỏ.
 export default function DataTh<K extends string>({
   label,
   align = "left",
@@ -32,6 +42,8 @@ export default function DataTh<K extends string>({
   filterOptions,
   width,
   onResize,
+  reorderKey,
+  onReorderColumn,
   className = "",
 }: {
   label: string;
@@ -49,15 +61,42 @@ export default function DataTh<K extends string>({
   filterOptions?: { value: string; label: string }[];
   width?: number;
   onResize?: (width: number) => void;
+  // Định danh cột này để kéo-thả đổi thứ tự — truyền CÙNG `onReorderColumn`
+  // (từ `useColumnOrder().moveColumn`) thì mới bật kéo-thả cho cột này.
+  reorderKey?: K;
+  onReorderColumn?: (draggedKey: K, targetKey: K) => void;
   className?: string;
 }) {
   const sortable = sortKey !== undefined && !!onSort;
   const active = sortable && activeSortKey === sortKey;
   const filterable = onFilterChange !== undefined;
+  const reorderable = reorderKey !== undefined && !!onReorderColumn;
+  const [dragOver, setDragOver] = useState(false);
 
   return (
     <th
-      className={`sticky top-0 z-10 relative bg-primary-50 px-3 py-2 align-top ${align === "right" ? "text-right" : "text-left"} ${className}`}
+      onDragOver={
+        reorderable
+          ? (e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }
+          : undefined
+      }
+      onDragLeave={reorderable ? () => setDragOver(false) : undefined}
+      onDrop={
+        reorderable
+          ? (e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const draggedKey = e.dataTransfer.getData("text/plain");
+              if (draggedKey && draggedKey !== reorderKey) onReorderColumn!(draggedKey as K, reorderKey!);
+            }
+          : undefined
+      }
+      className={`sticky top-0 z-10 relative bg-primary-50 px-3 py-2 align-top ${align === "right" ? "text-right" : "text-left"} ${
+        dragOver ? "bg-primary-200" : ""
+      } ${className}`}
     >
       <div
         className={`mb-1 flex min-w-0 items-center gap-1 font-semibold ${
@@ -66,6 +105,20 @@ export default function DataTh<K extends string>({
         onClick={sortable ? () => onSort!(sortKey!) : undefined}
         title={sortable ? `${label} — bấm để sắp xếp` : label}
       >
+        {reorderable && (
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", reorderKey!);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="shrink-0 cursor-grab text-primary-300 hover:text-primary-600"
+            title="Kéo để đổi thứ tự cột"
+          >
+            <IconGripVertical className="h-3.5 w-3.5" />
+          </span>
+        )}
         <span className="truncate">{label}</span>
         {sortable && (
           <span className={`shrink-0 text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>

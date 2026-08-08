@@ -17,10 +17,16 @@ export default function ColumnPicker<K extends string>({
   items,
   visible,
   onToggle,
+  onResetOrder,
 }: {
   items: ColumnPickerItem<K>[];
   visible: Record<K, boolean>;
   onToggle: (key: K) => void;
+  // Có mặt thì hiện thêm nút "Đặt lại thứ tự cột" cuối dropdown (yêu cầu
+  // người dùng 2026-08-08, đi kèm tính năng kéo-thả đổi thứ tự — xem
+  // lib/useColumnOrder.ts) — chỗ duy nhất để hoàn tác nếu lỡ kéo sai, không
+  // cần tự kéo tay lại từng cột.
+  onResetOrder?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,6 +75,15 @@ export default function ColumnPicker<K extends string>({
               <span className="truncate">{item.label}</span>
             </label>
           ))}
+          {onResetOrder && (
+            <button
+              type="button"
+              className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-xs text-primary-600 hover:underline"
+              onClick={onResetOrder}
+            >
+              Đặt lại thứ tự cột
+            </button>
+          )}
         </div>
       )}
     </div>

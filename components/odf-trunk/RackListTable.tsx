@@ -8,6 +8,7 @@ import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
@@ -106,6 +107,13 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("code");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("rack-list-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("rack-list-col-visibility", DEFAULT_VISIBLE);
+  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — chỉ áp dụng cho
+  // cột TÙY CHỌN, "Mã rack" luôn giữ đầu bảng (xem lib/useColumnOrder.ts).
+  const { order: colOrder, moveColumn, reset: resetColOrder } = useColumnOrder<VisibleCol>(
+    "rack-list-col-order",
+    COLUMN_ITEMS.map((c) => c.key)
+  );
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [filters, setFilters] = useState<Record<SortKey, string>>({
     code: "",
     route: "",
@@ -145,6 +153,86 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
+  // Cột "Mã rack" (đầu bảng) không nằm trong đây — luôn hiện, không kéo-thả
+  // được (xem lib/useColumnOrder.ts). 6 cột còn lại vẽ ĐÚNG theo `orderedVisible`
+  // (đã lọc ẩn/hiện lẫn thứ tự người dùng đã kéo) thay vì thứ tự cố định cũ.
+  function colWidthOf(key: VisibleCol): number {
+    return key === "route" ? colWidths.route : 90;
+  }
+
+  function renderHeaderCell(key: VisibleCol) {
+    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây — so sánh
+    // "===" bên trong DataTh vẫn đúng dù giá trị thật đang là "code" (không
+    // khớp bất kỳ VisibleCol nào, đơn giản là không tô đậm, không lỗi).
+    const common = {
+      key,
+      sortKey: key,
+      activeSortKey: sortKey as VisibleCol,
+      sortDir,
+      onSort: toggleSort as (k: VisibleCol) => void,
+      filterValue: filters[key],
+      onFilterChange: (v: string) => setFilter(key, v),
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (key) {
+      case "route":
+        return <DataTh {...common} label="Tuyến cáp" width={colWidths.route} onResize={(w) => resizeCol("route", w)} />;
+      case "odfType":
+        return <DataTh {...common} label="Loại ODF" />;
+      case "portCount":
+        return <DataTh {...common} label="Số port" align="right" />;
+      case "inUse":
+        return <DataTh {...common} label="Đang dùng" align="right" />;
+      case "standby":
+        return <DataTh {...common} label="Dự phòng" align="right" />;
+      case "empty":
+        return <DataTh {...common} label="Trống" align="right" />;
+    }
+  }
+
+  function renderCell(key: VisibleCol, rack: RackListItem) {
+    switch (key) {
+      case "route":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {rack.cableRouteName}
+          </td>
+        );
+      case "odfType":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600">
+            {odfTypeLabel(rack.odfType)}
+          </td>
+        );
+      case "portCount":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {rack.portCount}
+          </td>
+        );
+      case "inUse":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {rack.inUsePorts}
+          </td>
+        );
+      case "standby":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {rack.standbyPorts}
+          </td>
+        );
+      case "empty":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {emptyPortsOf(rack)}
+          </td>
+        );
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
@@ -162,7 +250,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Rack" fileNamePrefix="Danh_sach_rack" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
 
@@ -170,12 +258,9 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 120 }} />
-            {visible.route && <col style={{ width: colWidths.route }} />}
-            {visible.odfType && <col style={{ width: 110 }} />}
-            {visible.portCount && <col style={{ width: 90 }} />}
-            {visible.inUse && <col style={{ width: 90 }} />}
-            {visible.standby && <col style={{ width: 90 }} />}
-            {visible.empty && <col style={{ width: 90 }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: colWidthOf(key) }} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
             <tr>
@@ -188,78 +273,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
                 filterValue={filters.code}
                 onFilterChange={(v) => setFilter("code", v)}
               />
-              {visible.route && (
-                <DataTh
-                  label="Tuyến cáp"
-                  sortKey="route"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.route}
-                  onResize={(w) => resizeCol("route", w)}
-                  filterValue={filters.route}
-                  onFilterChange={(v) => setFilter("route", v)}
-                />
-              )}
-              {visible.odfType && (
-                <DataTh
-                  label="Loại ODF"
-                  sortKey="odfType"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.odfType}
-                  onFilterChange={(v) => setFilter("odfType", v)}
-                />
-              )}
-              {visible.portCount && (
-                <DataTh
-                  label="Số port"
-                  sortKey="portCount"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.portCount}
-                  onFilterChange={(v) => setFilter("portCount", v)}
-                />
-              )}
-              {visible.inUse && (
-                <DataTh
-                  label="Đang dùng"
-                  sortKey="inUse"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.inUse}
-                  onFilterChange={(v) => setFilter("inUse", v)}
-                />
-              )}
-              {visible.standby && (
-                <DataTh
-                  label="Dự phòng"
-                  sortKey="standby"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.standby}
-                  onFilterChange={(v) => setFilter("standby", v)}
-                />
-              )}
-              {visible.empty && (
-                <DataTh
-                  label="Trống"
-                  sortKey="empty"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.empty}
-                  onFilterChange={(v) => setFilter("empty", v)}
-                />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
             </tr>
           </thead>
           <tbody>
@@ -270,12 +284,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
                     {formatRackCodeDisplay(rack.code)}
                   </Link>
                 </td>
-                {visible.route && <td className="px-3 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>}
-                {visible.odfType && <td className="px-3 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>}
-                {visible.portCount && <td className="px-3 py-2 text-right text-slate-600">{rack.portCount}</td>}
-                {visible.inUse && <td className="px-3 py-2 text-right text-slate-600">{rack.inUsePorts}</td>}
-                {visible.standby && <td className="px-3 py-2 text-right text-slate-600">{rack.standbyPorts}</td>}
-                {visible.empty && <td className="px-3 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>}
+                {orderedVisible.map((key) => renderCell(key, rack))}
               </tr>
             ))}
             {filtered.length === 0 && (

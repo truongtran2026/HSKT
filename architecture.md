@@ -4588,3 +4588,72 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   Riêng cột xuất Excel vẫn giữ chữ người đọc được ("Đã liên kết"/"Chưa liên
   kết", qua `mirrorLinkStatusLabel()` — không đổi, khác mục đích với khóa lọc
   UI). Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch.
+
+- **Mục 82 (2026-08-08) — Kéo-thả đổi thứ tự cột cho CẢ 9 bảng dữ liệu.**
+  Người dùng: "table view cho phép sắp xếp các cột không theo tuần tự hiện
+  tại, có thể kéo cột này ra trước cột kia ra sau" — chọn làm tất cả 9 bảng
+  cùng lúc (không làm thử 1-2 bảng trước).
+
+  - **Hạ tầng dùng chung** (áp dụng quy định chung mọi bảng, giống
+    `useColumnVisibility`/`useColumnWidths`):
+    - `lib/useColumnOrder.ts` (mới) — `useColumnOrder(storageKey, defaultOrder):
+      {order, moveColumn, reset}`, nhớ thứ tự qua localStorage (lazy init
+      giống 2 hook kia). `moveColumn(dragged, target)` chèn `dragged` vào
+      NGAY TRƯỚC `target`. Khi tải lại thứ tự đã lưu: lọc bỏ key không còn
+      tồn tại + tự thêm key MỚI (cột thêm sau này) vào cuối — không bao giờ
+      mất cột dù đổi code sau khi người dùng đã lưu thứ tự cũ.
+    - `components/ui/DataTh.tsx` — thêm `reorderKey?`/`onReorderColumn?`.
+      CHỈ icon 6-chấm mới `draggable` (không phải cả `<th>`) để không đụng
+      vùng click-sort/gõ ô lọc/kéo resize đã có; `<th>` là vùng THẢ
+      (`onDragOver`/`onDrop`, tô `bg-primary-200` khi đang kéo qua) — dễ
+      nhắm hơn nhiều so với chỉ được thả trúng icon nhỏ. Icon mới
+      `IconGripVertical` (`components/ui/icons.tsx`).
+    - `components/ui/ColumnPicker.tsx` — thêm prop `onResetOrder?`, có thì
+      hiện nút "Đặt lại thứ tự cột" cuối dropdown (chỗ hoàn tác nếu lỡ kéo
+      sai, không phải tự kéo tay lại từng cột).
+  - **Áp dụng cho 8/9 bảng** (mỗi bảng: hook `useColumnOrder` lấy đúng tập
+    `VisibleCol`/`COLUMN_ITEMS` đã có sẵn làm `defaultOrder`, thêm
+    `orderedVisible = order.filter(k => visible[k])`, viết lại
+    `<colgroup>`/hàng tiêu đề/hàng dữ liệu từ "liệt kê cứng từng cột theo
+    thứ tự cố định trong JSX" sang "map qua `orderedVisible`" — đổi kiến
+    trúc bắt buộc phải làm mới kéo-thả được, không có cách thêm tính năng
+    này mà giữ nguyên JSX cũ):
+    `RackListTable.tsx`, `DashboardClient.tsx` (TableView), `SearchClient.tsx`,
+    `DeviceSearchClient.tsx`, `DevicePositionMapClient.tsx`,
+    `DeviceCategoryClient.tsx`, `DeviceCircuitList.tsx`, `PortTable.tsx`.
+    - `DeviceCircuitList.tsx`: cột "Thiết bị" KHÔNG kéo-thả được (ẩn/hiện
+      theo `showDeviceColumn` tự động, không qua `ColumnPicker` — giữ CỐ
+      ĐỊNH ngay sau "Tên luồng", trước 7 cột còn lại trong `COLUMN_ITEMS`).
+    - `PortTable.tsx` (phức tạp nhất — nhóm port Tx/Rx rowSpan): "Sợi"
+      KHÔNG kéo-thả được (đứng cố định giữa "Port" và "Tên luồng", không
+      rowSpan gộp như 7 cột kia — gắn với TỪNG port, không phải thuộc tính
+      của luồng) — tách riêng `type ReorderableCol = Exclude<VisibleCol,
+      "fiber">`. `renderCell(key, {port, idx, group, circuit,
+      transitMerged})` xử lý ĐÚNG 2 kiểu rowSpan khác nhau trong cùng 1 hàm:
+      6/7 cột dùng `idx===0 → rowSpan={group.ports.length}, else → null`
+      (rowSpan đã che dòng dưới); riêng "Chuyển tiếp" dùng luật gộp RIÊNG
+      (`transitMerged`, rowSpan=2 CHỈ khi 2 port cùng nhóm có ĐÚNG cùng nội
+      dung — khác hẳn 6 cột kia, không rowSpan theo cả nhóm).
+    - `components/odf-device/DeviceRackPortView.tsx` — CHỦ Ý KHÔNG làm: chỉ
+      có 1 cột tùy chọn duy nhất ("Ghi chú"), kéo-thả 1 phần tử không có ý
+      nghĩa gì để đổi thứ tự.
+  - Xuất Excel KHÔNG theo thứ tự đã kéo — luôn theo đúng thứ tự cố định
+    trong `COLUMN_ITEMS`/`exportColumns` (đơn giản hơn, nhất quán ở mọi
+    bảng — không bảng nào trước đó làm export theo thứ tự cột trên màn
+    hình, không đổi hành vi này riêng cho tính năng mới).
+  - Ép kiểu `activeSortKey`/`onSort` sang đúng kiểu cột tùy chọn (thay vì
+    kiểu `SortKey` rộng hơn bao gồm cả cột luôn hiện như "code"/"name") ở
+    MỌI file — cần thiết để TypeScript suy luận đúng generic `K` cho
+    `<DataTh>` khi dùng props rải rác qua object `common` — an toàn vì so
+    sánh `===` bên trong `DataTh` không lỗi dù giá trị thật không khớp bất
+    kỳ khóa nào (chỉ đơn giản không tô đậm mũi tên sắp xếp).
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch sau mỗi bảng (làm
+    tuần tự, bảng dễ trước — `RackListTable.tsx` làm thử nghiệm cách trước,
+    xác nhận đúng rồi mới áp dụng lặp lại cho 7 bảng còn lại). Chưa test kéo
+    thả bằng chuột thật (không có công cụ trình duyệt trong môi trường này)
+    — cần người dùng tự thử: kéo icon 6-chấm cạnh tên cột sang cột khác, xem
+    có đổi đúng vị trí không, tải lại trang xem có nhớ đúng thứ tự đã kéo,
+    bấm "Đặt lại thứ tự cột" trong dropdown Cài đặt cột xem có về đúng thứ
+    tự mặc định không — thử riêng ở `PortTable.tsx` (rack có luồng ghép 2
+    port liền kề) để chắc rowSpan/"Chuyển tiếp" vẫn đúng sau khi kéo cột
+    khác qua lại nhiều lần.

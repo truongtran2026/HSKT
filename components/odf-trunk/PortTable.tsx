@@ -21,6 +21,7 @@ import {
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import { buildTrunkPortReportText } from "@/lib/circuitReportText";
 import type { CircuitOptions } from "@/lib/circuitOptions";
 import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
@@ -295,6 +296,14 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "notes", label: "Ghi chú" },
 ];
 
+// Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — "Sợi" KHÔNG nằm
+// trong tập kéo-thả được: nó đứng CỐ ĐỊNH giữa "Port" và "Tên luồng" (gắn
+// liền ý nghĩa với "Port" — sợi nào của port đó — không phải 1 thuộc tính
+// rời của luồng như 7 cột còn lại), và không render theo kiểu rowSpan gộp
+// nhóm Tx/Rx như các cột kia (luôn hiện riêng từng port, không gộp).
+type ReorderableCol = Exclude<VisibleCol, "fiber">;
+const REORDERABLE_COLUMNS: ReorderableCol[] = ["linkStatus", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
+
 // Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
 // architecture.md) — trước đây có 1 bản `Th` viết riêng ở đây, đã gộp vào
 // DataTh dùng chung với DeviceCircuitList.tsx và các bảng khác.
@@ -400,6 +409,12 @@ export default function PortTable({
   }, []);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("odf-trunk-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("odf-trunk-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<ReorderableCol>("odf-trunk-col-order", REORDERABLE_COLUMNS);
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
   // Tick chọn luồng để sinh đoạn text báo cáo (yêu cầu người dùng 2026-08-07)
   // — khóa theo circuit.id (không theo port), nên 1 luồng chiếm 2 port không
@@ -1144,6 +1159,160 @@ export default function PortTable({
     }
   }
 
+  function colWidthOf(key: ReorderableCol): number {
+    switch (key) {
+      case "linkStatus":
+        return 110;
+      case "interface":
+        return 90;
+      case "transit":
+        return colWidths.transit;
+      case "counterpart":
+        return 170;
+      case "responsePlan":
+        return colWidths.responsePlan;
+      case "station":
+        return 120;
+      case "notes":
+        return 170;
+    }
+  }
+
+  function renderHeaderCell(key: ReorderableCol) {
+    // `activeSortKey` ép kiểu ReorderableCol (thay vì SortKey rộng hơn) chỉ
+    // để TypeScript suy luận đúng K cho <DataTh> ở đây. "transit" không có
+    // sortKey (2 port cùng nhóm có thể khác nội dung, không có 1 giá trị đại
+    // diện để sắp xếp — xem comment groupValue() ở đầu file).
+    const common = {
+      key,
+      activeSortKey: sortKey as ReorderableCol,
+      sortDir,
+      onSort: toggleSort as (k: ReorderableCol) => void,
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (key) {
+      case "linkStatus":
+        return (
+          <DataTh
+            {...common}
+            sortKey="linkStatus"
+            label="Trạng thái"
+            filterValue={filters.linkStatus}
+            onFilterChange={(v) => setFilter("linkStatus", v)}
+            filterOptions={MIRROR_LINK_FILTER_OPTIONS}
+          />
+        );
+      case "interface":
+        return (
+          <DataTh {...common} sortKey="interface" label="Giao tiếp" filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
+        );
+      case "transit":
+        return (
+          <DataTh
+            {...common}
+            sortKey={undefined}
+            label="Chuyển tiếp"
+            width={colWidths.transit}
+            onResize={(w) => resizeCol("transit", w)}
+            filterValue={filters.transit}
+            onFilterChange={(v) => setFilter("transit", v)}
+          />
+        );
+      case "counterpart":
+        return (
+          <DataTh
+            {...common}
+            sortKey="counterpart"
+            label="Đối phương"
+            filterValue={filters.counterpart}
+            onFilterChange={(v) => setFilter("counterpart", v)}
+          />
+        );
+      case "responsePlan":
+        return (
+          <DataTh
+            {...common}
+            sortKey="responsePlan"
+            label="PA ứng cứu"
+            width={colWidths.responsePlan}
+            onResize={(w) => resizeCol("responsePlan", w)}
+            filterValue={filters.responsePlan}
+            onFilterChange={(v) => setFilter("responsePlan", v)}
+          />
+        );
+      case "station":
+        return <DataTh {...common} sortKey="station" label="Trạm thực hiện" filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />;
+      case "notes":
+        return <DataTh {...common} sortKey="notes" label="Ghi chú" filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />;
+    }
+  }
+
+  // Vẽ 1 ô dữ liệu của nhóm port (Tx/Rx gộp rowspan) theo ĐÚNG cột đang kéo
+  // tới vị trí này — hầu hết cột gộp rowSpan={group.ports.length} (chỉ vẽ ở
+  // idx===0, trả về null ở dòng thứ 2 vì rowSpan đã che phủ sẵn), RIÊNG
+  // "transit" có luật gộp khác (transitMerged, xem groupValue phía trên).
+  function renderCell(
+    key: ReorderableCol,
+    ctx: { port: PortView; idx: number; group: Group; circuit: PortView["circuit"]; transitMerged: boolean }
+  ) {
+    const { port, idx, group, circuit, transitMerged } = ctx;
+    if (key === "transit") {
+      if (transitMerged) {
+        return idx === 0 ? (
+          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
+            {transitDisplayByPortId.get(group.ports[0].id) ?? ""}
+          </td>
+        ) : null;
+      }
+      return (
+        <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
+          {transitDisplayByPortId.get(port.id) ?? ""}
+        </td>
+      );
+    }
+    if (idx !== 0) return null; // rowSpan ở dòng đầu đã che phủ dòng này.
+    const rowSpan = group.ports.length;
+    switch (key) {
+      case "linkStatus":
+        return (
+          <td key={key} className="px-3 py-2 text-xs" rowSpan={rowSpan}>
+            {circuit && <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />}
+          </td>
+        );
+      case "interface":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
+            {circuit?.interfaceType ?? ""}
+          </td>
+        );
+      case "counterpart":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+            {circuit?.counterpartText ?? ""}
+          </td>
+        );
+      case "responsePlan":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+            {circuit?.responsePlanText ?? ""}
+          </td>
+        );
+      case "station":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
+            {circuit?.executionStationText ?? ""}
+          </td>
+        );
+      case "notes":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+            {circuit?.notes ?? ""}
+          </td>
+        );
+    }
+  }
+
   return (
     <div>
       {error && <div className="mb-3 rounded-md bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">Lỗi: {error}</div>}
@@ -1193,7 +1362,7 @@ export default function PortTable({
             sheetName={`Rack ${currentRackCode || rackId}`}
             fileNamePrefix={`ODF_trung_ke_${currentRackCode || rackId}`}
           />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
       <CircuitReportPanel items={reportItems} />
@@ -1209,13 +1378,9 @@ export default function PortTable({
             <col style={{ width: 56 }} />
             {visible.fiber && <col style={{ width: 56 }} />}
             <col style={{ width: colWidths.name }} />
-            {visible.linkStatus && <col style={{ width: 110 }} />}
-            {visible.interface && <col style={{ width: 90 }} />}
-            {visible.transit && <col style={{ width: colWidths.transit }} />}
-            {visible.counterpart && <col style={{ width: 170 }} />}
-            {visible.responsePlan && <col style={{ width: colWidths.responsePlan }} />}
-            {visible.station && <col style={{ width: 120 }} />}
-            {visible.notes && <col style={{ width: 170 }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: colWidthOf(key) }} />
+            ))}
             <col style={{ width: 200 }} />
           </colgroup>
           <thead className="text-primary-800">
@@ -1238,52 +1403,7 @@ export default function PortTable({
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
               />
-              {visible.linkStatus && (
-                <DataTh
-                  label="Trạng thái"
-                  sortKey="linkStatus"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.linkStatus}
-                  onFilterChange={(v) => setFilter("linkStatus", v)}
-                  filterOptions={MIRROR_LINK_FILTER_OPTIONS}
-                />
-              )}
-              {visible.interface && (
-                <DataTh label="Giao tiếp" sortKey="interface" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
-              )}
-              {visible.transit && (
-                <DataTh
-                  label="Chuyển tiếp"
-                  width={colWidths.transit}
-                  onResize={(w) => resizeCol("transit", w)}
-                  filterValue={filters.transit}
-                  onFilterChange={(v) => setFilter("transit", v)}
-                />
-              )}
-              {visible.counterpart && (
-                <DataTh label="Đối phương" sortKey="counterpart" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
-              )}
-              {visible.responsePlan && (
-                <DataTh
-                  label="PA ứng cứu"
-                  sortKey="responsePlan"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.responsePlan}
-                  onResize={(w) => resizeCol("responsePlan", w)}
-                  filterValue={filters.responsePlan}
-                  onFilterChange={(v) => setFilter("responsePlan", v)}
-                />
-              )}
-              {visible.station && (
-                <DataTh label="Trạm thực hiện" sortKey="station" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
-              )}
-              {visible.notes && (
-                <DataTh label="Ghi chú" sortKey="notes" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
@@ -1401,48 +1521,7 @@ export default function PortTable({
                       {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
                     </td>
                   )}
-                  {visible.linkStatus && idx === 0 && (
-                    <td className="px-3 py-2 text-xs" rowSpan={group.ports.length}>
-                      {circuit && <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />}
-                    </td>
-                  )}
-                  {visible.interface && idx === 0 && (
-                    <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
-                      {circuit?.interfaceType ?? ""}
-                    </td>
-                  )}
-                  {visible.transit &&
-                    (transitMerged ? (
-                      idx === 0 && (
-                        <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
-                          {transitDisplayByPortId.get(group.ports[0].id) ?? ""}
-                        </td>
-                      )
-                    ) : (
-                      <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
-                        {transitDisplayByPortId.get(port.id) ?? ""}
-                      </td>
-                    ))}
-                  {visible.counterpart && idx === 0 && (
-                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
-                      {circuit?.counterpartText ?? ""}
-                    </td>
-                  )}
-                  {visible.responsePlan && idx === 0 && (
-                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
-                      {circuit?.responsePlanText ?? ""}
-                    </td>
-                  )}
-                  {visible.station && idx === 0 && (
-                    <td className="px-3 py-2 text-slate-600" rowSpan={group.ports.length}>
-                      {circuit?.executionStationText ?? ""}
-                    </td>
-                  )}
-                  {visible.notes && idx === 0 && (
-                    <td className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={group.ports.length}>
-                      {circuit?.notes ?? ""}
-                    </td>
-                  )}
+                  {orderedVisible.map((key) => renderCell(key, { port, idx, group, circuit, transitMerged }))}
                   {idx === 0 && (
                     <td className="px-3 py-2" rowSpan={group.ports.length}>
                       <div className="flex flex-wrap gap-2">

@@ -27,6 +27,7 @@ import {
 } from "@/lib/trunkPorts";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import { buildDeviceCircuitReportText } from "@/lib/circuitReportText";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
@@ -325,6 +326,12 @@ export default function DeviceCircuitList({
     DEFAULT_COL_WIDTHS
   );
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-circuit-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<VisibleCol>("device-circuit-col-order", COLUMN_ITEMS.map((c) => c.key));
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
@@ -1871,6 +1878,119 @@ export default function DeviceCircuitList({
     );
   }
 
+  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — CHỈ áp dụng cho
+  // 7 cột trong VisibleCol/COLUMN_ITEMS. "Thiết bị" KHÔNG kéo-thả được (ẩn/
+  // hiện theo showDeviceColumn tự động, không qua ColumnPicker — xem comment
+  // ở khai báo VisibleCol) — giữ CỐ ĐỊNH ngay sau "Tên luồng", trước mọi cột
+  // tùy chọn khác.
+  function colWidthOf(key: VisibleCol): number {
+    switch (key) {
+      case "linkStatus":
+        return 110;
+      case "trib":
+        return 110;
+      case "interface":
+        return 90;
+      case "positionOwn":
+        return colWidths.positionOwn;
+      case "positionNext":
+        return colWidths.positionNext;
+      case "counterpart":
+        return colWidths.counterpart;
+      case "notes":
+        return colWidths.notes;
+    }
+  }
+
+  function renderHeaderCell(key: VisibleCol) {
+    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+    const common = {
+      key,
+      sortKey: key,
+      activeSortKey: sortKey as VisibleCol,
+      sortDir,
+      onSort: toggleSort as (k: VisibleCol) => void,
+      filterValue: filters[key],
+      onFilterChange: (v: string) => setFilter(key, v),
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (key) {
+      case "linkStatus":
+        return <DataTh {...common} label="Trạng thái" filterOptions={MIRROR_LINK_FILTER_OPTIONS} />;
+      case "trib":
+        return <DataTh {...common} label="Trib" />;
+      case "positionOwn":
+        return <DataTh {...common} width={colWidths.positionOwn} onResize={(w) => resizeCol("positionOwn", w)} label="Vị trí ODF (thiết bị)" />;
+      case "positionNext":
+        return <DataTh {...common} width={colWidths.positionNext} onResize={(w) => resizeCol("positionNext", w)} label="Vị trí ODF (tiếp theo)" />;
+      case "interface":
+        return <DataTh {...common} label="Giao tiếp" />;
+      case "counterpart":
+        return <DataTh {...common} width={colWidths.counterpart} onResize={(w) => resizeCol("counterpart", w)} label="Đối phương" />;
+      case "notes":
+        return <DataTh {...common} width={colWidths.notes} onResize={(w) => resizeCol("notes", w)} label="Ghi chú" />;
+    }
+  }
+
+  function renderCell(key: VisibleCol, c: DeviceCircuitRow) {
+    switch (key) {
+      case "linkStatus":
+        return (
+          <td key={key} className="px-3 py-2 text-xs">
+            <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
+          </td>
+        );
+      case "trib":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {c.tribText ?? "—"}
+          </td>
+        );
+      case "positionOwn": {
+        const conflictKeys = conflictKeysByCircuit.get(c.id);
+        const ownConflict = !!(conflictKeys && c.devicePositionOwn && conflictKeys.has(normalizeDevicePositionKey(c.devicePositionOwn)));
+        return (
+          <td key={key} className={`px-3 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+            {c.devicePositionOwn ?? "—"}
+            {ownConflict && (
+              <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
+                Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
+              </div>
+            )}
+          </td>
+        );
+      }
+      case "positionNext":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {positionNextDisplayById.get(c.id) ?? "—"}
+          </td>
+        );
+      case "interface":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {c.interfaceType ?? "—"}
+          </td>
+        );
+      case "counterpart":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {c.counterpartText ?? "—"}
+          </td>
+        );
+      case "notes":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-500 max-w-xs">
+            <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
+              {c.notes ?? "—"}
+            </div>
+          </td>
+        );
+    }
+  }
+
   return (
     <div>
       {error && <p className="mb-2 text-sm text-red-600">Lỗi: {error}</p>}
@@ -2284,7 +2404,7 @@ export default function DeviceCircuitList({
             Lịch sử tra cứu
           </button>
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Hồ sơ đấu nối" fileNamePrefix="Ho_so_dau_noi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
 
@@ -2308,14 +2428,10 @@ export default function DeviceCircuitList({
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: colWidths.name }} />
-            {visible.linkStatus && <col style={{ width: 110 }} />}
-            {visible.trib && <col style={{ width: 110 }} />}
             {showDeviceColumn && <col style={{ width: colWidths.device }} />}
-            {visible.positionOwn && <col style={{ width: colWidths.positionOwn }} />}
-            {visible.positionNext && <col style={{ width: colWidths.positionNext }} />}
-            {visible.interface && <col style={{ width: 90 }} />}
-            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
-            {visible.notes && <col style={{ width: colWidths.notes }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: colWidthOf(key) }} />
+            ))}
             <col style={{ width: 130 }} />
           </colgroup>
           <thead className="text-primary-800">
@@ -2339,29 +2455,6 @@ export default function DeviceCircuitList({
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
-              {visible.linkStatus && (
-                <DataTh
-                  label="Trạng thái"
-                  sortKey="linkStatus"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.linkStatus}
-                  onFilterChange={(v) => setFilter("linkStatus", v)}
-                  filterOptions={MIRROR_LINK_FILTER_OPTIONS}
-                />
-              )}
-              {visible.trib && (
-                <DataTh
-                  label="Trib"
-                  sortKey="trib"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.trib}
-                  onFilterChange={(v) => setFilter("trib", v)}
-                />
-              )}
               {showDeviceColumn && (
                 <DataTh
                   label="Thiết bị"
@@ -2375,65 +2468,7 @@ export default function DeviceCircuitList({
                   onResize={(w) => resizeCol("device", w)}
                 />
               )}
-              {visible.positionOwn && (
-                <DataTh
-                  label="Vị trí ODF (thiết bị)"
-                  sortKey="positionOwn"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.positionOwn}
-                  onFilterChange={(v) => setFilter("positionOwn", v)}
-                  width={colWidths.positionOwn}
-                  onResize={(w) => resizeCol("positionOwn", w)}
-                />
-              )}
-              {visible.positionNext && (
-                <DataTh
-                  label="Vị trí ODF (tiếp theo)"
-                  sortKey="positionNext"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.positionNext}
-                  onFilterChange={(v) => setFilter("positionNext", v)}
-                  width={colWidths.positionNext}
-                  onResize={(w) => resizeCol("positionNext", w)}
-                />
-              )}
-              {visible.interface && (
-                <DataTh
-                  label="Giao tiếp"
-                  sortKey="interface"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.interface}
-                  onFilterChange={(v) => setFilter("interface", v)}
-                />
-              )}
-              {visible.counterpart && (
-                <DataTh
-                  label="Đối phương"
-                  sortKey="counterpart"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.counterpart}
-                  onFilterChange={(v) => setFilter("counterpart", v)}
-                  width={colWidths.counterpart}
-                  onResize={(w) => resizeCol("counterpart", w)}
-                />
-              )}
-              {visible.notes && (
-                <DataTh
-                  label="Ghi chú"
-                  filterValue={filters.notes}
-                  onFilterChange={(v) => setFilter("notes", v)}
-                  width={colWidths.notes}
-                  onResize={(w) => resizeCol("notes", w)}
-                />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
@@ -2473,12 +2508,6 @@ export default function DeviceCircuitList({
                     {displayName(c) || "—"}
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
-                  {visible.linkStatus && (
-                    <td className="px-3 py-2 text-xs">
-                      <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
-                    </td>
-                  )}
-                  {visible.trib && <td className="px-3 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>}
                   {showDeviceColumn && (
                     <td className="px-3 py-2 text-slate-600 break-words">
                       {c.deviceName ?? "(chưa xác định)"}
@@ -2489,26 +2518,7 @@ export default function DeviceCircuitList({
                       )}
                     </td>
                   )}
-                  {visible.positionOwn && (
-                    <td className={`px-3 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
-                      {c.devicePositionOwn ?? "—"}
-                      {ownConflict && (
-                        <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
-                          Trùng với: {othersForPosition(c.id, c.devicePositionOwn).join(", ")}
-                        </div>
-                      )}
-                    </td>
-                  )}
-                  {visible.positionNext && <td className="px-3 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>}
-                  {visible.interface && <td className="px-3 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>}
-                  {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>}
-                  {visible.notes && (
-                    <td className="px-3 py-2 text-slate-500 max-w-xs">
-                      <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
-                        {c.notes ?? "—"}
-                      </div>
-                    </td>
-                  )}
+                  {orderedVisible.map((key) => renderCell(key, c))}
                   <td className="px-3 py-2">
                     <div className="flex gap-2">
                       {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC

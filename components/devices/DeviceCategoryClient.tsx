@@ -16,6 +16,7 @@ import { formatLastUpdated } from "@/lib/format";
 import { translatePgError } from "@/lib/translatePgError";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
@@ -112,6 +113,12 @@ export default function DeviceCategoryClient({
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("device-category-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-category-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<VisibleCol>("device-category-col-order", COLUMN_ITEMS.map((c) => c.key));
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
   // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả", cùng cơ chế đã
@@ -507,6 +514,38 @@ export default function DeviceCategoryClient({
     }
   }
 
+  function renderHeaderCell(key: VisibleCol) {
+    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+    const common = {
+      key,
+      sortKey: key,
+      activeSortKey: sortKey as VisibleCol,
+      sortDir,
+      onSort: toggleSort as (k: VisibleCol) => void,
+      filterValue: filters[key],
+      onFilterChange: (v: string) => setFilter(key, v),
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    return <DataTh {...common} label={key === "category" ? "Lĩnh vực" : "Nguồn"} />;
+  }
+
+  function renderCell(key: VisibleCol, d: DeviceRow) {
+    if (key === "category") {
+      return (
+        <td key={key} className="px-3 py-2 text-slate-600">
+          {deviceCategoryLabel(d.category)}
+        </td>
+      );
+    }
+    return (
+      <td key={key} className="px-3 py-2 text-slate-500">
+        {SOURCE_LABEL[d.source]}
+      </td>
+    );
+  }
+
   return (
     <div>
       {error && <p className="mb-2 text-sm text-red-600">Lỗi: {error}</p>}
@@ -680,7 +719,7 @@ export default function DeviceCategoryClient({
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Danh mục thiết bị" fileNamePrefix="Danh_muc_thiet_bi" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
 
@@ -757,8 +796,9 @@ export default function DeviceCategoryClient({
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: colWidths.name }} />
-            {visible.category && <col style={{ width: 140 }} />}
-            {visible.source && <col style={{ width: 100 }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: key === "category" ? 140 : 100 }} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
             <tr>
@@ -781,28 +821,7 @@ export default function DeviceCategoryClient({
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
               />
-              {visible.category && (
-                <DataTh
-                  label="Lĩnh vực"
-                  sortKey="category"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.category}
-                  onFilterChange={(v) => setFilter("category", v)}
-                />
-              )}
-              {visible.source && (
-                <DataTh
-                  label="Nguồn"
-                  sortKey="source"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  filterValue={filters.source}
-                  onFilterChange={(v) => setFilter("source", v)}
-                />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
             </tr>
           </thead>
           <tbody>
@@ -818,8 +837,7 @@ export default function DeviceCategoryClient({
                   {d.name}
                   <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
                 </td>
-                {visible.category && <td className="px-3 py-2 text-slate-600">{deviceCategoryLabel(d.category)}</td>}
-                {visible.source && <td className="px-3 py-2 text-slate-500">{SOURCE_LABEL[d.source]}</td>}
+                {orderedVisible.map((key) => renderCell(key, d))}
               </tr>
             ))}
             {filtered.length === 0 && (

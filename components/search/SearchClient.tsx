@@ -8,6 +8,7 @@ import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
@@ -111,6 +112,12 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("rack");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-trunk-col-visibility", DEFAULT_VISIBLE);
+  const {
+    order: colOrder,
+    moveColumn,
+    reset: resetColOrder,
+  } = useColumnOrder<VisibleCol>("search-trunk-col-order", COLUMN_ITEMS.map((c) => c.key));
+  const orderedVisible = colOrder.filter((key) => visible[key]);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     route: "",
     port: "",
@@ -160,6 +167,117 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   }, [visible]);
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
+
+  function colWidthOf(key: VisibleCol): number {
+    if (key === "route") return colWidths.route;
+    if (key === "name") return colWidths.name;
+    if (key === "counterpart") return colWidths.counterpart;
+    if (key === "status") return 110;
+    return 70; // port/fiber
+  }
+
+  function renderHeaderCell(key: VisibleCol) {
+    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+    const common = {
+      key,
+      sortKey: key,
+      activeSortKey: sortKey as VisibleCol,
+      sortDir,
+      onSort: toggleSort as (k: VisibleCol) => void,
+      reorderKey: key,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (key) {
+      case "route":
+        return (
+          <DataTh
+            {...common}
+            label="Tuyến cáp"
+            width={colWidths.route}
+            onResize={(w) => resizeCol("route", w)}
+            filterValue={filters.route}
+            onFilterChange={(v) => setFilter("route", v)}
+          />
+        );
+      case "port":
+        return <DataTh {...common} label="Port" align="right" filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />;
+      case "fiber":
+        return <DataTh {...common} label="Sợi" align="right" filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />;
+      case "status":
+        return <DataTh {...common} label="Trạng thái" />;
+      case "name":
+        return (
+          <DataTh
+            {...common}
+            label="Tên luồng"
+            width={colWidths.name}
+            onResize={(w) => resizeCol("name", w)}
+            filterValue={filters.name}
+            onFilterChange={(v) => setFilter("name", v)}
+          />
+        );
+      case "counterpart":
+        return (
+          <DataTh
+            {...common}
+            label="Đối phương"
+            width={colWidths.counterpart}
+            onResize={(w) => resizeCol("counterpart", w)}
+            filterValue={filters.counterpart}
+            onFilterChange={(v) => setFilter("counterpart", v)}
+          />
+        );
+    }
+  }
+
+  function renderCell(key: VisibleCol, r: SearchRow, ds: DerivedStatus) {
+    switch (key) {
+      case "route":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.cableRouteName}
+          </td>
+        );
+      case "port":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {r.portNumber}
+          </td>
+        );
+      case "fiber":
+        return (
+          <td key={key} className="px-3 py-2 text-right text-slate-600">
+            {r.fiberNumber ?? "—"}
+          </td>
+        );
+      case "status":
+        return (
+          <td key={key} className="px-3 py-2">
+            <span
+              className={
+                "rounded px-2 py-0.5 text-xs font-medium " +
+                (ds === "empty" ? "bg-slate-100 text-slate-500" : ds === "standby" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700")
+              }
+            >
+              {STATUS_LABEL[ds]}
+            </span>
+          </td>
+        );
+      case "name":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-700 break-words">
+            {r.circuit?.name ?? "—"}
+          </td>
+        );
+      case "counterpart":
+        return (
+          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+            {r.circuit?.counterpartText ?? "—"}
+          </td>
+        );
+    }
+  }
 
   return (
     <div>
@@ -211,7 +329,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
         )}
         <div className="ml-auto flex gap-2">
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm ODF trung kế" fileNamePrefix="Tim_kiem_ODF_trung_ke" />
-          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} onResetOrder={resetColOrder} />
         </div>
       </div>
 
@@ -220,80 +338,14 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 100 }} />
-            {visible.route && <col style={{ width: colWidths.route }} />}
-            {visible.port && <col style={{ width: 70 }} />}
-            {visible.fiber && <col style={{ width: 70 }} />}
-            {visible.status && <col style={{ width: 110 }} />}
-            {visible.name && <col style={{ width: colWidths.name }} />}
-            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
+            {orderedVisible.map((key) => (
+              <col key={key} style={{ width: colWidthOf(key) }} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
             <tr>
               <DataTh label="Rack" sortKey="rack" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              {visible.route && (
-                <DataTh
-                  label="Tuyến cáp"
-                  sortKey="route"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.route}
-                  onResize={(w) => resizeCol("route", w)}
-                  filterValue={filters.route}
-                  onFilterChange={(v) => setFilter("route", v)}
-                />
-              )}
-              {visible.port && (
-                <DataTh
-                  label="Port"
-                  sortKey="port"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.port}
-                  onFilterChange={(v) => setFilter("port", v)}
-                />
-              )}
-              {visible.fiber && (
-                <DataTh
-                  label="Sợi"
-                  sortKey="fiber"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  align="right"
-                  filterValue={filters.fiber}
-                  onFilterChange={(v) => setFilter("fiber", v)}
-                />
-              )}
-              {visible.status && <DataTh label="Trạng thái" sortKey="status" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-              {visible.name && (
-                <DataTh
-                  label="Tên luồng"
-                  sortKey="name"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.name}
-                  onResize={(w) => resizeCol("name", w)}
-                  filterValue={filters.name}
-                  onFilterChange={(v) => setFilter("name", v)}
-                />
-              )}
-              {visible.counterpart && (
-                <DataTh
-                  label="Đối phương"
-                  sortKey="counterpart"
-                  activeSortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  width={colWidths.counterpart}
-                  onResize={(w) => resizeCol("counterpart", w)}
-                  filterValue={filters.counterpart}
-                  onFilterChange={(v) => setFilter("counterpart", v)}
-                />
-              )}
+              {orderedVisible.map((key) => renderHeaderCell(key))}
             </tr>
           </thead>
           <tbody>
@@ -306,27 +358,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
                       {r.rackCode}
                     </Link>
                   </td>
-                  {visible.route && <td className="px-3 py-2 text-slate-600 break-words">{r.cableRouteName}</td>}
-                  {visible.port && <td className="px-3 py-2 text-right text-slate-600">{r.portNumber}</td>}
-                  {visible.fiber && <td className="px-3 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>}
-                  {visible.status && (
-                    <td className="px-3 py-2">
-                      <span
-                        className={
-                          "rounded px-2 py-0.5 text-xs font-medium " +
-                          (ds === "empty"
-                            ? "bg-slate-100 text-slate-500"
-                            : ds === "standby"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-emerald-100 text-emerald-700")
-                        }
-                      >
-                        {STATUS_LABEL[ds]}
-                      </span>
-                    </td>
-                  )}
-                  {visible.name && <td className="px-3 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>}
-                  {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>}
+                  {orderedVisible.map((key) => renderCell(key, r, ds))}
                 </tr>
               );
             })}
