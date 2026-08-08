@@ -98,6 +98,17 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "counterpart", label: "Đối phương" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả "Rack" trước giờ cố định đầu bảng (yêu cầu
+// người dùng 2026-08-08, đồng bộ từ PortTable.tsx — xem architecture.md Mục
+// 84). `AllCol` trùng hệt `SortKey` (đều thêm đúng "rack") nên không cần ép
+// kiểu sort riêng — "rack" không có ô lọc riêng (đã có dropdown chọn rack ở
+// trên, chính xác hơn gõ text) nên không đưa vào `FreeFilterKey`.
+type StructuralCol = "rack";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["rack", ...COLUMN_ITEMS.map((c) => c.key)];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["rack"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   const [mode, setMode] = useState<FilterMode>("all");
   const [rackId, setRackId] = useState(""); // "" = tất cả rack
@@ -112,12 +123,13 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("rack");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-trunk-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("search-trunk-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("search-trunk-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     route: "",
     port: "",
@@ -168,27 +180,29 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
-  function colWidthOf(key: VisibleCol): number {
-    if (key === "route") return colWidths.route;
-    if (key === "name") return colWidths.name;
-    if (key === "counterpart") return colWidths.counterpart;
-    if (key === "status") return 110;
+  function colWidthOf(col: AllCol): number {
+    if (col === "rack") return 100;
+    if (col === "route") return colWidths.route;
+    if (col === "name") return colWidths.name;
+    if (col === "counterpart") return colWidths.counterpart;
+    if (col === "status") return 110;
     return 70; // port/fiber
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+  function renderHeaderCell(col: AllCol) {
+    // `AllCol` trùng hệt `SortKey` ở file này (xem comment khai báo AllCol).
     const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
+      key: col,
+      sortKey: col,
+      activeSortKey: sortKey,
       sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      reorderKey: key,
+      onSort: toggleSort,
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    switch (key) {
+    switch (col) {
+      case "rack":
+        return <DataTh {...common} label="Rack" />;
       case "route":
         return (
           <DataTh
@@ -231,29 +245,37 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
     }
   }
 
-  function renderCell(key: VisibleCol, r: SearchRow, ds: DerivedStatus) {
-    switch (key) {
+  function renderCell(col: AllCol, r: SearchRow, ds: DerivedStatus) {
+    switch (col) {
+      case "rack":
+        return (
+          <td key={col} className="px-3 py-2">
+            <Link href={`/odf-trunk/${r.rackId}`} className="font-medium text-primary-700 hover:underline">
+              {r.rackCode}
+            </Link>
+          </td>
+        );
       case "route":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.cableRouteName}
           </td>
         );
       case "port":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {r.portNumber}
           </td>
         );
       case "fiber":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {r.fiberNumber ?? "—"}
           </td>
         );
       case "status":
         return (
-          <td key={key} className="px-3 py-2">
+          <td key={col} className="px-3 py-2">
             <span
               className={
                 "rounded px-2 py-0.5 text-xs font-medium " +
@@ -266,13 +288,13 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
         );
       case "name":
         return (
-          <td key={key} className="px-3 py-2 text-slate-700 break-words">
+          <td key={col} className="px-3 py-2 text-slate-700 break-words">
             {r.circuit?.name ?? "—"}
           </td>
         );
       case "counterpart":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.circuit?.counterpartText ?? "—"}
           </td>
         );
@@ -331,10 +353,10 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm ODF trung kế" fileNamePrefix="Tim_kiem_ODF_trung_ke" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -344,28 +366,19 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 100 }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidthOf(key) }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <DataTh label="Rack" sortKey="rack" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((r) => {
               const ds = deriveStatus(r);
               return (
                 <tr key={r.portId} className="border-t border-slate-100 hover:bg-primary-50/50">
-                  <td className="px-3 py-2">
-                    <Link href={`/odf-trunk/${r.rackId}`} className="font-medium text-primary-700 hover:underline">
-                      {r.rackCode}
-                    </Link>
-                  </td>
-                  {orderedVisible.map((key) => renderCell(key, r, ds))}
+                  {orderedAll.map((col) => renderCell(col, r, ds))}
                 </tr>
               );
             })}

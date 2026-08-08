@@ -4,6 +4,8 @@ import Link from "next/link";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import type { DeviceRackCircuitRef, DeviceRackPortRefs } from "@/lib/deviceRackPorts";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import { useColumnOrder } from "@/lib/useColumnOrder";
+import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 
 // Trang XEM (không sửa tại chỗ, yêu cầu người dùng 2026-07-28) cho rack
@@ -62,6 +64,17 @@ type VisibleCol = "notes";
 const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { notes: true };
 const COLUMN_ITEMS = [{ key: "notes" as const, label: "Ghi chú" }];
 
+// Kéo-thả TOÀN BỘ cột (yêu cầu người dùng 2026-08-08, đồng bộ từ
+// PortTable.tsx cho cả 9 bảng — xem architecture.md Mục 84). Trước đây bảng
+// này KHÔNG làm kéo-thả (chỉ 1 cột tùy chọn "Ghi chú", đổi thứ tự 1 phần tử
+// vô nghĩa) — giờ gộp thêm 2 cột cấu trúc "Port"/"Tên luồng" vào cùng 1
+// thứ tự kéo-thả được thì đã có 3 cột, đổi thứ tự thật sự có ý nghĩa.
+type StructuralCol = "port" | "name";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["port", "name", "notes"];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["port", "name"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function DeviceRackPortView({
   portCount,
   portRefEntries,
@@ -76,57 +89,90 @@ export default function DeviceRackPortView({
   const portRefs = new Map(portRefEntries);
   const rows = buildPortRows(portCount, portRefs);
   const { visible, toggle } = useColumnVisibility<VisibleCol>("device-rack-port-col-visibility", DEFAULT_VISIBLE);
+  const { order: colOrder, moveColumn, reset: resetColOrder } = useColumnOrder<AllCol>("device-rack-port-col-order", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
+
+  function colWidthOf(col: AllCol): number | undefined {
+    if (col === "port") return 70;
+    if (col === "notes") return 220;
+    return undefined; // "name" giãn hết chỗ còn lại
+  }
+
+  function renderHeaderCell(col: AllCol) {
+    const reorderProps = { reorderKey: col, onReorderColumn: moveColumn } as const;
+    switch (col) {
+      case "port":
+        return <DataTh key={col} label="Port" {...reorderProps} />;
+      case "name":
+        return <DataTh key={col} label="Tên luồng" {...reorderProps} />;
+      case "notes":
+        return <DataTh key={col} label="Ghi chú" {...reorderProps} />;
+    }
+  }
+
+  function renderCell(col: AllCol, row: PortRow) {
+    switch (col) {
+      case "port": {
+        const portLabel = row.portNumbers.length === 2 ? `${row.portNumbers[0]}-${row.portNumbers[1]}` : String(row.portNumbers[0]);
+        return (
+          <td key={col} className="px-3 py-2 font-medium text-slate-700">
+            {portLabel}
+          </td>
+        );
+      }
+      case "name":
+        return (
+          <td key={col} className="px-3 py-2 break-words">
+            {row.entries.length === 0 ? (
+              <span className="text-slate-300">— trống —</span>
+            ) : (
+              row.entries.map((e, i) => (
+                <div key={`${e.id}-${i}`}>
+                  <Link href={`/odf-device/sua-luong#${rowAnchor(e.id)}`} className="text-primary-600 hover:underline">
+                    {e.name}
+                  </Link>
+                </div>
+              ))
+            )}
+          </td>
+        );
+      case "notes":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-500 break-words">
+            {row.entries.length === 0 ? "—" : row.entries.map((e, i) => <div key={`${e.id}-${i}`}>Luồng sử dụng sợi {e.portNumbers.join(",")}</div>)}
+          </td>
+        );
+    }
+  }
 
   return (
     <div>
       <div className="mb-2 flex justify-end">
-        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggle} />
+        <ColumnPicker
+          items={COLUMN_ITEMS}
+          order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
+          visible={visible}
+          onToggle={toggle}
+          onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
+          onResetOrder={resetColOrder}
+        />
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 70 }} />
-            <col />
-            {visible.notes && <col style={{ width: 220 }} />}
+            {orderedAll.map((col) => (
+              <col key={col} style={colWidthOf(col) !== undefined ? { width: colWidthOf(col) } : undefined} />
+            ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Port</th>
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Tên luồng</th>
-              {visible.notes && (
-                <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Ghi chú</th>
-              )}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {rows.map((row) => {
               const key = row.portNumbers.join("-");
-              const portLabel = row.portNumbers.length === 2 ? `${row.portNumbers[0]}-${row.portNumbers[1]}` : String(row.portNumbers[0]);
               return (
                 <tr key={key} className="border-t border-slate-100 align-top hover:bg-primary-50/50">
-                  <td className="px-3 py-2 font-medium text-slate-700">{portLabel}</td>
-                  <td className="px-3 py-2 break-words">
-                    {row.entries.length === 0 ? (
-                      <span className="text-slate-300">— trống —</span>
-                    ) : (
-                      row.entries.map((e, i) => (
-                        <div key={`${e.id}-${i}`}>
-                          <Link href={`/odf-device/sua-luong#${rowAnchor(e.id)}`} className="text-primary-600 hover:underline">
-                            {e.name}
-                          </Link>
-                        </div>
-                      ))
-                    )}
-                  </td>
-                  {visible.notes && (
-                    <td className="px-3 py-2 text-slate-500 break-words">
-                      {row.entries.length === 0 ? (
-                        "—"
-                      ) : (
-                        row.entries.map((e, i) => <div key={`${e.id}-${i}`}>Luồng sử dụng sợi {e.portNumbers.join(",")}</div>)
-                      )}
-                    </td>
-                  )}
+                  {orderedAll.map((col) => renderCell(col, row))}
                 </tr>
               );
             })}

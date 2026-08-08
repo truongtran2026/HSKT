@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { SortDir } from "@/lib/useSort";
 import FilterInput from "@/components/ui/FilterInput";
 import FilterSelect from "@/components/ui/FilterSelect";
@@ -46,6 +47,7 @@ export default function DataTh<K extends string>({
   onReorderColumn,
   className = "",
   title,
+  labelContent,
 }: {
   label: string;
   align?: "left" | "right";
@@ -71,6 +73,13 @@ export default function DataTh<K extends string>({
   // label hiển thị quá ngắn/không tự giải thích được (vd cột tick "✓" cần
   // tooltip riêng "Tick để sinh đoạn text báo cáo").
   title?: string;
+  // Thay THỨ HIỂN THỊ (vd checkbox "chọn tất cả") mà vẫn giữ `label` (string,
+  // bắt buộc) làm tooltip/định danh cột — dùng khi tiêu đề cột không chỉ là
+  // chữ mà còn có control tương tác (vd cột tick chọn hàng loạt ở
+  // DeviceCircuitList.tsx). `label` KHÔNG đổi type sang ReactNode để tránh
+  // phá vỡ chỗ dùng làm chuỗi (title/"label — bấm để sắp xếp") ở mọi cột chữ
+  // thường khác.
+  labelContent?: ReactNode;
 }) {
   const sortable = sortKey !== undefined && !!onSort;
   const active = sortable && activeSortKey === sortKey;
@@ -124,7 +133,7 @@ export default function DataTh<K extends string>({
             <IconGripVertical className="h-3.5 w-3.5" />
           </span>
         )}
-        <span className="truncate">{label}</span>
+        <span className="truncate">{labelContent ?? label}</span>
         {sortable && (
           <span className={`shrink-0 text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
             {active ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}

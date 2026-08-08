@@ -62,6 +62,17 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "odfPosition", label: "Vị trí ODF/DDF" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả "Tên thiết bị"/"Thao tác" trước giờ cố định
+// đầu/cuối bảng (yêu cầu người dùng 2026-08-08, đồng bộ từ PortTable.tsx —
+// xem architecture.md Mục 84). "actions" không thuộc `SortKey` (không sắp
+// xếp/lọc được) nên KHÔNG dùng chung kiểu ép "AllCol trùng SortKey" như
+// RackListTable/SearchClient — mỗi case tự khai báo sortKey riêng.
+type StructuralCol = "deviceName" | "actions";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["deviceName", ...COLUMN_ITEMS.map((c) => c.key), "actions"];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["deviceName", "actions"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function DevicePositionMapClient({
   rows,
   devices,
@@ -77,12 +88,13 @@ export default function DevicePositionMapClient({
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<SortKey>("device-position-map-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-position-map-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("device-position-map-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("device-position-map-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<SortKey, string>>({ deviceName: "", devicePosition: "", odfPosition: "" });
   // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
   // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả".
@@ -444,60 +456,158 @@ export default function DevicePositionMapClient({
     router.refresh();
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+  function colWidthOf(col: AllCol): number {
+    if (col === "actions") return 140;
+    return colWidths[col];
+  }
+
+  function renderHeaderCell(col: AllCol) {
+    // `activeSortKey` ép kiểu AllCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=AllCol cho <DataTh> ở đây. "actions" không
+    // sortable/filterable (không phải dữ liệu) — mỗi case tự khai báo
+    // sortKey riêng thay vì gộp chung vào `common`.
     const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
+      key: col,
+      activeSortKey: sortKey as AllCol,
       sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      width: colWidths[key],
-      onResize: (w: number) => resizeCol(key, w),
-      filterValue: filters[key],
-      onFilterChange: (v: string) => setFilter(key, v),
-      reorderKey: key,
+      onSort: toggleSort as (k: AllCol) => void,
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    return <DataTh {...common} label={key === "devicePosition" ? "Vị trí thiết bị" : "Vị trí ODF/DDF"} />;
-  }
-
-  function renderEditCell(key: VisibleCol) {
-    if (key === "devicePosition") {
-      return (
-        <td key={key} className="px-3 py-2">
-          <input
-            className="input"
-            value={editDraft.devicePosition}
-            onChange={(e) => setEditDraft({ ...editDraft, devicePosition: e.target.value })}
+    switch (col) {
+      case "deviceName":
+        return (
+          <DataTh
+            {...common}
+            sortKey="deviceName"
+            label="Tên thiết bị"
+            width={colWidths.deviceName}
+            onResize={(w) => resizeCol("deviceName", w)}
+            filterValue={filters.deviceName}
+            onFilterChange={(v) => setFilter("deviceName", v)}
           />
-        </td>
-      );
+        );
+      case "devicePosition":
+        return (
+          <DataTh
+            {...common}
+            sortKey="devicePosition"
+            label="Vị trí thiết bị"
+            width={colWidths.devicePosition}
+            onResize={(w) => resizeCol("devicePosition", w)}
+            filterValue={filters.devicePosition}
+            onFilterChange={(v) => setFilter("devicePosition", v)}
+          />
+        );
+      case "odfPosition":
+        return (
+          <DataTh
+            {...common}
+            sortKey="odfPosition"
+            label="Vị trí ODF/DDF"
+            width={colWidths.odfPosition}
+            onResize={(w) => resizeCol("odfPosition", w)}
+            filterValue={filters.odfPosition}
+            onFilterChange={(v) => setFilter("odfPosition", v)}
+          />
+        );
+      case "actions":
+        return <DataTh {...common} sortKey={undefined} label="Thao tác" />;
     }
-    return (
-      <td key={key} className="px-3 py-2">
-        <input
-          className="input"
-          list="dpm-odf-position-options"
-          value={editDraft.odfPosition}
-          onChange={(e) => setEditDraft({ ...editDraft, odfPosition: e.target.value })}
-          onBlur={() => {
-            const match = matchTrunkPosition(editDraft.odfPosition, trunkPorts);
-            const canonical = formatCanonicalOdfPosition(match);
-            if (canonical && canonical !== editDraft.odfPosition) setEditDraft((d) => ({ ...d, odfPosition: canonical }));
-          }}
-        />
-      </td>
-    );
   }
 
-  function renderViewCell(key: VisibleCol, r: DevicePositionMapRow) {
-    return (
-      <td key={key} className="px-3 py-2 text-slate-600 break-words">
-        {(key === "devicePosition" ? r.devicePosition : r.odfPosition) ?? "—"}
-      </td>
-    );
+  function renderEditCell(col: AllCol) {
+    switch (col) {
+      case "deviceName":
+        return (
+          <td key={col} className="px-3 py-2">
+            <input
+              className="input"
+              list="dpm-device-name-options"
+              value={editDraft.deviceName}
+              onChange={(e) => setEditDraft({ ...editDraft, deviceName: e.target.value })}
+              autoFocus
+            />
+          </td>
+        );
+      case "devicePosition":
+        return (
+          <td key={col} className="px-3 py-2">
+            <input
+              className="input"
+              value={editDraft.devicePosition}
+              onChange={(e) => setEditDraft({ ...editDraft, devicePosition: e.target.value })}
+            />
+          </td>
+        );
+      case "odfPosition":
+        return (
+          <td key={col} className="px-3 py-2">
+            <input
+              className="input"
+              list="dpm-odf-position-options"
+              value={editDraft.odfPosition}
+              onChange={(e) => setEditDraft({ ...editDraft, odfPosition: e.target.value })}
+              onBlur={() => {
+                const match = matchTrunkPosition(editDraft.odfPosition, trunkPorts);
+                const canonical = formatCanonicalOdfPosition(match);
+                if (canonical && canonical !== editDraft.odfPosition) setEditDraft((d) => ({ ...d, odfPosition: canonical }));
+              }}
+            />
+          </td>
+        );
+      case "actions":
+        return (
+          <td key={col} className="px-3 py-2">
+            <div className="flex gap-2">
+              <button className="btn-primary" onClick={saveEdit} disabled={busy}>
+                Lưu
+              </button>
+              <button className="btn-secondary" onClick={cancelEdit} disabled={busy}>
+                Hủy
+              </button>
+            </div>
+          </td>
+        );
+    }
+  }
+
+  function renderViewCell(col: AllCol, r: DevicePositionMapRow) {
+    switch (col) {
+      case "deviceName":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-700 break-words">
+            {r.deviceName}
+          </td>
+        );
+      case "devicePosition":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
+            {r.devicePosition ?? "—"}
+          </td>
+        );
+      case "odfPosition":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
+            {r.odfPosition ?? "—"}
+          </td>
+        );
+      case "actions":
+        return (
+          <td key={col} className="px-3 py-2">
+            <RoleGate allow={["operator", "admin"]}>
+              <div className="flex gap-2">
+                <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy} title="Sửa" aria-label="Sửa">
+                  <IconEdit />
+                </button>
+                <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy} title="Xóa" aria-label="Xóa">
+                  <IconTrash />
+                </button>
+              </div>
+            </RoleGate>
+          </td>
+        );
+    }
   }
 
   return (
@@ -705,10 +815,10 @@ export default function DevicePositionMapClient({
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Vị trí thiết bị" fileNamePrefix="Thu_vien_vi_tri_thiet_bi" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -718,75 +828,19 @@ export default function DevicePositionMapClient({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: colWidths.deviceName }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidths[key] }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
-            <col style={{ width: 140 }} />
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <DataTh
-                label="Tên thiết bị"
-                sortKey="deviceName"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.deviceName}
-                onResize={(w) => resizeCol("deviceName", w)}
-                filterValue={filters.deviceName}
-                onFilterChange={(v) => setFilter("deviceName", v)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top text-left font-semibold">Thao tác</th>
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((r) => {
               const editing = editId === r.id;
               return (
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-primary-50/50">
-                  {editing ? (
-                    <>
-                      <td className="px-3 py-2">
-                        <input
-                          className="input"
-                          list="dpm-device-name-options"
-                          value={editDraft.deviceName}
-                          onChange={(e) => setEditDraft({ ...editDraft, deviceName: e.target.value })}
-                          autoFocus
-                        />
-                      </td>
-                      {orderedVisible.map((key) => renderEditCell(key))}
-                      <td className="px-3 py-2">
-                        <div className="flex gap-2">
-                          <button className="btn-primary" onClick={saveEdit} disabled={busy}>
-                            Lưu
-                          </button>
-                          <button className="btn-secondary" onClick={cancelEdit} disabled={busy}>
-                            Hủy
-                          </button>
-                        </div>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-3 py-2 text-slate-700 break-words">{r.deviceName}</td>
-                      {orderedVisible.map((key) => renderViewCell(key, r))}
-                      <td className="px-3 py-2">
-                        <RoleGate allow={["operator", "admin"]}>
-                          <div className="flex gap-2">
-                            <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy} title="Sửa" aria-label="Sửa">
-                              <IconEdit />
-                            </button>
-                            <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy} title="Xóa" aria-label="Xóa">
-                              <IconTrash />
-                            </button>
-                          </div>
-                        </RoleGate>
-                      </td>
-                    </>
-                  )}
+                  {editing ? orderedAll.map((col) => renderEditCell(col)) : orderedAll.map((col) => renderViewCell(col, r))}
                 </tr>
               );
             })}

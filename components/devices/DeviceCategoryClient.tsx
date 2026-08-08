@@ -43,6 +43,17 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "source", label: "Nguồn" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả "tick chọn"/"Tên thiết bị" trước giờ cố định
+// đầu bảng (yêu cầu người dùng 2026-08-08, đồng bộ từ PortTable.tsx — xem
+// architecture.md Mục 84). "tick" không thuộc `SortKey` (không sắp xếp/lọc
+// được) — mỗi case tự khai báo sortKey/filterValue riêng, không gộp chung
+// vào `common` như trước.
+type StructuralCol = "tick" | "name";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["tick", "name", ...COLUMN_ITEMS.map((c) => c.key)];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["tick", "name"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 function cellText(d: DeviceRow, key: SortKey): string {
   switch (key) {
     case "name":
@@ -113,12 +124,13 @@ export default function DeviceCategoryClient({
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("device-category-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-category-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("device-category-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("device-category-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
   // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả", cùng cơ chế đã
@@ -514,36 +526,84 @@ export default function DeviceCategoryClient({
     }
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
-    const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
-      sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      filterValue: filters[key],
-      onFilterChange: (v: string) => setFilter(key, v),
-      reorderKey: key,
-      onReorderColumn: moveColumn,
-    } as const;
-    return <DataTh {...common} label={key === "category" ? "Lĩnh vực" : "Nguồn"} />;
+  function colWidthOf(col: AllCol): number {
+    if (col === "tick") return 40;
+    if (col === "name") return colWidths.name;
+    return col === "category" ? 140 : 100;
   }
 
-  function renderCell(key: VisibleCol, d: DeviceRow) {
-    if (key === "category") {
-      return (
-        <td key={key} className="px-3 py-2 text-slate-600">
-          {deviceCategoryLabel(d.category)}
-        </td>
-      );
+  function renderHeaderCell(col: AllCol) {
+    // `activeSortKey` ép kiểu AllCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=AllCol cho <DataTh> ở đây. "tick" không
+    // sortable/filterable — mỗi case tự khai báo sortKey/filterValue riêng.
+    const common = {
+      key: col,
+      activeSortKey: sortKey as AllCol,
+      sortDir,
+      onSort: toggleSort as (k: AllCol) => void,
+      reorderKey: col,
+      onReorderColumn: moveColumn,
+    } as const;
+    switch (col) {
+      case "tick":
+        return (
+          <DataTh
+            {...common}
+            sortKey={undefined}
+            label="Chọn/bỏ chọn tất cả đang hiện"
+            title="Chọn/bỏ chọn tất cả đang hiện"
+            labelContent={<input type="checkbox" checked={allVisibleSelected} onChange={(e) => (e.target.checked ? selectAllVisible() : clearVisible())} />}
+          />
+        );
+      case "name":
+        return (
+          <DataTh
+            {...common}
+            sortKey="name"
+            label="Tên thiết bị"
+            width={colWidths.name}
+            onResize={(w) => resizeCol("name", w)}
+            filterValue={filters.name}
+            onFilterChange={(v) => setFilter("name", v)}
+          />
+        );
+      case "category":
+        return (
+          <DataTh {...common} sortKey="category" label="Lĩnh vực" filterValue={filters.category} onFilterChange={(v) => setFilter("category", v)} />
+        );
+      case "source":
+        return <DataTh {...common} sortKey="source" label="Nguồn" filterValue={filters.source} onFilterChange={(v) => setFilter("source", v)} />;
     }
-    return (
-      <td key={key} className="px-3 py-2 text-slate-500">
-        {SOURCE_LABEL[d.source]}
-      </td>
-    );
+  }
+
+  function renderCell(col: AllCol, d: DeviceRow) {
+    switch (col) {
+      case "tick":
+        return (
+          <td key={col} className="px-3 py-2">
+            <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+          </td>
+        );
+      case "name":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-700 break-words">
+            {d.name}
+            <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
+          </td>
+        );
+      case "category":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-600">
+            {deviceCategoryLabel(d.category)}
+          </td>
+        );
+      case "source":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-500">
+            {SOURCE_LABEL[d.source]}
+          </td>
+        );
+    }
   }
 
   return (
@@ -721,10 +781,10 @@ export default function DeviceCategoryClient({
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Danh mục thiết bị" fileNamePrefix="Danh_muc_thiet_bi" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -801,35 +861,12 @@ export default function DeviceCategoryClient({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 40 }} />
-            <col style={{ width: colWidths.name }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: key === "category" ? 140 : 100 }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={(e) => (e.target.checked ? selectAllVisible() : clearVisible())}
-                  title="Chọn/bỏ chọn tất cả đang hiện"
-                />
-              </th>
-              <DataTh
-                label="Tên thiết bị"
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.name}
-                onResize={(w) => resizeCol("name", w)}
-                filterValue={filters.name}
-                onFilterChange={(v) => setFilter("name", v)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((d) => (
@@ -837,14 +874,7 @@ export default function DeviceCategoryClient({
                 key={d.id}
                 className={`border-t border-slate-100 ${selected.has(d.id) ? "bg-primary-50/60" : "hover:bg-primary-50/50"}`}
               >
-                <td className="px-3 py-2">
-                  <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
-                </td>
-                <td className="px-3 py-2 text-slate-700 break-words">
-                  {d.name}
-                  <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
-                </td>
-                {orderedVisible.map((key) => renderCell(key, d))}
+                {orderedAll.map((col) => renderCell(col, d))}
               </tr>
             ))}
             {filtered.length === 0 && (

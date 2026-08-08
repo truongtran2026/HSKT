@@ -4790,3 +4790,59 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     Chuyển tiếp, ...), thử kéo CẢ cột "✓"/"Port"/"Tên luồng"/"Thao tác" sang
     vị trí khác xem có hoạt động đúng không (đặc biệt rowSpan khi rack có
     luồng ghép 2 port liền kề), và xác nhận Sidebar hết bị xuống dòng.
+
+- **Mục 85 (2026-08-08) — Nhân rộng "kéo-thả TOÀN BỘ cột" (Mục 84) cho 8
+  bảng còn lại + `DeviceRackPortView.tsx`.** Hỏi lại người dùng qua
+  `AskUserQuestion` sau khi sửa xong `PortTable.tsx`: áp dụng luôn cho 8
+  bảng còn lại hay chỉ riêng bảng vừa báo lỗi — người dùng chọn **"Áp dụng
+  cho tất cả 9 bảng"** (đúng tinh thần "quy định chung" xuyên suốt phiên
+  này). Cùng 1 công thức cho mọi file: gộp cột "cấu trúc" (trước giờ cố định
+  đầu/cuối bảng, không qua `ColumnPicker`) vào chung 1 kiểu `AllCol` với các
+  cột tùy chọn sẵn có, đổi `storageKey` của `useColumnOrder` sang `"-v2"`
+  (tránh cột cấu trúc MỚI bị `loadOrder()` đẩy xuống cuối mảng đã lưu — xem
+  lý do đầy đủ ở Mục 84), `<ColumnPicker>` vẫn chỉ liệt kê cột TÙY CHỌN (lọc
+  `colOrder` xuống còn `VisibleCol` bằng `OPTIONAL_COL_SET`, ép kiểu
+  `moveColumn as (dragged: VisibleCol, target: VisibleCol) => void`).
+  - `DeviceCircuitList.tsx` (giống `PortTable.tsx` nhất — cũng có nút Thao
+    tác/tick chọn hàng loạt): `StructuralCol = "tick" | "name" | "actions"`.
+    Cột "tick" cần hiển thị 1 checkbox "chọn tất cả" ở HEADER (không phải chỉ
+    chữ) — `DataTh.tsx` thêm prop mới `labelContent?: ReactNode` (thay THỨ
+    HIỂN THỊ trong khi `label` (string, bắt buộc) vẫn giữ nguyên làm tooltip/
+    định danh cột — tránh đổi `label` sang kiểu `ReactNode` sẽ phá vỡ chỗ
+    dùng làm chuỗi ở `title`/"label — bấm để sắp xếp" của MỌI cột chữ khác).
+  - `RackListTable.tsx`/`SearchClient.tsx`/`DeviceSearchClient.tsx`: chỉ 1
+    cột cấu trúc (`"code"`/`"rack"`/`"name"` — mã rack/tên luồng, không có
+    nút Thao tác riêng ở 3 bảng này). Tình cờ ở cả 3 file, `SortKey` khai báo
+    sẵn ĐÃ gồm đúng cột cấu trúc + toàn bộ `VisibleCol` (vì cột đó vốn đã
+    sort/filter được từ trước, chỉ chưa kéo-thả được) — `AllCol` trùng hệt
+    `SortKey`, không cần ép kiểu `sortKey`/`onSort` riêng như các file khác
+    (khác `PortTable.tsx`/`DeviceCircuitList.tsx`/`DeviceCategoryClient.tsx`,
+    nơi cột cấu trúc mới thêm — "tick"/"actions" — KHÔNG có trong `SortKey`).
+  - `DevicePositionMapClient.tsx`: `StructuralCol = "deviceName" | "actions"`
+    — bảng có 2 kiểu dòng (xem-thường/đang sửa inline) nên `renderEditCell`/
+    `renderViewCell` (đã tách sẵn từ đợt trước) đều phải thêm case
+    `"deviceName"` (ô input tên khi sửa) và `"actions"` (nút Lưu/Hủy khi
+    sửa, nút Sửa/Xóa khi xem) — không dùng `renderCell` chung 1 hàm như các
+    bảng không có chế độ sửa inline.
+  - `DeviceCategoryClient.tsx`: `StructuralCol = "tick" | "name"` — cùng kiểu
+    checkbox "chọn tất cả" ở header cột tick như `DeviceCircuitList.tsx`
+    (dùng lại `labelContent` mới thêm ở `DataTh.tsx`). Không có cột Thao
+    tác riêng (Sửa/Xóa/Gộp là thanh hành động PHÍA TRÊN bảng khi có tick
+    chọn, không phải nút trên từng dòng).
+  - `DashboardClient.tsx` (`TableView`): `StructuralCol = "route"` — bảng
+    này VỐN đã không có sort theo cột (dùng chung dropdown "sortBy" ở khung
+    cha, xem comment cũ ở khai báo `VisibleCol`) nên không có `common`
+    sort-related nào để ép kiểu, đơn giản nhất trong 8 file.
+  - `DeviceRackPortView.tsx`: **đổi quyết định trước đó** (Mục 82 ghi "CHỦ Ý
+    KHÔNG làm — chỉ 1 cột tùy chọn, kéo-thả 1 phần tử vô nghĩa"). Giờ với
+    2 cột cấu trúc ("Port"/"Tên luồng") + 1 cột tùy chọn ("Ghi chú") gộp
+    chung 1 thứ tự kéo-thả thì đã có ĐỦ 3 cột để đổi thứ tự có ý nghĩa —
+    thêm mới hoàn toàn `useColumnOrder`/`DataTh` (trước đây dùng `<th>` viết
+    tay trần, không sort/filter gì cả, giờ vẫn không sort/filter nhưng có
+    `reorderKey`/`onReorderColumn` để kéo được).
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch sau mỗi file (làm
+    tuần tự, không dồn). Chưa test chuột thật — cần người dùng tự thử kéo cả
+    cột tick/tên/thao tác ở từng bảng trong số 8 bảng này, đặc biệt
+    `DevicePositionMapClient.tsx` (xác nhận hàng đang sửa inline vẫn đúng
+    cột sau khi đổi thứ tự) và `DeviceRackPortView.tsx` (tính năng kéo-thả
+    hoàn toàn mới, chưa ai dùng thử).

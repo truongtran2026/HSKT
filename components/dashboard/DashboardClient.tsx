@@ -393,6 +393,15 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
 type ResizableCol = "route";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220 };
 
+// Kéo-thả TOÀN BỘ cột, kể cả "Tuyến cáp" trước giờ cố định đầu bảng (yêu cầu
+// người dùng 2026-08-08, đồng bộ từ PortTable.tsx — xem architecture.md Mục
+// 84).
+type StructuralCol = "route";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["route", ...COLUMN_ITEMS.map((c) => c.key)];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["route"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 function TableView({
   routes,
   filters,
@@ -405,12 +414,13 @@ function TableView({
   const filtered = useMemo(() => routes.filter((r) => matchesStatFilters(r, filters)), [routes, filters]);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("dashboard-table-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("dashboard-table-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("dashboard-table-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("dashboard-table-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
 
   const exportColumns = useMemo(() => {
     const cols: { label: string; getValue: (r: RouteStat) => string | number | null }[] = [{ label: "Tuyến cáp", getValue: (r) => r.cableRouteName }];
@@ -424,18 +434,33 @@ function TableView({
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
   const COL_WIDTH: Record<VisibleCol, number> = { total: 110, inUse: 130, standby: 130, empty: 110, ratio: 192 };
+  function colWidthOf(col: AllCol): number {
+    return col === "route" ? colWidths.route : COL_WIDTH[col];
+  }
 
-  function renderHeaderCell(key: VisibleCol) {
-    const reorderProps = { reorderKey: key, onReorderColumn: moveColumn } as const;
-    switch (key) {
+  function renderHeaderCell(col: AllCol) {
+    const reorderProps = { reorderKey: col, onReorderColumn: moveColumn } as const;
+    switch (col) {
+      case "route":
+        return (
+          <DataTh
+            key={col}
+            label="Tuyến cáp"
+            width={colWidths.route}
+            onResize={(w) => resizeCol("route", w)}
+            filterValue={filters.route}
+            onFilterChange={(v) => onFilterChange("route", v)}
+            {...reorderProps}
+          />
+        );
       case "total":
         return (
-          <DataTh key={key} label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} {...reorderProps} />
+          <DataTh key={col} label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} {...reorderProps} />
         );
       case "inUse":
         return (
           <DataTh
-            key={key}
+            key={col}
             label="Đang dùng"
             align="right"
             filterValue={filters.inUse}
@@ -446,7 +471,7 @@ function TableView({
       case "standby":
         return (
           <DataTh
-            key={key}
+            key={col}
             label="Dự phòng"
             align="right"
             filterValue={filters.standby}
@@ -456,44 +481,50 @@ function TableView({
         );
       case "empty":
         return (
-          <DataTh key={key} label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} {...reorderProps} />
+          <DataTh key={col} label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} {...reorderProps} />
         );
       case "ratio":
         // Không sort/lọc (chỉ hiện thanh biểu đồ) — vẫn qua DataTh để kéo-thả
         // được như các cột khác.
-        return <DataTh key={key} label="Tỷ lệ" {...reorderProps} />;
+        return <DataTh key={col} label="Tỷ lệ" {...reorderProps} />;
     }
   }
 
-  function renderCell(key: VisibleCol, r: RouteStat) {
-    switch (key) {
+  function renderCell(col: AllCol, r: RouteStat) {
+    switch (col) {
+      case "route":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-700 break-words">
+            {r.cableRouteName}
+          </td>
+        );
       case "total":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {r.total}
           </td>
         );
       case "inUse":
         return (
-          <td key={key} className="px-3 py-2 text-right text-emerald-600">
+          <td key={col} className="px-3 py-2 text-right text-emerald-600">
             {r.inUse} ({pct(r.inUse, r.total)}%)
           </td>
         );
       case "standby":
         return (
-          <td key={key} className="px-3 py-2 text-right text-amber-600">
+          <td key={col} className="px-3 py-2 text-right text-amber-600">
             {r.standby} ({pct(r.standby, r.total)}%)
           </td>
         );
       case "empty":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-500">
+          <td key={col} className="px-3 py-2 text-right text-slate-500">
             {r.empty} ({pct(r.empty, r.total)}%)
           </td>
         );
       case "ratio":
         return (
-          <td key={key} className="px-3 py-2">
+          <td key={col} className="px-3 py-2">
             <StackedBar r={r} />
           </td>
         );
@@ -506,38 +537,27 @@ function TableView({
         <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
         <ColumnPicker
           items={COLUMN_ITEMS}
-          order={colOrder}
+          order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
           visible={visible}
           onToggle={toggleColumn}
-          onReorderColumn={moveColumn}
+          onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
           onResetOrder={resetColOrder}
         />
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: colWidths.route }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: COL_WIDTH[key] }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <DataTh
-                label="Tuyến cáp"
-                width={colWidths.route}
-                onResize={(w) => resizeCol("route", w)}
-                filterValue={filters.route}
-                onFilterChange={(v) => onFilterChange("route", v)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((r) => (
               <tr key={r.cableRouteName} className="border-t border-slate-100 hover:bg-primary-50/50">
-                <td className="px-3 py-2 text-slate-700 break-words">{r.cableRouteName}</td>
-                {orderedVisible.map((key) => renderCell(key, r))}
+                {orderedAll.map((col) => renderCell(col, r))}
               </tr>
             ))}
             {routes.length === 0 && (

@@ -299,6 +299,17 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "notes", label: "Ghi chú" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả 3 cột "cấu trúc" trước giờ cố định (tick chọn,
+// "Tên luồng", "Thao tác") — người dùng phản hồi 2026-08-08 (áp dụng đồng bộ
+// từ PortTable.tsx, xem architecture.md Mục 84): "đã kéo thả thì kéo thả
+// được hết chứ sao chừa lại một vài cột". 3 cột này không có checkbox ẩn/
+// hiện ở Cài đặt cột (không thuộc `COLUMN_ITEMS`) — chỉ đổi VỊ TRÍ được.
+type StructuralCol = "tick" | "name" | "actions";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["tick", "name", ...COLUMN_ITEMS.map((c) => c.key), "actions"];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["tick", "name", "actions"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function DeviceCircuitList({
   circuits,
   devices,
@@ -333,11 +344,14 @@ export default function DeviceCircuitList({
     DEFAULT_COL_WIDTHS
   );
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-circuit-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx —
+  // key cũ chỉ có 8 cột tùy chọn, tái dùng sẽ đẩy 3 cột cấu trúc MỚI xuống
+  // CUỐI thay vì đúng vị trí đầu/cuối mong muốn).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("device-circuit-col-order", COLUMN_ITEMS.map((c) => c.key));
+  } = useColumnOrder<AllCol>("device-circuit-col-order-v2", DEFAULT_ALL_ORDER);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
@@ -927,7 +941,7 @@ export default function DeviceCircuitList({
   // như 7 cột còn lại (2026-08-08, xem comment ở khai báo VisibleCol).
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
   const effectiveVisible: Record<VisibleCol, boolean> = { ...visible, device: visible.device && showDeviceColumn };
-  const orderedVisible = colOrder.filter((key) => effectiveVisible[key]);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || effectiveVisible[col as VisibleCol]);
   const columnCount = 3 + COLUMN_ITEMS.filter((c) => effectiveVisible[c.key]).length; // 3 = tick, Tên luồng, Thao tác
 
   // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng).
@@ -1891,12 +1905,16 @@ export default function DeviceCircuitList({
     );
   }
 
-  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — áp dụng cho cả 8
-  // cột trong VisibleCol/COLUMN_ITEMS, kể cả "Thiết bị" (ẩn/hiện vẫn tự động
-  // theo showDeviceColumn, xem effectiveVisible ở trên, nhưng VỊ TRÍ giờ kéo
-  // được như mọi cột khác).
-  function colWidthOf(key: VisibleCol): number {
-    switch (key) {
+  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — áp dụng cho cả
+  // 11 cột: 8 cột trong VisibleCol/COLUMN_ITEMS (kể cả "Thiết bị", ẩn/hiện
+  // vẫn tự động theo showDeviceColumn, xem effectiveVisible ở trên) + 3 cột
+  // cấu trúc "tick"/"name"/"actions" (không ẩn được, chỉ đổi vị trí).
+  function colWidthOf(col: AllCol): number {
+    switch (col) {
+      case "tick":
+        return 40;
+      case "name":
+        return colWidths.name;
       case "device":
         return colWidths.device;
       case "linkStatus":
@@ -1913,48 +1931,154 @@ export default function DeviceCircuitList({
         return colWidths.counterpart;
       case "notes":
         return colWidths.notes;
+      case "actions":
+        return 130;
     }
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+  function renderHeaderCell(col: AllCol) {
+    // `activeSortKey` ép kiểu AllCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K=AllCol cho <DataTh> ở đây. Mỗi case tự khai
+    // báo sortKey/filterValue riêng (thay vì gộp chung vào `common` như
+    // trước) — "tick"/"actions" không sortable/filterable, gộp chung sẽ ép
+    // kiểu `key` (AllCol) vào `setFilter()` (chỉ nhận FilterKey), lỗi kiểu.
     const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
+      key: col,
+      activeSortKey: sortKey as AllCol,
       sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      filterValue: filters[key],
-      onFilterChange: (v: string) => setFilter(key, v),
-      reorderKey: key,
+      onSort: toggleSort as (k: AllCol) => void,
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    switch (key) {
+    switch (col) {
+      case "tick":
+        return (
+          <DataTh
+            {...common}
+            sortKey={undefined}
+            label="Chọn/bỏ chọn tất cả đang hiện"
+            title="Chọn/bỏ chọn tất cả đang hiện"
+            labelContent={
+              <input
+                type="checkbox"
+                checked={filtered.length > 0 && filtered.every((c) => selected.has(c.id))}
+                onChange={(e) => (e.target.checked ? selectAllVisible() : clearVisible())}
+              />
+            }
+          />
+        );
+      case "name":
+        return (
+          <DataTh
+            {...common}
+            sortKey="name"
+            label="Tên luồng"
+            filterValue={filters.name}
+            onFilterChange={(v) => setFilter("name", v)}
+            width={colWidths.name}
+            onResize={(w) => resizeCol("name", w)}
+          />
+        );
       case "device":
-        return <DataTh {...common} width={colWidths.device} onResize={(w) => resizeCol("device", w)} label="Thiết bị" />;
+        return (
+          <DataTh
+            {...common}
+            sortKey="device"
+            label="Thiết bị"
+            filterValue={filters.device}
+            onFilterChange={(v) => setFilter("device", v)}
+            width={colWidths.device}
+            onResize={(w) => resizeCol("device", w)}
+          />
+        );
       case "linkStatus":
-        return <DataTh {...common} label="Trạng thái" filterOptions={MIRROR_LINK_FILTER_OPTIONS} />;
+        return (
+          <DataTh
+            {...common}
+            sortKey="linkStatus"
+            label="Trạng thái"
+            filterValue={filters.linkStatus}
+            onFilterChange={(v) => setFilter("linkStatus", v)}
+            filterOptions={MIRROR_LINK_FILTER_OPTIONS}
+          />
+        );
       case "trib":
-        return <DataTh {...common} label="Trib" />;
+        return <DataTh {...common} sortKey="trib" label="Trib" filterValue={filters.trib} onFilterChange={(v) => setFilter("trib", v)} />;
       case "positionOwn":
-        return <DataTh {...common} width={colWidths.positionOwn} onResize={(w) => resizeCol("positionOwn", w)} label="Vị trí ODF (thiết bị)" />;
+        return (
+          <DataTh
+            {...common}
+            sortKey="positionOwn"
+            label="Vị trí ODF (thiết bị)"
+            filterValue={filters.positionOwn}
+            onFilterChange={(v) => setFilter("positionOwn", v)}
+            width={colWidths.positionOwn}
+            onResize={(w) => resizeCol("positionOwn", w)}
+          />
+        );
       case "positionNext":
-        return <DataTh {...common} width={colWidths.positionNext} onResize={(w) => resizeCol("positionNext", w)} label="Vị trí ODF (tiếp theo)" />;
+        return (
+          <DataTh
+            {...common}
+            sortKey="positionNext"
+            label="Vị trí ODF (tiếp theo)"
+            filterValue={filters.positionNext}
+            onFilterChange={(v) => setFilter("positionNext", v)}
+            width={colWidths.positionNext}
+            onResize={(w) => resizeCol("positionNext", w)}
+          />
+        );
       case "interface":
-        return <DataTh {...common} label="Giao tiếp" />;
+        return (
+          <DataTh {...common} sortKey="interface" label="Giao tiếp" filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
+        );
       case "counterpart":
-        return <DataTh {...common} width={colWidths.counterpart} onResize={(w) => resizeCol("counterpart", w)} label="Đối phương" />;
+        return (
+          <DataTh
+            {...common}
+            sortKey="counterpart"
+            label="Đối phương"
+            filterValue={filters.counterpart}
+            onFilterChange={(v) => setFilter("counterpart", v)}
+            width={colWidths.counterpart}
+            onResize={(w) => resizeCol("counterpart", w)}
+          />
+        );
       case "notes":
-        return <DataTh {...common} width={colWidths.notes} onResize={(w) => resizeCol("notes", w)} label="Ghi chú" />;
+        return (
+          <DataTh
+            {...common}
+            sortKey={undefined}
+            label="Ghi chú"
+            filterValue={filters.notes}
+            onFilterChange={(v) => setFilter("notes", v)}
+            width={colWidths.notes}
+            onResize={(w) => resizeCol("notes", w)}
+          />
+        );
+      case "actions":
+        return <DataTh {...common} sortKey={undefined} label="Thao tác" />;
     }
   }
 
-  function renderCell(key: VisibleCol, c: DeviceCircuitRow) {
-    switch (key) {
+  function renderCell(col: AllCol, c: DeviceCircuitRow, editing: boolean) {
+    switch (col) {
+      case "tick":
+        return (
+          <td key={col} className="px-3 py-2 align-top">
+            <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} />
+          </td>
+        );
+      case "name":
+        return (
+          <td key={col} className="px-3 py-2 text-slate-700 break-words">
+            {displayName(c) || "—"}
+            <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
+          </td>
+        );
       case "device":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {c.deviceName ?? "(chưa xác định)"}
             {!c.deviceId && (
               <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
@@ -1965,13 +2089,13 @@ export default function DeviceCircuitList({
         );
       case "linkStatus":
         return (
-          <td key={key} className="px-3 py-2 text-xs">
+          <td key={col} className="px-3 py-2 text-xs">
             <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
           </td>
         );
       case "trib":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {c.tribText ?? "—"}
           </td>
         );
@@ -1979,7 +2103,7 @@ export default function DeviceCircuitList({
         const conflictKeys = conflictKeysByCircuit.get(c.id);
         const ownConflict = !!(conflictKeys && c.devicePositionOwn && conflictKeys.has(normalizeDevicePositionKey(c.devicePositionOwn)));
         return (
-          <td key={key} className={`px-3 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+          <td key={col} className={`px-3 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
             {c.devicePositionOwn ?? "—"}
             {ownConflict && (
               <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
@@ -1991,27 +2115,65 @@ export default function DeviceCircuitList({
       }
       case "positionNext":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {positionNextDisplayById.get(c.id) ?? "—"}
           </td>
         );
       case "interface":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {c.interfaceType ?? "—"}
           </td>
         );
       case "counterpart":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {c.counterpartText ?? "—"}
           </td>
         );
       case "notes":
         return (
-          <td key={key} className="px-3 py-2 text-slate-500 max-w-xs">
+          <td key={col} className="px-3 py-2 text-slate-500 max-w-xs">
             <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
               {c.notes ?? "—"}
+            </div>
+          </td>
+        );
+      case "actions":
+        return (
+          <td key={col} className="px-3 py-2">
+            <div className="flex gap-2">
+              {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC (yêu
+                  cầu người dùng 2026-07-27) — dòng đang được sửa thì hiện
+                  chữ báo trạng thái thay vì nút, vì form sửa nằm ở khung
+                  riêng phía trên, bấm lại "Sửa" ở đây không có ý nghĩa gì
+                  thêm. */}
+              <RoleGate allow={["operator", "admin"]}>
+                {editing ? (
+                  <span className="text-xs italic text-slate-400">Đang sửa ở trên</span>
+                ) : (
+                  <button
+                    className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
+                    onClick={() => openEdit(c)}
+                    disabled={busy || creating || edit !== null}
+                    title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : "Sửa"}
+                    aria-label="Sửa"
+                  >
+                    <IconEdit />
+                  </button>
+                )}
+              </RoleGate>
+              <RoleGate allow={["operator", "admin"]}>
+                <button
+                  className="text-red-600 hover:underline"
+                  onClick={() => deleteCircuit(c)}
+                  disabled={busy}
+                  title="Xóa"
+                  aria-label="Xóa"
+                >
+                  <IconTrash />
+                </button>
+              </RoleGate>
             </div>
           </td>
         );
@@ -2433,10 +2595,10 @@ export default function DeviceCircuitList({
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Hồ sơ đấu nối" fileNamePrefix="Ho_so_dau_noi" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -2460,37 +2622,12 @@ export default function DeviceCircuitList({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 40 }} />
-            <col style={{ width: colWidths.name }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidthOf(key) }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
-            <col style={{ width: 130 }} />
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">
-                <input
-                  type="checkbox"
-                  checked={filtered.length > 0 && filtered.every((c) => selected.has(c.id))}
-                  onChange={(e) => (e.target.checked ? selectAllVisible() : clearVisible())}
-                  title="Chọn/bỏ chọn tất cả đang hiện"
-                />
-              </th>
-              <DataTh
-                label="Tên luồng"
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.name}
-                onFilterChange={(v) => setFilter("name", v)}
-                width={colWidths.name}
-                onResize={(w) => resizeCol("name", w)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((c) => {
@@ -2521,49 +2658,7 @@ export default function DeviceCircuitList({
                             : "hover:bg-primary-50/50"
                   }`}
                 >
-                  <td className="px-3 py-2 align-top">
-                    <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} />
-                  </td>
-                  <td className="px-3 py-2 text-slate-700 break-words">
-                    {displayName(c) || "—"}
-                    <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
-                  </td>
-                  {orderedVisible.map((key) => renderCell(key, c))}
-                  <td className="px-3 py-2">
-                    <div className="flex gap-2">
-                      {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC
-                          (yêu cầu người dùng 2026-07-27) — dòng đang được sửa
-                          thì hiện chữ báo trạng thái thay vì nút, vì form sửa
-                          nằm ở khung riêng phía trên, bấm lại "Sửa" ở đây
-                          không có ý nghĩa gì thêm. */}
-                      <RoleGate allow={["operator", "admin"]}>
-                        {editing ? (
-                          <span className="text-xs italic text-slate-400">Đang sửa ở trên</span>
-                        ) : (
-                          <button
-                            className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
-                            onClick={() => openEdit(c)}
-                            disabled={busy || creating || edit !== null}
-                            title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : "Sửa"}
-                            aria-label="Sửa"
-                          >
-                            <IconEdit />
-                          </button>
-                        )}
-                      </RoleGate>
-                      <RoleGate allow={["operator", "admin"]}>
-                        <button
-                          className="text-red-600 hover:underline"
-                          onClick={() => deleteCircuit(c)}
-                          disabled={busy}
-                          title="Xóa"
-                          aria-label="Xóa"
-                        >
-                          <IconTrash />
-                        </button>
-                      </RoleGate>
-                    </div>
-                  </td>
+                  {orderedAll.map((col) => renderCell(col, c, editing))}
                 </tr>
               );
             })}

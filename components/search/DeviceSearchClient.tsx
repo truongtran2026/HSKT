@@ -85,6 +85,15 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "counterpart", label: "Đối phương" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả "Tên luồng" trước giờ cố định đầu bảng (yêu cầu
+// người dùng 2026-08-08, đồng bộ từ PortTable.tsx — xem architecture.md Mục
+// 84). `AllCol` trùng hệt `SortKey` — không cần ép kiểu sort riêng.
+type StructuralCol = "name";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["name", ...COLUMN_ITEMS.map((c) => c.key)];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["name"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] }) {
   const [mode, setMode] = useState<FilterMode>("all");
   const [deviceName, setDeviceName] = useState(""); // "" = tất cả thiết bị
@@ -95,12 +104,13 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-device-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-device-col-visibility", DEFAULT_VISIBLE);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<VisibleCol>("search-device-col-order", COLUMN_ITEMS.map((c) => c.key));
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("search-device-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     device: "",
     trib: "",
@@ -145,27 +155,29 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
-  function colWidthOf(key: VisibleCol): number {
-    if (key === "device") return 160;
-    if (key === "trib") return 90;
-    if (key === "positionOwn") return 150;
-    if (key === "positionNext") return colWidths.positionNext;
+  function colWidthOf(col: AllCol): number {
+    if (col === "name") return colWidths.name;
+    if (col === "device") return 160;
+    if (col === "trib") return 90;
+    if (col === "positionOwn") return 150;
+    if (col === "positionNext") return colWidths.positionNext;
     return colWidths.counterpart;
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây.
+  function renderHeaderCell(col: AllCol) {
+    // `AllCol` trùng hệt `SortKey` ở file này (xem comment khai báo AllCol).
     const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
+      key: col,
+      sortKey: col,
+      activeSortKey: sortKey,
       sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      reorderKey: key,
+      onSort: toggleSort,
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    switch (key) {
+    switch (col) {
+      case "name":
+        return <DataTh {...common} label="Tên luồng" width={colWidths.name} onResize={(w) => resizeCol("name", w)} />;
       case "device":
         return <DataTh {...common} label="Thiết bị" filterValue={filters.device} onFilterChange={(v) => setFilter("device", v)} />;
       case "trib":
@@ -199,35 +211,43 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
     }
   }
 
-  function renderCell(key: VisibleCol, r: DeviceCircuitRow) {
-    switch (key) {
+  function renderCell(col: AllCol, r: DeviceCircuitRow) {
+    switch (col) {
+      case "name":
+        return (
+          <td key={col} className="px-3 py-2">
+            <Link href={`/odf-device/sua-luong#${rowAnchor(r.id)}`} className="font-medium text-primary-700 hover:underline">
+              {r.name}
+            </Link>
+          </td>
+        );
       case "device":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.deviceName ?? "—"}
           </td>
         );
       case "trib":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.tribText ?? "—"}
           </td>
         );
       case "positionOwn":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.devicePositionOwn ?? "—"}
           </td>
         );
       case "positionNext":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.devicePositionNext ?? "—"}
           </td>
         );
       case "counterpart":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {r.counterpartText ?? "—"}
           </td>
         );
@@ -283,10 +303,10 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm Hồ sơ đấu nối" fileNamePrefix="Tim_kiem_Ho_so_dau_noi" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -296,34 +316,17 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: colWidths.name }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidthOf(key) }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <DataTh
-                label="Tên luồng"
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.name}
-                onResize={(w) => resizeCol("name", w)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-primary-50/50">
-                <td className="px-3 py-2">
-                  <Link href={`/odf-device/sua-luong#${rowAnchor(r.id)}`} className="font-medium text-primary-700 hover:underline">
-                    {r.name}
-                  </Link>
-                </td>
-                {orderedVisible.map((key) => renderCell(key, r))}
+                {orderedAll.map((col) => renderCell(col, r))}
               </tr>
             ))}
             {filtered.length === 0 && (

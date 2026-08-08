@@ -103,17 +103,28 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "empty", label: "Trống" },
 ];
 
+// Kéo-thả TOÀN BỘ cột, kể cả "Mã rack" trước giờ cố định đầu bảng (yêu cầu
+// người dùng 2026-08-08, đồng bộ từ PortTable.tsx — xem architecture.md Mục
+// 84): "đã kéo thả thì kéo thả được hết chứ sao chừa lại một vài cột". Tình
+// cờ `SortKey` ở đây ĐÃ gồm đúng "code" + 6 cột tùy chọn — `AllCol` trùng
+// hệt `SortKey`, không cần ép kiểu filter/sort riêng như PortTable.tsx (cột
+// "code" vẫn lọc/sắp xếp được, không giống cột tick/Thao tác không có dữ
+// liệu để lọc/sắp).
+type StructuralCol = "code";
+type AllCol = StructuralCol | VisibleCol;
+const DEFAULT_ALL_ORDER: AllCol[] = ["code", ...COLUMN_ITEMS.map((c) => c.key)];
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["code"]);
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
+
 export default function RackListTable({ racks }: { racks: RackListItem[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("code");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("rack-list-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("rack-list-col-visibility", DEFAULT_VISIBLE);
-  // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — chỉ áp dụng cho
-  // cột TÙY CHỌN, "Mã rack" luôn giữ đầu bảng (xem lib/useColumnOrder.ts).
-  const { order: colOrder, moveColumn, reset: resetColOrder } = useColumnOrder<VisibleCol>(
-    "rack-list-col-order",
-    COLUMN_ITEMS.map((c) => c.key)
-  );
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  // "-v2" (yêu cầu người dùng 2026-08-08, cùng lý do đã đổi ở PortTable.tsx —
+  // key cũ chỉ có 6 cột tùy chọn, tái dùng sẽ đẩy "code" MỚI xuống CUỐI thay
+  // vì đúng vị trí đầu bảng mong muốn).
+  const { order: colOrder, moveColumn, reset: resetColOrder } = useColumnOrder<AllCol>("rack-list-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<SortKey, string>>({
     code: "",
     route: "",
@@ -153,30 +164,30 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
 
   const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
-  // Cột "Mã rack" (đầu bảng) không nằm trong đây — luôn hiện, không kéo-thả
-  // được (xem lib/useColumnOrder.ts). 6 cột còn lại vẽ ĐÚNG theo `orderedVisible`
-  // (đã lọc ẩn/hiện lẫn thứ tự người dùng đã kéo) thay vì thứ tự cố định cũ.
-  function colWidthOf(key: VisibleCol): number {
-    return key === "route" ? colWidths.route : 90;
+  // Vẽ CẢ 7 cột (kể cả "Mã rack") theo ĐÚNG `orderedAll` (đã lọc ẩn/hiện lẫn
+  // thứ tự người dùng đã kéo) thay vì vị trí cố định cũ.
+  function colWidthOf(col: AllCol): number {
+    if (col === "code") return 120;
+    return col === "route" ? colWidths.route : 90;
   }
 
-  function renderHeaderCell(key: VisibleCol) {
-    // `activeSortKey` ép kiểu VisibleCol (thay vì SortKey rộng hơn) chỉ để
-    // TypeScript suy luận đúng K=VisibleCol cho <DataTh> ở đây — so sánh
-    // "===" bên trong DataTh vẫn đúng dù giá trị thật đang là "code" (không
-    // khớp bất kỳ VisibleCol nào, đơn giản là không tô đậm, không lỗi).
+  function renderHeaderCell(col: AllCol) {
+    // `AllCol` trùng hệt `SortKey` ở file này (xem comment khai báo AllCol) —
+    // không cần ép kiểu filter/sort riêng như PortTable.tsx.
     const common = {
-      key,
-      sortKey: key,
-      activeSortKey: sortKey as VisibleCol,
+      key: col,
+      sortKey: col,
+      activeSortKey: sortKey,
       sortDir,
-      onSort: toggleSort as (k: VisibleCol) => void,
-      filterValue: filters[key],
-      onFilterChange: (v: string) => setFilter(key, v),
-      reorderKey: key,
+      onSort: toggleSort,
+      filterValue: filters[col],
+      onFilterChange: (v: string) => setFilter(col, v),
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    switch (key) {
+    switch (col) {
+      case "code":
+        return <DataTh {...common} label="Mã rack" />;
       case "route":
         return <DataTh {...common} label="Tuyến cáp" width={colWidths.route} onResize={(w) => resizeCol("route", w)} />;
       case "odfType":
@@ -192,41 +203,49 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
     }
   }
 
-  function renderCell(key: VisibleCol, rack: RackListItem) {
-    switch (key) {
+  function renderCell(col: AllCol, rack: RackListItem) {
+    switch (col) {
+      case "code":
+        return (
+          <td key={col} className="px-3 py-2">
+            <Link href={`/odf-trunk/${rack.id}`} className="font-medium text-primary-700 hover:underline">
+              {formatRackCodeDisplay(rack.code)}
+            </Link>
+          </td>
+        );
       case "route":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 break-words">
+          <td key={col} className="px-3 py-2 text-slate-600 break-words">
             {rack.cableRouteName}
           </td>
         );
       case "odfType":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600">
+          <td key={col} className="px-3 py-2 text-slate-600">
             {odfTypeLabel(rack.odfType)}
           </td>
         );
       case "portCount":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {rack.portCount}
           </td>
         );
       case "inUse":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {rack.inUsePorts}
           </td>
         );
       case "standby":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {rack.standbyPorts}
           </td>
         );
       case "empty":
         return (
-          <td key={key} className="px-3 py-2 text-right text-slate-600">
+          <td key={col} className="px-3 py-2 text-right text-slate-600">
             {emptyPortsOf(rack)}
           </td>
         );
@@ -252,10 +271,10 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Rack" fileNamePrefix="Danh_sach_rack" />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -264,34 +283,17 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 120 }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidthOf(key) }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <DataTh
-                label="Mã rack"
-                sortKey="code"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                filterValue={filters.code}
-                onFilterChange={(v) => setFilter("code", v)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {filtered.map((rack) => (
               <tr key={rack.id} className="border-t border-slate-100 hover:bg-primary-50/50">
-                <td className="px-3 py-2">
-                  <Link href={`/odf-trunk/${rack.id}`} className="font-medium text-primary-700 hover:underline">
-                    {formatRackCodeDisplay(rack.code)}
-                  </Link>
-                </td>
-                {orderedVisible.map((key) => renderCell(key, rack))}
+                {orderedAll.map((col) => renderCell(col, rack))}
               </tr>
             ))}
             {filtered.length === 0 && (
