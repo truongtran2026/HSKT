@@ -36,6 +36,7 @@ import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStat
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 export interface PortView {
   id: string;
@@ -1434,39 +1435,49 @@ export default function PortTable({
                       <div className="flex flex-wrap gap-2">
                         {circuit ? (
                           <>
-                            <button className="text-primary-600 hover:underline" onClick={() => openEditExisting(group)} disabled={busy}>
-                              Sửa
-                            </button>
-                            {dangerOpenKey === key ? (
-                              <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
-                                Xóa
+                            <RoleGate allow={["operator", "admin"]}>
+                              <button className="text-primary-600 hover:underline" onClick={() => openEditExisting(group)} disabled={busy}>
+                                Sửa
                               </button>
-                            ) : (
-                              <button
-                                className="text-slate-400 hover:underline"
-                                onClick={() => setDangerOpenKey(key)}
-                                disabled={busy}
-                                title="Hiện nút xóa luồng này"
-                              >
-                                ⋯
-                              </button>
-                            )}
+                            </RoleGate>
+                            <RoleGate allow={["operator", "admin"]}>
+                              {dangerOpenKey === key ? (
+                                <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
+                                  Xóa
+                                </button>
+                              ) : (
+                                <button
+                                  className="text-slate-400 hover:underline"
+                                  onClick={() => setDangerOpenKey(key)}
+                                  disabled={busy}
+                                  title="Hiện nút xóa luồng này"
+                                >
+                                  ⋯
+                                </button>
+                              )}
+                            </RoleGate>
                             <button className="text-slate-500 hover:underline" onClick={() => copyGroup(group)} disabled={busy}>
                               Copy
                             </button>
-                            <button className="text-amber-600 hover:underline" onClick={() => openMove(group)} disabled={busy}>
-                              Chuyển tuyến
-                            </button>
+                            <RoleGate allow={["operator", "admin"]}>
+                              <button className="text-amber-600 hover:underline" onClick={() => openMove(group)} disabled={busy}>
+                                Chuyển tuyến
+                              </button>
+                            </RoleGate>
                           </>
                         ) : (
                           <>
-                            <button className="text-primary-600 hover:underline" onClick={() => openCreateNew(port)} disabled={busy}>
-                              {port.transitText ? "Sửa" : "Thêm luồng"}
-                            </button>
-                            {clipboard && (
-                              <button className="text-slate-500 hover:underline" onClick={() => openCreateNew(port, clipboard)} disabled={busy}>
-                                Dán
+                            <RoleGate allow={["operator", "admin"]}>
+                              <button className="text-primary-600 hover:underline" onClick={() => openCreateNew(port)} disabled={busy}>
+                                {port.transitText ? "Sửa" : "Thêm luồng"}
                               </button>
+                            </RoleGate>
+                            {clipboard && (
+                              <RoleGate allow={["operator", "admin"]}>
+                                <button className="text-slate-500 hover:underline" onClick={() => openCreateNew(port, clipboard)} disabled={busy}>
+                                  Dán
+                                </button>
+                              </RoleGate>
                             )}
                           </>
                         )}

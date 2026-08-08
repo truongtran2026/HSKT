@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 export default function RackAdminPanel({
   rackId,
@@ -123,41 +124,43 @@ export default function RackAdminPanel({
   }
 
   return (
-    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-      {error && <p className="mb-2 text-red-600">Lỗi: {error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-slate-500">Số port hiện tại: {portCount}.</span>
-        <input
-          type="number"
-          className="input w-24"
-          value={newPortCount}
-          min={portCount + 1}
-          onChange={(e) => setNewPortCount(e.target.value)}
-        />
-        <button className="btn-secondary" onClick={growPorts} disabled={busy}>
-          Thêm port (tăng lên số này)
-        </button>
-        <span className="mx-1 text-slate-300">|</span>
-        <button className="btn-secondary" onClick={() => setShowBlockForm((v) => !v)} disabled={busy}>
-          {showBlockForm ? "Ẩn form Block ƯC" : "+ Thêm Block ƯC"}
-        </button>
-      </div>
-
-      {showBlockForm && (
-        <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
-          <label className="text-sm">
-            <span className="block text-slate-500 mb-1">Mã Block ƯC</span>
-            <input className="input" value={blockCode} onChange={(e) => setBlockCode(e.target.value)} />
-          </label>
-          <label className="text-sm">
-            <span className="block text-slate-500 mb-1">Số port</span>
-            <input type="number" className="input w-24" value={blockPortCount} onChange={(e) => setBlockPortCount(e.target.value)} />
-          </label>
-          <button className="btn-primary" onClick={createBlockUC} disabled={busy}>
-            Tạo Block ƯC
+    <RoleGate allow={["operator", "admin"]}>
+      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+        {error && <p className="mb-2 text-red-600">Lỗi: {error}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-500">Số port hiện tại: {portCount}.</span>
+          <input
+            type="number"
+            className="input w-24"
+            value={newPortCount}
+            min={portCount + 1}
+            onChange={(e) => setNewPortCount(e.target.value)}
+          />
+          <button className="btn-secondary" onClick={growPorts} disabled={busy}>
+            Thêm port (tăng lên số này)
+          </button>
+          <span className="mx-1 text-slate-300">|</span>
+          <button className="btn-secondary" onClick={() => setShowBlockForm((v) => !v)} disabled={busy}>
+            {showBlockForm ? "Ẩn form Block ƯC" : "+ Thêm Block ƯC"}
           </button>
         </div>
-      )}
-    </div>
+
+        {showBlockForm && (
+          <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
+            <label className="text-sm">
+              <span className="block text-slate-500 mb-1">Mã Block ƯC</span>
+              <input className="input" value={blockCode} onChange={(e) => setBlockCode(e.target.value)} />
+            </label>
+            <label className="text-sm">
+              <span className="block text-slate-500 mb-1">Số port</span>
+              <input type="number" className="input w-24" value={blockPortCount} onChange={(e) => setBlockPortCount(e.target.value)} />
+            </label>
+            <button className="btn-primary" onClick={createBlockUC} disabled={busy}>
+              Tạo Block ƯC
+            </button>
+          </div>
+        )}
+      </div>
+    </RoleGate>
   );
 }

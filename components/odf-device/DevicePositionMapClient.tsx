@@ -15,6 +15,7 @@ import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAl
 import { translatePgError } from "@/lib/translatePgError";
 import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
+import RoleGate from "@/components/ui/RoleGate";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 import type { DeviceRow } from "@/lib/devices";
 
@@ -448,9 +449,11 @@ export default function DevicePositionMapClient({
               <option key={v} value={v} />
             ))}
           </datalist>
-          <button className="btn-primary" onClick={addRow} disabled={busy}>
-            Thêm
-          </button>
+          <RoleGate allow={["operator", "admin"]}>
+            <button className="btn-primary" onClick={addRow} disabled={busy}>
+              Thêm
+            </button>
+          </RoleGate>
         </div>
         {addHiddenNotice && (
           <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -547,9 +550,11 @@ export default function DevicePositionMapClient({
                       <option key={c} value={c} />
                     ))}
                   </datalist>
-                  <button className="btn-primary" onClick={applyRenameGroups} disabled={renameBusy}>
-                    {renameBusy ? "Đang lưu..." : "Áp dụng"}
-                  </button>
+                  <RoleGate allow={["operator", "admin"]}>
+                    <button className="btn-primary" onClick={applyRenameGroups} disabled={renameBusy}>
+                      {renameBusy ? "Đang lưu..." : "Áp dụng"}
+                    </button>
+                  </RoleGate>
                 </div>
               )}
 
@@ -710,14 +715,16 @@ export default function DevicePositionMapClient({
                       <td className="px-4 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>
                       <td className="px-4 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>
                       <td className="px-4 py-2">
-                        <div className="flex gap-2">
-                          <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy}>
-                            Sửa
-                          </button>
-                          <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy}>
-                            Xóa
-                          </button>
-                        </div>
+                        <RoleGate allow={["operator", "admin"]}>
+                          <div className="flex gap-2">
+                            <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy}>
+                              Sửa
+                            </button>
+                            <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy}>
+                              Xóa
+                            </button>
+                          </div>
+                        </RoleGate>
                       </td>
                     </>
                   )}

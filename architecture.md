@@ -4180,3 +4180,78 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       (`/search` 4.83kB, `/import-export` không đổi đáng kể). Chưa test UI
       thật bằng trình duyệt (không có công cụ tự động hóa trình duyệt trong
       môi trường này).
+
+79. **"Cài đặt chung" (2026-08-08)** — thay `PagePlaceholder` cũ (nội dung lỗi
+    thời "auth chưa cần ở MVP", trong khi auth 3 cấp đã bật từ mục Đợt 3,
+    2026-08-06). Người dùng chọn 3 việc qua AskUserQuestion: thông tin tài
+    khoản + đổi mật khẩu, quản lý tài khoản (chỉ Admin), ẩn nút Sửa/Xóa/Thêm
+    theo vai trò.
+    - **`lib/roleLabel.ts`** (mới) — tách `ROLE_LABEL` ra khỏi
+      `components/Sidebar.tsx` để dùng chung với `app/settings/page.tsx`.
+    - **Tài khoản + đổi mật khẩu**: `app/settings/page.tsx` viết lại (Server
+      Component, lấy `user` qua `createSupabaseServerClient()` +
+      `auth.getUser()` — đúng pattern `app/layout.tsx`), hiện email/vai
+      trò/ngày tạo/lần đăng nhập gần nhất. `components/settings/
+      ChangePasswordForm.tsx` (mới) gọi thẳng `supabase.auth.updateUser({
+      password })` phía client (sửa CHÍNH tài khoản đang đăng nhập, không cần
+      route API/service role).
+    - **Quản lý tài khoản (chỉ Admin)** — LẦN ĐẦU đưa `SUPABASE_SERVICE_ROLE_KEY`
+      vào runtime Next.js (trước đây chỉ dùng trong script CLI qua
+      `scripts/lib/supabaseAdmin.ts`):
+      - **`lib/supabaseAdminServer.ts`** (mới) — bản runtime của
+        `getSupabaseAdmin()`, chỉ được import từ Route Handler.
+      - **`lib/requireAdminApi.ts`** (mới) — helper dùng chung cho mọi route
+        `app/api/admin/**`: xác minh qua cookie phiên thật (không tin tham số
+        client) người gọi đã đăng nhập VÀ role=admin trước khi cho chạm tới
+        client service-role.
+      - **`app/api/admin/users/route.ts`** (mới) — `GET` (`auth.admin.
+        listUsers`) + `POST` (`auth.admin.createUser` với `app_metadata.role`,
+        đúng cách `scripts/create-role-test-accounts.ts` đang tạo tài khoản
+        test).
+      - **`app/api/admin/users/[userId]/route.ts`** (mới) — `PATCH` đổi vai
+        trò (`auth.admin.updateUserById`, merge với `app_metadata` hiện có
+        qua `getUserById` trước khi ghi đè). CHẶN tự đổi vai trò của chính
+        mình (`userId === caller.id`) — tránh tự khóa quyền admin do bấm
+        nhầm, disable luôn ở UI (`components/settings/UserManagementPanel.tsx`,
+        mới) kèm chú thích lý do.
+      - Không làm: xóa tài khoản qua UI (vẫn qua Supabase Dashboard — thao
+        tác hiếm, rủi ro cao hơn lợi ích).
+    - **Ẩn nút Sửa/Xóa/Thêm theo vai trò** — trước đó CHƯA có primitive nào
+      (0 kết quả grep `useRole`/`RequireRole`), CLAUDE.md ghi rõ đây là việc
+      "chưa làm". Thêm mới:
+      - **`components/RoleProvider.tsx`** — Context nhận `role` làm PROP từ
+        `app/layout.tsx` (dùng lại đúng `userRole` đã tính sẵn ở đó cho
+        Sidebar, KHÔNG gọi lại Supabase phía client — tránh round-trip mạng
+        thừa/tránh nháy nút trước khi ẩn), export `useRole()`.
+      - **`components/ui/RoleGate.tsx`** — `<RoleGate allow={[...]}>` ẩn hẳn
+        (không disable+tooltip) nội dung con nếu role hiện tại không nằm
+        trong `allow`; role null (chưa gán quyền) luôn bị coi là không đủ
+        quyền.
+      - Áp vào TOÀN BỘ nút/khối ghi dữ liệu tìm được qua grep
+        `supabase\.(from|rpc)\(` trong `components/` (9 file gọi trực tiếp +
+        2 file dùng qua `lib/*` như `TrunkMissingDeviceMirrorTab.tsx`,
+        `DataQualityClient.tsx`): `PortTable.tsx`, `DeviceCircuitList.tsx`,
+        `DeviceCategoryClient.tsx`, `DevicePositionMapClient.tsx`,
+        `RackHeader.tsx`, `RackAdminPanel.tsx` (cả khối — chỉ thao tác
+        rack/port), `AddDeviceRackForm.tsx`, `DeleteRackButton.tsx`,
+        `TransitFormatWarning.tsx`, `TrunkMissingDeviceMirrorTab.tsx`,
+        `DataQualityClient.tsx`, `ReportHistoryDrawer.tsx`,
+        `CircuitReportPanel.tsx`. Allow-list chọn ĐÚNG theo ranh giới RLS đã
+        có (không bịa luật mới): `allow={["operator","admin"]}` cho
+        Thêm/Sửa/Xóa-từng-luồng (`write_operator_admin`/`update_operator_
+        admin`/`operator_delete` — bảng `circuits`, `port_circuit_links`,
+        `transit_links`, `device_position_map`, `report_history`);
+        `allow={["admin"]}` cho xóa CẢ rack/thiết bị (`admin_delete` — bảng
+        `devices`, `ports`, `racks`, gồm cả "Gộp thiết bị" ở
+        `DataQualityClient.tsx` vì `mergeDeviceInto()` xóa thẳng 1 dòng
+        `devices`). Link điều hướng thuần túy (xem, không ghi) KHÔNG gate —
+        chỉ gate nút hành động THẬT.
+      - RLS ở CSDL vẫn là nơi chặn thật (như badge role ở Sidebar từ trước) —
+        `RoleGate` chỉ là UI thuận tiện, không thay thế RLS.
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch (2 route
+      mới `/api/admin/users`, `/api/admin/users/[userId]` lên đúng, `/settings`
+      179B→2.91kB). Chưa test UI thật bằng trình duyệt (không có công cụ tự
+      động hóa trình duyệt trong môi trường này) — cần người dùng tự đăng
+      nhập lần lượt viewer/operator/admin (`npm run create-role-accounts`) để
+      xác nhận đúng nút bị ẩn theo đúng vai trò, và tự thử đổi mật khẩu/quản
+      lý tài khoản trên trang `/settings`.

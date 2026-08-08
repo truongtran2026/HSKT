@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
 import { supabase } from "@/lib/supabase";
+import { ROLE_LABEL } from "@/lib/roleLabel";
 
 // "Xem" và "Sửa" từng tách riêng ở giai đoạn skeleton (khi CRUD thật chưa
 // tồn tại) nhưng ODF trung kế đã gộp xem+sửa ngay tại chỗ từ lâu (PortTable
@@ -59,12 +60,6 @@ const PIN_STORAGE_KEY = "sidebar-pinned";
 // đang đăng nhập bằng tài khoản nào khi tự test đổi vai trò (đăng xuất/đăng
 // nhập lại bằng tài khoản khác) — không phải chốt chặn quyền, RLS mới là nơi
 // chặn thật.
-const ROLE_LABEL: Record<string, string> = {
-  admin: "Admin",
-  operator: "Operator",
-  viewer: "Viewer (chỉ xem)",
-};
-
 export default function Sidebar({
   userEmail,
   userRole,

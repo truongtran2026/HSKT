@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { NonConformingTransitLink } from "@/lib/transitLinks";
+import RoleGate from "@/components/ui/RoleGate";
 import { compareRackCode } from "@/lib/rackCode";
 
 // Danh sách "Chuyển tiếp chưa đúng chuẩn form" (yêu cầu người dùng 2026-07-28)
@@ -124,15 +125,17 @@ export default function TransitFormatWarning({
               </span>{" "}
               &quot;{it.rawText}&quot;
             </Link>
-            <button
-              type="button"
-              className="btn-secondary shrink-0 px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => ack(it.id)}
-              disabled={ackingId === it.id}
-              title="Xác nhận đã xem, dòng này vốn dĩ phải ghi khác form chuẩn — bỏ qua, không hiện lại"
-            >
-              {ackingId === it.id ? "Đang Ack..." : "Ack"}
-            </button>
+            <RoleGate allow={["operator", "admin"]}>
+              <button
+                type="button"
+                className="btn-secondary shrink-0 px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => ack(it.id)}
+                disabled={ackingId === it.id}
+                title="Xác nhận đã xem, dòng này vốn dĩ phải ghi khác form chuẩn — bỏ qua, không hiện lại"
+              >
+                {ackingId === it.id ? "Đang Ack..." : "Ack"}
+              </button>
+            </RoleGate>
           </li>
         ))}
         {paged.length === 0 && <li className="text-amber-400">Không có dòng nào khớp bộ lọc.</li>}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { formatRackCodeDisplay } from "@/lib/rackCode";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 export interface RackHeaderData {
   id: string;
@@ -59,9 +60,11 @@ export default function RackHeader({ rack }: { rack: RackHeaderData }) {
       ) : (
         <p className="text-slate-500 mt-1">
           {rack.cableRouteName} · {rack.odfType === "welded" ? "Hàn nối" : "Phân phối"} · {rack.portCount} port{" "}
-          <button className="ml-1 text-primary-600 hover:underline text-sm" onClick={() => setEditing(true)}>
-            Sửa tên tuyến
-          </button>
+          <RoleGate allow={["operator", "admin"]}>
+            <button className="ml-1 text-primary-600 hover:underline text-sm" onClick={() => setEditing(true)}>
+              Sửa tên tuyến
+            </button>
+          </RoleGate>
         </p>
       )}
       {error && <p className="text-sm text-red-600 mt-1">Lỗi: {error}</p>}

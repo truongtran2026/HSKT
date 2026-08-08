@@ -22,6 +22,7 @@ import {
 import { syncAllDeviceMirrorGaps } from "@/lib/deviceDeviceSync";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
 import UnlinkedMirrorPairsTab from "@/components/data-quality/UnlinkedMirrorPairsTab";
@@ -542,15 +543,22 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
                   <span className="ml-2 text-xs text-amber-500">khoảng cách {c.editDistance}</span>
                 </span>
                 <span className="flex gap-2">
-                  <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "a")} disabled={busy}>
-                    {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceA.name}"`}
-                  </button>
-                  <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "b")} disabled={busy}>
-                    {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceB.name}"`}
-                  </button>
-                  <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => ignore(c)} disabled={busy}>
-                    Bỏ qua
-                  </button>
+                  {/* Gộp luôn xóa hẳn 1 thiết bị (mergeDeviceInto) — admin_delete
+                      trong RLS chỉ cho admin, khác "Bỏ qua" (chỉ ghi nhận, không
+                      xóa gì) — operator được phép. */}
+                  <RoleGate allow={["admin"]}>
+                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "a")} disabled={busy}>
+                      {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceA.name}"`}
+                    </button>
+                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "b")} disabled={busy}>
+                      {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceB.name}"`}
+                    </button>
+                  </RoleGate>
+                  <RoleGate allow={["operator", "admin"]}>
+                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => ignore(c)} disabled={busy}>
+                      Bỏ qua
+                    </button>
+                  </RoleGate>
                 </span>
               </div>
               {(c.deviceA.circuits.length > 0 || c.deviceB.circuits.length > 0) && (

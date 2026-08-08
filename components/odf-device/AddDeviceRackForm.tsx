@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 // Thêm rack ODF/DDF thiết bị MỚI (yêu cầu người dùng 2026-07-28: "Chưa có
 // phần thêm/sửa/xóa Rack... Số port là nhập liệu ban đầu khi khởi tạo Rack
@@ -107,9 +108,11 @@ export default function AddDeviceRackForm({ stationId }: { stationId: string }) 
 
   if (!open) {
     return (
-      <button type="button" className="btn-secondary" onClick={openForm}>
-        + Thêm rack mới
-      </button>
+      <RoleGate allow={["operator", "admin"]}>
+        <button type="button" className="btn-secondary" onClick={openForm}>
+          + Thêm rack mới
+        </button>
+      </RoleGate>
     );
   }
 

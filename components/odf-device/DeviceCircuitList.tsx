@@ -37,6 +37,7 @@ import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
+import RoleGate from "@/components/ui/RoleGate";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
@@ -1968,15 +1969,17 @@ export default function DeviceCircuitList({
               2026-07-27): phải Lưu hoặc Hủy phần Sửa xong mới được Thêm mới,
               không cho vừa Sửa vừa Thêm cùng lúc — tránh mất dở dữ liệu đang
               sửa. */}
-          <button
-            type="button"
-            className="btn-secondary px-2 py-1 text-xs"
-            onClick={() => (creating ? cancelCreate() : openCreate())}
-            disabled={!creating && edit !== null}
-            title={!creating && edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước khi thêm mới" : undefined}
-          >
-            {creating ? "Hủy" : "+ Thêm luồng mới"}
-          </button>
+          <RoleGate allow={["operator", "admin"]}>
+            <button
+              type="button"
+              className="btn-secondary px-2 py-1 text-xs"
+              onClick={() => (creating ? cancelCreate() : openCreate())}
+              disabled={!creating && edit !== null}
+              title={!creating && edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước khi thêm mới" : undefined}
+            >
+              {creating ? "Hủy" : "+ Thêm luồng mới"}
+            </button>
+          </RoleGate>
         </div>
         {creating && (
           <>
@@ -2296,14 +2299,16 @@ export default function DeviceCircuitList({
             <button type="button" className="text-xs text-slate-500 hover:underline" onClick={clearAllSelected}>
               Bỏ chọn tất cả ({selected.size})
             </button>
-            <button
-              type="button"
-              className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              onClick={deleteSelectedCircuits}
-              disabled={busy}
-            >
-              {busy ? "Đang xóa..." : `Xóa ${selected.size} luồng đã chọn`}
-            </button>
+            <RoleGate allow={["operator", "admin"]}>
+              <button
+                type="button"
+                className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={deleteSelectedCircuits}
+                disabled={busy}
+              >
+                {busy ? "Đang xóa..." : `Xóa ${selected.size} luồng đã chọn`}
+              </button>
+            </RoleGate>
           </>
         )}
         <div className="ml-auto flex gap-2">
@@ -2520,21 +2525,25 @@ export default function DeviceCircuitList({
                           thì hiện chữ báo trạng thái thay vì nút, vì form sửa
                           nằm ở khung riêng phía trên, bấm lại "Sửa" ở đây
                           không có ý nghĩa gì thêm. */}
-                      {editing ? (
-                        <span className="text-xs italic text-slate-400">Đang sửa ở trên</span>
-                      ) : (
-                        <button
-                          className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
-                          onClick={() => openEdit(c)}
-                          disabled={busy || creating || edit !== null}
-                          title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : undefined}
-                        >
-                          Sửa
+                      <RoleGate allow={["operator", "admin"]}>
+                        {editing ? (
+                          <span className="text-xs italic text-slate-400">Đang sửa ở trên</span>
+                        ) : (
+                          <button
+                            className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
+                            onClick={() => openEdit(c)}
+                            disabled={busy || creating || edit !== null}
+                            title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : undefined}
+                          >
+                            Sửa
+                          </button>
+                        )}
+                      </RoleGate>
+                      <RoleGate allow={["operator", "admin"]}>
+                        <button className="text-red-600 hover:underline" onClick={() => deleteCircuit(c)} disabled={busy}>
+                          Xóa
                         </button>
-                      )}
-                      <button className="text-red-600 hover:underline" onClick={() => deleteCircuit(c)} disabled={busy}>
-                        Xóa
-                      </button>
+                      </RoleGate>
                     </div>
                   </td>
                 </tr>

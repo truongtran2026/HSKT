@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 // Xóa hẳn 1 rack ODF/DDF thiết bị (yêu cầu người dùng 2026-07-28) — CHỈ dùng
 // cho domain='device' (xem app/odf-trunk/[rackId]/page.tsx, chỉ render nút
@@ -47,16 +48,18 @@ export default function DeleteRackButton({ rackId, rackCode }: { rackId: string;
   }
 
   return (
-    <div className="mt-2">
-      {error && <p className="mb-1 text-sm text-red-600">Lỗi: {error}</p>}
-      <button
-        type="button"
-        className="text-sm text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
-        onClick={handleDelete}
-        disabled={busy}
-      >
-        {busy ? "Đang xóa..." : "Xóa rack này"}
-      </button>
-    </div>
+    <RoleGate allow={["admin"]}>
+      <div className="mt-2">
+        {error && <p className="mb-1 text-sm text-red-600">Lỗi: {error}</p>}
+        <button
+          type="button"
+          className="text-sm text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
+          onClick={handleDelete}
+          disabled={busy}
+        >
+          {busy ? "Đang xóa..." : "Xóa rack này"}
+        </button>
+      </div>
+    </RoleGate>
   );
 }

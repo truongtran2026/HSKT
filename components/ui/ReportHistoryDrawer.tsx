@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { fetchReportHistory, deleteReportHistoryEntry, type ReportHistoryRow } from "@/lib/reportHistory";
 import { formatLastUpdated } from "@/lib/format";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
+import RoleGate from "@/components/ui/RoleGate";
 
 // "Lịch sử tra cứu" dùng CHUNG cho cả Hồ sơ ODF trung kế lẫn Hồ sơ đấu nối
 // (yêu cầu người dùng 2026-08-07) — khung trượt mở từ nút trên cả 2 trang,
@@ -58,9 +59,11 @@ export default function ReportHistoryDrawer({ open, onClose }: { open: boolean; 
                 <button type="button" className="text-primary-600 hover:underline" onClick={() => copy(row)}>
                   {copiedId === row.id ? "Đã copy!" : "Copy"}
                 </button>
-                <button type="button" className="text-red-500 hover:underline disabled:opacity-50" disabled={busyId === row.id} onClick={() => remove(row)}>
-                  Xóa
-                </button>
+                <RoleGate allow={["operator", "admin"]}>
+                  <button type="button" className="text-red-500 hover:underline disabled:opacity-50" disabled={busyId === row.id} onClick={() => remove(row)}>
+                    Xóa
+                  </button>
+                </RoleGate>
               </div>
             </div>
           </div>

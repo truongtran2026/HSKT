@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { upsertReportHistory } from "@/lib/reportHistory";
+import RoleGate from "@/components/ui/RoleGate";
 
 export interface CircuitReportItem {
   /** circuit id — dùng luôn làm khóa lưu report_history.circuit_id. */
@@ -66,15 +67,17 @@ export default function CircuitReportPanel({ items }: { items: CircuitReportItem
               <button type="button" className="text-primary-600 hover:underline" onClick={() => copy(item.text, item.key)}>
                 {copiedKey === item.key ? "Đã copy!" : "Copy"}
               </button>
-              <label className="flex items-center gap-1 text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={savedIds.has(item.key)}
-                  disabled={busyId === item.key || savedIds.has(item.key)}
-                  onChange={() => toggleSave(item)}
-                />
-                Lưu vào lịch sử
-              </label>
+              <RoleGate allow={["operator", "admin"]}>
+                <label className="flex items-center gap-1 text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={savedIds.has(item.key)}
+                    disabled={busyId === item.key || savedIds.has(item.key)}
+                    onChange={() => toggleSave(item)}
+                  />
+                  Lưu vào lịch sử
+                </label>
+              </RoleGate>
             </div>
           </div>
         ))}

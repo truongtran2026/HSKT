@@ -18,6 +18,7 @@ import { useColumnWidths } from "@/lib/useColumnWidths";
 import SortableTh from "@/components/ui/SortableTh";
 import ResizableTh from "@/components/ui/ResizableTh";
 import FilterInput from "@/components/ui/FilterInput";
+import RoleGate from "@/components/ui/RoleGate";
 import type { DeviceRow } from "@/lib/devices";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 
@@ -516,13 +517,15 @@ export default function DeviceCategoryClient({
                       value={pendingNameOverrides[g.key] ?? bestVariantText(g)}
                       onChange={(e) => setPendingNameOverrides((prev) => ({ ...prev, [g.key]: e.target.value }))}
                     />
-                    <button
-                      className="btn-primary px-3 py-1 text-xs"
-                      onClick={() => applyPendingGroup(g)}
-                      disabled={pendingBusyKey !== null}
-                    >
-                      {pendingBusyKey === g.key ? "Đang lưu..." : "Áp dụng"}
-                    </button>
+                    <RoleGate allow={["operator", "admin"]}>
+                      <button
+                        className="btn-primary px-3 py-1 text-xs"
+                        onClick={() => applyPendingGroup(g)}
+                        disabled={pendingBusyKey !== null}
+                      >
+                        {pendingBusyKey === g.key ? "Đang lưu..." : "Áp dụng"}
+                      </button>
+                    </RoleGate>
                     <span className="text-sm text-slate-500">{g.circuitIds.length} luồng</span>
                     <span className="text-xs text-slate-400">
                       Biến thể: {g.variants.map((v) => `${v.text} (${v.count})`).join(", ")}
@@ -537,9 +540,11 @@ export default function DeviceCategoryClient({
 
       <div className="mb-3">
         {!showAddForm ? (
-          <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => setShowAddForm(true)}>
-            + Thêm thiết bị
-          </button>
+          <RoleGate allow={["operator", "admin"]}>
+            <button type="button" className="btn-secondary px-3 py-1.5 text-sm" onClick={() => setShowAddForm(true)}>
+              + Thêm thiết bị
+            </button>
+          </RoleGate>
         ) : (
           <div className="flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3">
             <label className="text-sm">
@@ -659,9 +664,11 @@ export default function DeviceCategoryClient({
               value={bulkCategory}
               onChange={(e) => setBulkCategory(e.target.value)}
             />
-            <button className="btn-primary" onClick={applyBulkCategory} disabled={busy}>
-              {busy ? "Đang lưu..." : "Áp dụng"}
-            </button>
+            <RoleGate allow={["operator", "admin"]}>
+              <button className="btn-primary" onClick={applyBulkCategory} disabled={busy}>
+                {busy ? "Đang lưu..." : "Áp dụng"}
+              </button>
+            </RoleGate>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <p className="w-full text-sm font-medium text-primary-800 sm:w-auto">
@@ -674,9 +681,11 @@ export default function DeviceCategoryClient({
               value={bulkRename}
               onChange={(e) => setBulkRename(e.target.value)}
             />
-            <button className="btn-primary" onClick={applyBulkRename} disabled={busy}>
-              {busy ? "Đang lưu..." : "Áp dụng"}
-            </button>
+            <RoleGate allow={["operator", "admin"]}>
+              <button className="btn-primary" onClick={applyBulkRename} disabled={busy}>
+                {busy ? "Đang lưu..." : "Áp dụng"}
+              </button>
+            </RoleGate>
           </div>
           {selected.size > 1 && (
             <p className="text-xs text-primary-700">
@@ -689,14 +698,16 @@ export default function DeviceCategoryClient({
               Xóa vĩnh viễn {selected.size === 1 ? "thiết bị này" : `${selected.size} thiết bị đã chọn`}
               {selectedCircuitCount > 0 ? ` (kèm ${selectedCircuitCount} luồng)` : ""}:
             </p>
-            <button
-              type="button"
-              className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              onClick={deleteSelectedDevices}
-              disabled={busy}
-            >
-              {busy ? "Đang xóa..." : "Xóa"}
-            </button>
+            <RoleGate allow={["admin"]}>
+              <button
+                type="button"
+                className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={deleteSelectedDevices}
+                disabled={busy}
+              >
+                {busy ? "Đang xóa..." : "Xóa"}
+              </button>
+            </RoleGate>
           </div>
           <p className="text-xs text-red-600">
             Xóa thiết bị sẽ xóa luôn mọi luồng đang gán cho thiết bị đó và dọn thư viện &quot;Vị trí thiết bị&quot;

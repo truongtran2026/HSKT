@@ -6,6 +6,7 @@ import type { TrunkCircuitMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAu
 import { findMirrorTrunkCircuits, deleteTrunkCircuitToResync } from "@/lib/mirrorTrunkCircuits";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import RoleGate from "@/components/ui/RoleGate";
 
 // Khung rà soát CHIỀU NGƯỢC của mục 38/39 (yêu cầu người dùng 2026-07-31,
 // xem lib/reverseDeviceTrunkAudit.ts để hiểu đầy đủ lý do) — luồng trung kế
@@ -158,15 +159,17 @@ export default function TrunkMissingDeviceMirrorTab({ items }: { items: TrunkCir
                 />
                 Xác nhận xóa
               </label>
-              <button
-                type="button"
-                className="btn-secondary shrink-0 px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => handleDelete(item)}
-                disabled={!confirmedIds.has(item.trunkCircuitId) || busyId === item.trunkCircuitId}
-                title="Chỉ bấm được khi đã tick xác nhận — xóa để giải phóng port, tạo lại đúng chuẩn khi bổ sung Hồ sơ đấu nối"
-              >
-                {busyId === item.trunkCircuitId ? "Đang xóa..." : "Xóa"}
-              </button>
+              <RoleGate allow={["operator", "admin"]}>
+                <button
+                  type="button"
+                  className="btn-secondary shrink-0 px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => handleDelete(item)}
+                  disabled={!confirmedIds.has(item.trunkCircuitId) || busyId === item.trunkCircuitId}
+                  title="Chỉ bấm được khi đã tick xác nhận — xóa để giải phóng port, tạo lại đúng chuẩn khi bổ sung Hồ sơ đấu nối"
+                >
+                  {busyId === item.trunkCircuitId ? "Đang xóa..." : "Xóa"}
+                </button>
+              </RoleGate>
             </span>
           </li>
         ))}
