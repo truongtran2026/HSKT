@@ -422,7 +422,7 @@ function TableView({
         <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
         <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
       </div>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.route }} />
@@ -454,26 +454,26 @@ function TableView({
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.cableRouteName} className="border-t border-slate-100">
-                <td className="px-4 py-2 text-slate-700 break-words">{r.cableRouteName}</td>
-                {visible.total && <td className="px-4 py-2 text-right text-slate-600">{r.total}</td>}
+              <tr key={r.cableRouteName} className="border-t border-slate-100 hover:bg-primary-50/50">
+                <td className="px-3 py-2 text-slate-700 break-words">{r.cableRouteName}</td>
+                {visible.total && <td className="px-3 py-2 text-right text-slate-600">{r.total}</td>}
                 {visible.inUse && (
-                  <td className="px-4 py-2 text-right text-emerald-600">
+                  <td className="px-3 py-2 text-right text-emerald-600">
                     {r.inUse} ({pct(r.inUse, r.total)}%)
                   </td>
                 )}
                 {visible.standby && (
-                  <td className="px-4 py-2 text-right text-amber-600">
+                  <td className="px-3 py-2 text-right text-amber-600">
                     {r.standby} ({pct(r.standby, r.total)}%)
                   </td>
                 )}
                 {visible.empty && (
-                  <td className="px-4 py-2 text-right text-slate-500">
+                  <td className="px-3 py-2 text-right text-slate-500">
                     {r.empty} ({pct(r.empty, r.total)}%)
                   </td>
                 )}
                 {visible.ratio && (
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-2">
                     <StackedBar r={r} />
                   </td>
                 )}

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { fetchAllTrunkPorts } from "@/lib/trunkPorts";
 import { derivePortStatus } from "@/lib/portStatus";
 import DashboardClient, { type RouteStat, type OverallStat } from "@/components/dashboard/DashboardClient";
@@ -7,6 +8,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo ĐÚNG trang đang xem (yêu cầu người dùng
+// 2026-08-08: trước đây MỌI trang đều hiện "Hồ sơ kỹ thuật" từ app/layout.tsx,
+// không phân biệt được đang ở tab nào) — override title tĩnh của layout gốc.
+export const metadata: Metadata = { title: "Dashboard" };
 
 const UNNAMED_ROUTE = "(chưa đặt tên tuyến)";
 

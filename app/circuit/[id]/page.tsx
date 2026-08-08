@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
@@ -17,6 +18,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // trong CircuitPairDetail (lib/circuitPairSync.ts) — trang này chỉ dựng giao
 // diện, không viết logic so sánh mới, đúng như audit gốc chỉ định.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx) — KHÔNG dùng generateMetadata
+// để lấy tên luồng thật (sẽ phải fetch lại y hệt findPair/fetchCircuitDetail
+// bên dưới, tốn thêm 1 lượt tải chỉ cho tiêu đề tab) — trang permalink này ít
+// khi mở nhiều tab cùng lúc như trang danh sách rack, chấp nhận tiêu đề tĩnh.
+export const metadata: Metadata = { title: "Chi tiết luồng" };
 
 async function findPair(supabase: SupabaseClient, id: string): Promise<CircuitPairDetail | null> {
   // Cùng cỡ dữ liệu mà app/odf-trunk/[rackId]/page.tsx đã tải mỗi lần render

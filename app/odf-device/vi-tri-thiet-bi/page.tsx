@@ -4,10 +4,15 @@ import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceAliases } from "@/lib/deviceAliases";
 import DevicePositionMapClient from "@/components/odf-device/DevicePositionMapClient";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import type { Metadata } from "next";
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Thư viện vị trí thiết bị" };
 
 export default async function DevicePositionMapPage() {
   const supabase = await createSupabaseServerClient();

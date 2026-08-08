@@ -27,13 +27,13 @@ import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
 import { formatLastUpdated } from "@/lib/format";
 import DataTh from "@/components/ui/DataTh";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
-import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import MirrorLinkStatusIcon from "@/components/ui/MirrorLinkStatusIcon";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
-import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { unlinkCircuitMirror, mirrorLinkStatusLabel, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { translatePgError } from "@/lib/translatePgError";
@@ -117,9 +117,9 @@ function transitDisplay(raw: string | null, trunkPorts: TrunkPortRow[]): string 
 // Sắp xếp áp dụng ở CẤP NHÓM (sau khi đã gộp Tx/Rx theo port vật lý liền kề)
 // — không sắp xếp mảng ports thô, để không phá vỡ quy tắc gộp rowspan (luôn
 // dựa theo port_number liền kề, xem buildGroups ở trên và CLAUDE.md #1/#2).
-type SortKey = "port" | "fiber" | "name" | "interface" | "counterpart" | "responsePlan" | "station" | "notes";
+type SortKey = "port" | "fiber" | "name" | "linkStatus" | "interface" | "counterpart" | "responsePlan" | "station" | "notes";
 
-function groupValue(g: Group, key: SortKey): string | number | null {
+function groupValue(g: Group, key: SortKey, mirrorLinkStatuses?: Record<string, MirrorLinkStatus>): string | number | null {
   const first = g.ports[0];
   const c = first.circuit;
   switch (key) {
@@ -129,6 +129,8 @@ function groupValue(g: Group, key: SortKey): string | number | null {
       return first.fiberNumber;
     case "name":
       return c?.name ?? null;
+    case "linkStatus":
+      return c ? mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) : null;
     case "interface":
       return c?.interfaceType ?? null;
     case "counterpart":
@@ -148,12 +150,12 @@ function groupValue(g: Group, key: SortKey): string | number | null {
 // vẫn hợp lý (khớp nếu 1 trong 2 port chứa từ khóa).
 type FilterKey = SortKey | "transit";
 
-function filterValue(g: Group, key: FilterKey): string | number | null {
+function filterValue(g: Group, key: FilterKey, mirrorLinkStatuses?: Record<string, MirrorLinkStatus>): string | number | null {
   if (key === "transit") return g.ports.map((p) => p.transitText ?? "").join(" ");
-  return groupValue(g, key);
+  return groupValue(g, key, mirrorLinkStatuses);
 }
 
-const FILTER_KEYS: FilterKey[] = ["port", "fiber", "name", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
+const FILTER_KEYS: FilterKey[] = ["port", "fiber", "name", "linkStatus", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
 
 interface ClipboardData {
   sourcePortIds: string[];
@@ -262,9 +264,12 @@ type ResizableCol = "name" | "transit" | "responsePlan";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, transit: 200, responsePlan: 220 };
 
 // Ẩn/hiện cột tùy chọn (yêu cầu người dùng 2026-08-07) — "Port", "Tên luồng",
-// cột tick và "Thao tác" luôn hiện (không cho ẩn), 7 cột còn lại tùy chọn.
-type VisibleCol = "fiber" | "interface" | "transit" | "counterpart" | "responsePlan" | "station" | "notes";
+// cột tick và "Thao tác" luôn hiện (không cho ẩn), còn lại tùy chọn. "Liên
+// kết" (2026-08-08) thêm vào đây thay vì luôn hiện — tách khỏi tên luồng
+// thành 1 cột riêng, dạng icon, lọc/sắp xếp được (xem MirrorLinkStatusIcon.tsx).
+type VisibleCol = "linkStatus" | "fiber" | "interface" | "transit" | "counterpart" | "responsePlan" | "station" | "notes";
 const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  linkStatus: true,
   fiber: true,
   interface: true,
   transit: true,
@@ -274,6 +279,7 @@ const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
   notes: true,
 };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "linkStatus", label: "Liên kết" },
   { key: "fiber", label: "Sợi" },
   { key: "interface", label: "Giao tiếp" },
   { key: "transit", label: "Chuyển tiếp" },
@@ -431,6 +437,7 @@ export default function PortTable({
     port: "",
     fiber: "",
     name: "",
+    linkStatus: "",
     interface: "",
     transit: "",
     counterpart: "",
@@ -445,13 +452,13 @@ export default function PortTable({
 
   const groups = buildGroups(ports);
   const filteredGroups = useMemo(
-    () => groups.filter((g) => FILTER_KEYS.every((k) => matchesFilter(filterValue(g, k), filters[k]))),
-    [groups, filters]
+    () => groups.filter((g) => FILTER_KEYS.every((k) => matchesFilter(filterValue(g, k, mirrorLinkStatuses), filters[k]))),
+    [groups, filters, mirrorLinkStatuses]
   );
   const sortedGroups = useMemo(() => {
-    const arr = [...filteredGroups].sort((a, b) => compareValues(groupValue(a, sortKey), groupValue(b, sortKey)));
+    const arr = [...filteredGroups].sort((a, b) => compareValues(groupValue(a, sortKey, mirrorLinkStatuses), groupValue(b, sortKey, mirrorLinkStatuses)));
     return sortDir === "desc" ? arr.reverse() : arr;
-  }, [filteredGroups, sortKey, sortDir]);
+  }, [filteredGroups, sortKey, sortDir, mirrorLinkStatuses]);
 
   // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng, xem
   // architecture.md) — 1 dòng xuất = 1 port (đúng nguyên tắc CLAUDE.md #1,
@@ -464,6 +471,9 @@ export default function PortTable({
     ];
     if (visible.fiber) cols.push({ label: "Sợi", getValue: (p) => p.fiberNumber });
     cols.push({ label: "Tên luồng", getValue: (p) => p.circuit?.name ?? "" });
+    if (visible.linkStatus) {
+      cols.push({ label: "Liên kết", getValue: (p) => (p.circuit ? mirrorLinkStatusLabel(mirrorLinkStatuses?.[p.circuit.id]) : "") });
+    }
     if (visible.interface) cols.push({ label: "Giao tiếp", getValue: (p) => p.circuit?.interfaceType ?? "" });
     if (visible.transit) cols.push({ label: "Chuyển tiếp", getValue: (p) => transitDisplay(p.transitText, trunkPorts) });
     if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (p) => p.circuit?.counterpartText ?? "" });
@@ -472,7 +482,7 @@ export default function PortTable({
     if (visible.notes) cols.push({ label: "Ghi chú", getValue: (p) => p.circuit?.notes ?? "" });
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, trunkPorts]);
+  }, [visible, trunkPorts, mirrorLinkStatuses]);
 
   // Tổng số cột ĐANG hiện — dùng cho colSpan của EditRow/MoveRow/dòng trống
   // (phải tính động vì 7 cột giờ ẩn/hiện được, không còn cố định 10 nữa).
@@ -1141,8 +1151,11 @@ export default function PortTable({
           </button>
         </div>
       )}
-      {Object.values(filters).some((v) => v) && (
-        <div className="mb-2">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <p className="text-sm text-slate-500">
+          {exportRows.length}/{ports.length} port
+        </p>
+        {Object.values(filters).some((v) => v) && (
           <button
             type="button"
             className="text-xs text-primary-600 hover:underline"
@@ -1151,6 +1164,7 @@ export default function PortTable({
                 port: "",
                 fiber: "",
                 name: "",
+                linkStatus: "",
                 interface: "",
                 transit: "",
                 counterpart: "",
@@ -1162,19 +1176,19 @@ export default function PortTable({
           >
             Xóa bộ lọc
           </button>
+        )}
+        <div className="ml-auto flex gap-2">
+          <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
+            Lịch sử tra cứu
+          </button>
+          <ExportExcelButton
+            columns={exportColumns}
+            rows={exportRows}
+            sheetName={`Rack ${currentRackCode || rackId}`}
+            fileNamePrefix={`ODF_trung_ke_${currentRackCode || rackId}`}
+          />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
         </div>
-      )}
-      <div className="mb-3 flex items-center justify-end gap-2">
-        <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
-          Lịch sử tra cứu
-        </button>
-        <ExportExcelButton
-          columns={exportColumns}
-          rows={exportRows}
-          sheetName={`Rack ${currentRackCode || rackId}`}
-          fileNamePrefix={`ODF_trung_ke_${currentRackCode || rackId}`}
-        />
-        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
       </div>
       <CircuitReportPanel items={reportItems} />
       <ReportHistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
@@ -1183,12 +1197,13 @@ export default function PortTable({
           không giới hạn chiều cao, khung này không bao giờ tự cuộn (trang
           cuộn thay), khiến sticky vô tác dụng. */}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
-        <table className="w-full text-sm table-fixed">
+        <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: 56 }} />
             {visible.fiber && <col style={{ width: 56 }} />}
             <col style={{ width: colWidths.name }} />
+            {visible.linkStatus && <col style={{ width: 110 }} />}
             {visible.interface && <col style={{ width: 90 }} />}
             {visible.transit && <col style={{ width: colWidths.transit }} />}
             {visible.counterpart && <col style={{ width: 170 }} />}
@@ -1217,6 +1232,18 @@ export default function PortTable({
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
               />
+              {visible.linkStatus && (
+                <DataTh
+                  label="Liên kết"
+                  sortKey="linkStatus"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.linkStatus}
+                  onFilterChange={(v) => setFilter("linkStatus", v)}
+                  filterPlaceholder="Đã/Chưa..."
+                />
+              )}
               {visible.interface && (
                 <DataTh label="Giao tiếp" sortKey="interface" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
               )}
@@ -1352,7 +1379,7 @@ export default function PortTable({
                   // dòng port ĐẦU TIÊN nhìn thấy được lại là port kế tiếp chứ
                   // không phải port vừa bấm (người dùng phát hiện 2026-07-28,
                   // đã từng gặp lỗi cùng loại bên DeviceCircuitList.tsx).
-                  className={`scroll-mt-24 border-t border-slate-100 hover:bg-primary-50/30 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
+                  className={`scroll-mt-24 border-t border-slate-100 hover:bg-primary-50/50 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
                 >
                   {idx === 0 && (
                     <td className="px-3 py-2" rowSpan={group.ports.length}>
@@ -1365,14 +1392,12 @@ export default function PortTable({
                   {visible.fiber && <td className="px-3 py-2 text-slate-700">{port.fiberNumber ?? "—"}</td>}
                   {idx === 0 && (
                     <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
-                      {circuit ? (
-                        <>
-                          {circuit.name}
-                          <MirrorLinkBadge status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />
-                        </>
-                      ) : (
-                        <span className="text-slate-300">— trống —</span>
-                      )}
+                      {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
+                    </td>
+                  )}
+                  {visible.linkStatus && idx === 0 && (
+                    <td className="px-3 py-2 text-xs" rowSpan={group.ports.length}>
+                      {circuit && <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />}
                     </td>
                   )}
                   {visible.interface && idx === 0 && (

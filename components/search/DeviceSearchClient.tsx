@@ -190,7 +190,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
       </div>
 
       <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn thiết bị ở trên để xem, hoặc">
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.name }} />
@@ -275,16 +275,16 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
           <tbody>
             {filtered.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-primary-50/50">
-                <td className="px-4 py-2">
+                <td className="px-3 py-2">
                   <Link href={`/odf-device/sua-luong#${rowAnchor(r.id)}`} className="font-medium text-primary-700 hover:underline">
                     {r.name}
                   </Link>
                 </td>
-                {visible.device && <td className="px-4 py-2 text-slate-600 break-words">{r.deviceName ?? "—"}</td>}
-                {visible.trib && <td className="px-4 py-2 text-slate-600 break-words">{r.tribText ?? "—"}</td>}
-                {visible.positionOwn && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionOwn ?? "—"}</td>}
-                {visible.positionNext && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionNext ?? "—"}</td>}
-                {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{r.counterpartText ?? "—"}</td>}
+                {visible.device && <td className="px-3 py-2 text-slate-600 break-words">{r.deviceName ?? "—"}</td>}
+                {visible.trib && <td className="px-3 py-2 text-slate-600 break-words">{r.tribText ?? "—"}</td>}
+                {visible.positionOwn && <td className="px-3 py-2 text-slate-600 break-words">{r.devicePositionOwn ?? "—"}</td>}
+                {visible.positionNext && <td className="px-3 py-2 text-slate-600 break-words">{r.devicePositionNext ?? "—"}</td>}
+                {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{r.counterpartText ?? "—"}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (

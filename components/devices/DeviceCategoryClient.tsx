@@ -663,7 +663,7 @@ export default function DeviceCategoryClient({
         </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <p className="text-sm text-slate-500">
           {filtered.length}/{devices.length} thiết bị · đã chọn {selected.size}
         </p>
@@ -762,7 +762,7 @@ export default function DeviceCategoryClient({
           </colgroup>
           <thead className="text-primary-800">
             <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-4 py-2 align-top font-semibold">
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
@@ -811,15 +811,15 @@ export default function DeviceCategoryClient({
                 key={d.id}
                 className={`border-t border-slate-100 ${selected.has(d.id) ? "bg-primary-50/60" : "hover:bg-primary-50/50"}`}
               >
-                <td className="px-4 py-2">
+                <td className="px-3 py-2">
                   <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
                 </td>
-                <td className="px-4 py-2 text-slate-700 break-words">
+                <td className="px-3 py-2 text-slate-700 break-words">
                   {d.name}
                   <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
                 </td>
-                {visible.category && <td className="px-4 py-2 text-slate-600">{deviceCategoryLabel(d.category)}</td>}
-                {visible.source && <td className="px-4 py-2 text-slate-500">{SOURCE_LABEL[d.source]}</td>}
+                {visible.category && <td className="px-3 py-2 text-slate-600">{deviceCategoryLabel(d.category)}</td>}
+                {visible.source && <td className="px-3 py-2 text-slate-500">{SOURCE_LABEL[d.source]}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (

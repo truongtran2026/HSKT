@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortStatusCounts } from "@/lib/deviceRackPorts";
 import { getAdn1StationId } from "@/lib/devices";
@@ -6,6 +8,10 @@ import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackLis
 import AddDeviceRackForm from "@/components/odf-device/AddDeviceRackForm";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Hồ sơ ODF Thiết bị" };
 
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
@@ -52,6 +58,25 @@ async function getRacks(supabase: SupabaseClient): Promise<RackListItem[]> {
   });
 }
 
+// Tách phần đếm port (nặng, cần fetchAllOdfPorts toàn trạm) ra 1 async
+// component riêng bọc <Suspense> (tối ưu 2026-08-08, cùng đợt với
+// app/odf-trunk/page.tsx — xem architecture.md) — trước đây toàn trang phải
+// đợi xong fetchAllOdfPorts + fetchDeviceRackPortStatusCounts rồi mới trả
+// HTML, dù <AddDeviceRackForm> (không cần racks/counts) đáng ra hiện được
+// ngay.
+async function RackListSection({ supabase }: { supabase: SupabaseClient }) {
+  const racks = await getRacks(supabase);
+  return <RackListTable racks={racks} />;
+}
+
+function RackListSkeleton() {
+  return (
+    <div className="animate-pulse rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
+      Đang tải danh sách rack...
+    </div>
+  );
+}
+
 // Nội dung này trước ở app/odf-device/odf-ddf-noi-bo/page.tsx — chuyển về
 // đây (yêu cầu người dùng 2026-07-28) để "Hồ sơ ODF Thiết bị" có cấu trúc
 // rack → port → luồng giống hệt "Hồ sơ ODF Trung kế", thay vì danh sách luồng
@@ -60,7 +85,7 @@ async function getRacks(supabase: SupabaseClient): Promise<RackListItem[]> {
 // "/odf-trunk/[rackId]" (đã domain-aware sẵn).
 export default async function OdfDevicePage() {
   const supabase = await createSupabaseServerClient();
-  const [racks, stationId] = await Promise.all([getRacks(supabase), getAdn1StationId(supabase)]);
+  const stationId = await getAdn1StationId(supabase);
 
   return (
     <div>
@@ -92,7 +117,9 @@ export default async function OdfDevicePage() {
           không có ý nghĩa ngoài domain=trunk (đúng theo comment cột
           racks.cable_route_name trong schema), không phải thiếu dữ liệu. */}
       <div className="mt-6">
-        <RackListTable racks={racks} />
+        <Suspense fallback={<RackListSkeleton />}>
+          <RackListSection supabase={supabase} />
+        </Suspense>
       </div>
     </div>
   );

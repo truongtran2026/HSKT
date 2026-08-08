@@ -166,7 +166,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 120 }} />
@@ -265,17 +265,17 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
           <tbody>
             {filtered.map((rack) => (
               <tr key={rack.id} className="border-t border-slate-100 hover:bg-primary-50/50">
-                <td className="px-4 py-2">
+                <td className="px-3 py-2">
                   <Link href={`/odf-trunk/${rack.id}`} className="font-medium text-primary-700 hover:underline">
                     {formatRackCodeDisplay(rack.code)}
                   </Link>
                 </td>
-                {visible.route && <td className="px-4 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>}
-                {visible.odfType && <td className="px-4 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>}
-                {visible.portCount && <td className="px-4 py-2 text-right text-slate-600">{rack.portCount}</td>}
-                {visible.inUse && <td className="px-4 py-2 text-right text-slate-600">{rack.inUsePorts}</td>}
-                {visible.standby && <td className="px-4 py-2 text-right text-slate-600">{rack.standbyPorts}</td>}
-                {visible.empty && <td className="px-4 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>}
+                {visible.route && <td className="px-3 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>}
+                {visible.odfType && <td className="px-3 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>}
+                {visible.portCount && <td className="px-3 py-2 text-right text-slate-600">{rack.portCount}</td>}
+                {visible.inUse && <td className="px-3 py-2 text-right text-slate-600">{rack.inUsePorts}</td>}
+                {visible.standby && <td className="px-3 py-2 text-right text-slate-600">{rack.standbyPorts}</td>}
+                {visible.empty && <td className="px-3 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (

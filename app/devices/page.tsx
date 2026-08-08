@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { fetchDevices, getAdn1StationId } from "@/lib/devices";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
 import DeviceCategoryClient from "@/components/devices/DeviceCategoryClient";
@@ -6,6 +7,10 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 // Xem giải thích ở app/odf-trunk/page.tsx — bắt buộc để không bị cache dữ
 // liệu cũ.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Danh mục thiết bị" };
 
 export default async function DevicesPage() {
   const supabase = await createSupabaseServerClient();

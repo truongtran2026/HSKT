@@ -4434,3 +4434,142 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
         `/data-quality` (11 khung tính hết trong 1 Server Component, xem đề
         xuất chưa làm ở trên) để giảm thời gian vào trang đó — CHƯA làm, chỉ
         ghi lại hướng đi nếu người dùng cần sau này.
+
+- **Mục 81 (2026-08-08) — Mở rộng Suspense sang 3 trang còn lại, cột "Liên
+  kết" dạng icon lọc được, đồng hồ thời gian tải trang, tiêu đề tab theo
+  từng trang, chuẩn hóa lại style thật sự giữa các bảng.** Người dùng chỉ ra
+  "Hồ sơ ODF Trung kế"/"Hồ sơ đấu nối" cũng có khung "Phát hiện..." như
+  `/data-quality`, hỏi có phải nguyên nhân chậm khi vào các trang đó không
+  (khác câu hỏi đợt trước chỉ hỏi về `/data-quality`).
+
+  1. **Suspense cho 3 trang còn lại** (cùng kỹ thuật mục 80, theo brief
+     `FIX-suspense-odf-device-rack-detail.md` người dùng cung cấp, có điều
+     chỉnh nhỏ khi thấy cách đơn giản hơn mà vẫn đạt mục tiêu):
+     - `app/odf-device/page.tsx`: tách `RackListSection` (async, gọi
+       `getRacks()` — vốn cần `fetchAllOdfPorts` toàn trạm để tính Đang
+       dùng/Dự phòng) bọc `<Suspense>`; `<AddDeviceRackForm>` (không cần dữ
+       liệu rack) render ngay, không đợi. Đơn giản hơn phương án "tách
+       racks-cơ-bản/đầy-đủ" trong brief gốc — không cần vì trang này không
+       có nội dung nào khác dùng riêng `racks` cơ bản.
+     - `app/odf-trunk/[rackId]/page.tsx`: `RackHeader`/`RackAdminPanel`/
+       `DangerZone` render ngay (chỉ cần `getRackAndPorts` đã lọc theo
+       rackId + 4 fetch nhẹ: `fetchCircuitOptions`/`fetchDevices`/
+       `fetchDeviceAliases`/`fetchDevicePositionMap`). Toàn bộ phần nặng
+       (`fetchAllOdfPorts`, `fetchDeviceCircuits`, `findUnlinkedMirrorPairs`,
+       `findUnlinkedDeviceDevicePairs`, `computeMirrorLinkStatuses`,
+       `findAllDeviceTrunkPairs`, `fetchNonConformingTransitLinks`,
+       `fetchDeviceRackPortRefs`) gộp CHUNG 1 async component
+       `RackDetailBody` bọc 1 `<Suspense>` duy nhất (Cách A trong brief —
+       không tách riêng `PortTable`/`TransitFormatWarning` thành 2 Suspense
+       để tránh gọi `fetchAllOdfPorts`/`fetchDeviceCircuits` 2 lần).
+     - `app/odf-device/sua-luong/page.tsx`: `DeviceCircuitSection` (async,
+       gồm `fetchAllOdfPorts` + các hàm rà soát nặng) bọc `<Suspense>`;
+       `circuits`/`devices`/`devicePositionMap`/`deviceAliases` (4 fetch nhẹ,
+       độc lập) await riêng ở ngoài, đủ để hiện tiêu đề + số đếm luồng ngay.
+     - Không đụng `app/odf-trunk/page.tsx` (đã tối ưu mục 80).
+     - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch sau mỗi bước.
+
+  2. **Cột "Liên kết" dạng icon, lọc/sắp xếp được** (thay ký hiệu
+     "🔗 Đã liên kết"/"⚠️ Chưa liên kết" gắn cạnh TÊN luồng — người dùng yêu
+     cầu bỏ hẳn kiểu cũ, chuyển thành 1 CỘT riêng):
+     - `components/ui/MirrorLinkBadge.tsx` (cũ) → xóa, thay bằng
+       `components/ui/MirrorLinkStatusIcon.tsx` (mới) — vẫn nhận đủ 3 trạng
+       thái từ `lib/mirrorLinkStatus.ts` (`linked`/`candidate`/không có gì),
+       icon `IconLink`/`IconLinkOff` (mới, `components/ui/icons.tsx`) +
+       chữ nhỏ, màu phân biệt (emerald/amber/slate) giữ đúng ý nghĩa cũ,
+       bấm vào ca "linked" vẫn nhảy `/circuit/[id]` như trước.
+     - `lib/mirrorLinkStatus.ts` thêm `mirrorLinkStatusLabel()` — gộp
+       "candidate" + "không có gì" thành 1 chữ hiển thị/lọc "Chưa liên kết"
+       (đúng yêu cầu "lọc được Đã/Chưa liên kết" — chỉ 2 giá trị lọc, icon
+       vẫn phân biệt 3 trạng thái nội bộ).
+     - `PortTable.tsx`: thêm `"linkStatus"` vào `SortKey`/`FilterKey`/
+       `VisibleCol` (toggle được như 7 cột khác, mặc định hiện), cột đặt
+       ngay sau "Tên luồng" (rowSpan gộp theo circuit như cột tên); bỏ
+       `<MirrorLinkBadge>` khỏi ô tên; thêm vào `exportColumns`.
+     - `DeviceCircuitList.tsx`: cùng cách làm (`cellText`/`compareByKey`
+       nhận thêm tham số `mirrorLinkStatuses`), cột đặt sau "Tên luồng".
+     - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch.
+
+  3. **Đồng hồ thời gian tải trang** (`components/ui/PageLoadTimer.tsx`,
+     mới) — mount 1 lần ở `app/layout.tsx` (như `CommandPalette`), hiện góc
+     dưới-phải MỌI trang (không phụ thuộc Sidebar ghim/ẩn). Next.js 14 App
+     Router chưa có hook chính thức đo thời gian điều hướng giữa 2 trang —
+     cách đo: bắt thời điểm bấm vào `<a href="/...">` nội bộ (capture phase,
+     `document.addEventListener("click", ..., true)`), tính khoảng cách tới
+     lúc `usePathname()` đổi sang route mới; lần tải ĐẦU (F5/gõ URL) dùng
+     Navigation Timing API (`performance.getEntriesByType("navigation")`)
+     vì không có click nào để bắt. Với các trang dùng `<Suspense>` (mục 80,
+     81.1), mốc này rơi vào lúc PHẦN NHANH commit xong, CHƯA tính khung phụ
+     còn tải sau — chủ đích (đúng cái người dùng muốn thấy: "bao lâu thấy
+     được nội dung chính"), có ghi rõ trong tooltip của chính đồng hồ.
+
+  4. **Tiêu đề tab trình duyệt theo từng trang** — trước đó MỌI trang đều kế
+     thừa `title: "Hồ sơ kỹ thuật"` tĩnh từ `app/layout.tsx`. Thêm
+     `export const metadata: Metadata = { title: "..." }` vào từng
+     `page.tsx` (Next.js: title con ghi đè hoàn toàn title cha, không dùng
+     `title.template`): Dashboard, Chất lượng dữ liệu, Danh mục thiết bị,
+     Import/Export dữ liệu, Thư viện vị trí thiết bị, Hồ sơ ODF Trung kế, Hồ
+     sơ ODF Thiết bị, Hồ sơ đấu nối, Tìm kiếm nhanh, Cài đặt chung, Chi tiết
+     luồng (`/circuit/[id]`, tĩnh — không `generateMetadata` lấy tên luồng
+     thật vì sẽ phải fetch lại y hệt `findPair`/`fetchCircuitDetail`, tốn
+     thêm 1 lượt tải chỉ cho tiêu đề, trang permalink này không đáng). Riêng
+     `/odf-trunk/[rackId]` dùng `generateMetadata` với 1 query nhỏ riêng
+     (chỉ `select("code")`) để tiêu đề ghi đúng "Rack <mã>". `/login` là
+     Client Component (không tự export `metadata` được) — thêm
+     `app/login/layout.tsx` (Server Component) chỉ để khai báo title.
+     Trang chủ `/` giữ nguyên title mặc định (khớp đúng `<h1>` của chính nó).
+
+  5. **Chuẩn hóa lại style THẬT SỰ giữa các bảng** — người dùng chỉ ra header
+     dùng chung `DataTh` không đồng nghĩa cả bảng nhìn giống nhau. Dùng 1
+     agent đọc toàn bộ 9 file bảng + 5 file "chuẩn chung" để liệt kê khác
+     biệt thật (không đoán), rồi sửa theo canonical chọn = giá trị đã dùng ở
+     ĐA SỐ file hoặc đúng giá trị `DataTh.tsx` đã tự áp (báo hiệu đây mới là
+     "chuẩn" thật sự đang tồn tại, các nơi lệch mới là chưa theo đúng):
+     - **Khung bọc bảng**: `max-h-[70vh] overflow-auto rounded-lg border
+       border-slate-200 bg-white` (thiếu `max-h`+`overflow-auto` thì sticky
+       header KHÔNG hoạt động, chỉ trang tự cuộn thay — lỗi CHỨC NĂNG, không
+       chỉ thẩm mỹ) — áp cho `RackListTable`, `SearchClient`,
+       `DeviceSearchClient`, `DevicePositionMapClient`, `DashboardClient`
+       (TableView), `DeviceRackPortView` (6 file trước đó chỉ có
+       `overflow-x-auto`).
+     - **Padding `<td>`/`<th>` viết tay** (không qua `DataTh`): chuẩn hóa về
+       `px-3 py-2` (đúng giá trị `DataTh.tsx` đã tự dùng cho mọi `<th>` —
+       trước đó 7/9 file dùng `px-4 py-2` cho `<td>`, lệch với chính header
+       của mình). `<th>` viết tay (cột tick/"Thao tác", không qua `DataTh`)
+       chuẩn hóa về `px-3 py-2 text-left align-top font-semibold`.
+     - **Màu hover dòng**: `hover:bg-primary-50/50` — sửa `PortTable.tsx`
+       (đang `/30`), thêm hover còn thiếu ở `DashboardClient` TableView và
+       `DeviceRackPortView` (trước đó không có hover nào).
+     - **`DeviceRackPortView.tsx`**: trước đó header không `sticky` (viết
+       tay hoàn toàn khác `DataTh`, `font-medium` thay vì `font-semibold`) —
+       sửa `sticky top-0 z-10 bg-primary-50` + `font-semibold` khớp `DataTh`.
+     - **Độ rộng cột tick** trong `<colgroup>`: 40px (khớp `PortTable`/
+       `DeviceCategoryClient`) — sửa `DeviceCircuitList.tsx` (đang 32px).
+     - **Chữ khi lọc không ra kết quả**: thống nhất "Không tìm thấy {X} nào
+       khớp bộ lọc." — sửa `DeviceCircuitList.tsx` ("...kết quả nào...") và
+       `DevicePositionMapClient.tsx` ("Chưa có dòng nào...").
+     - **Toolbar trên bảng**: thống nhất 1 dòng `mb-2 flex flex-wrap
+       items-center gap-3` — đếm "x/y ..." + "Xóa bộ lọc" (nếu có) bên trái,
+       cụm nút (Lịch sử tra cứu/Export/ColumnPicker...) bọc
+       `<div className="ml-auto flex gap-2">` bên phải. `PortTable.tsx`
+       trước đó tách 2 khối riêng (không có dòng đếm, toolbar chính
+       `justify-end`) — gộp lại đúng 1 dòng theo mẫu chung, thêm dòng đếm
+       "x/y port". `DeviceCategoryClient.tsx` đổi `mb-3`→`mb-2` khớp các
+       bảng khác (bộ nút bấm mỗi bảng vẫn khác nhau tùy tính năng riêng —
+       KHÔNG ép giống hệt, chỉ ép phần khung/khoảng cách dùng chung).
+     - Đã đủ dữ liệu nhưng CHƯA sửa (không đáng, không ảnh hưởng hiển thị):
+       thứ tự class trong `className="w-full table-fixed text-sm"` (đã tiện
+       sửa luôn ở `PortTable.tsx` vì đang sửa toolbar cùng chỗ, nhưng đây là
+       thay đổi trung tính, không sinh khác biệt CSS thật).
+     - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch sau khi sửa hết
+       9 file.
+
+  Chưa test UI thật bằng trình duyệt (không có công cụ tự động hóa trong
+  môi trường này) — cần người dùng tự bấm thử: vào `/odf-device`,
+  `/odf-trunk/<1 rack>`, `/odf-device/sua-luong` xem phần đầu trang (form
+  thêm rack/tiêu đề rack/tiêu đề+số đếm luồng) hiện nhanh, phần bảng port/
+  khung cảnh báo tự trôi vào sau; xem cột "Liên kết" mới ở 2 bảng (lọc thử
+  gõ "đã"/"chưa"); để ý góc dưới-phải màn hình có đồng hồ "⏱ Xms/Ys" đổi
+  theo mỗi lần chuyển trang; xem tiêu đề tab trình duyệt đổi đúng theo từng
+  trang; so sánh cảm quan style giữa vài bảng (RackListTable, PortTable,
+  DeviceCircuitList) xem đã đều tay hơn chưa.

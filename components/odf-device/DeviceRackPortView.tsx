@@ -82,18 +82,20 @@ export default function DeviceRackPortView({
       <div className="mb-2 flex justify-end">
         <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggle} />
       </div>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 70 }} />
             <col />
             {visible.notes && <col style={{ width: 220 }} />}
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">Port</th>
-              <th className="px-3 py-2 text-left font-medium">Tên luồng</th>
-              {visible.notes && <th className="px-3 py-2 text-left font-medium">Ghi chú</th>}
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Port</th>
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Tên luồng</th>
+              {visible.notes && (
+                <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Ghi chú</th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -101,7 +103,7 @@ export default function DeviceRackPortView({
               const key = row.portNumbers.join("-");
               const portLabel = row.portNumbers.length === 2 ? `${row.portNumbers[0]}-${row.portNumbers[1]}` : String(row.portNumbers[0]);
               return (
-                <tr key={key} className="border-t border-slate-100 align-top">
+                <tr key={key} className="border-t border-slate-100 align-top hover:bg-primary-50/50">
                   <td className="px-3 py-2 font-medium text-slate-700">{portLabel}</td>
                   <td className="px-3 py-2 break-words">
                     {row.entries.length === 0 ? (

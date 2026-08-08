@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import { derivePortStatus } from "@/lib/portStatus";
@@ -13,6 +14,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // (đã gặp lỗi này khi test thật — sửa xong RLS nhưng trang vẫn hiện dữ liệu
 // cũ/rỗng vì bị cache). Dữ liệu ODF thay đổi liên tục nên luôn cần mới nhất.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Hồ sơ ODF Trung kế" };
 
 interface RawPortLink {
   circuits: { name: string } | { name: string }[] | null;

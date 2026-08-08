@@ -65,6 +65,28 @@ export function IconGear({ className = DEFAULT_CLASS }: IconProps) {
   );
 }
 
+export function IconLink({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+      <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+      <path d="M8 12h8" />
+    </svg>
+  );
+}
+
+export function IconLinkOff({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M9 17H7A5 5 0 0 1 7 7h1.5" />
+      <path d="M15 7h2a5 5 0 0 1 4.24 7.66" />
+      <path d="M8 12h2.5" />
+      <path d="M13.5 12H16" />
+      <path d="m2 2 20 20" />
+    </svg>
+  );
+}
+
 export function IconDownload({ className = DEFAULT_CLASS }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>

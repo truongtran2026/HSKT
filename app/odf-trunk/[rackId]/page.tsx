@@ -1,9 +1,11 @@
+import { Suspense } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { fetchCircuitOptions } from "@/lib/circuitOptions";
-import { fetchDevices } from "@/lib/devices";
-import { fetchDeviceAliases } from "@/lib/deviceAliases";
-import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
+import { fetchCircuitOptions, type CircuitOptions } from "@/lib/circuitOptions";
+import { fetchDevices, type DeviceRow } from "@/lib/devices";
+import { fetchDeviceAliases, type DeviceAliasRow } from "@/lib/deviceAliases";
+import { fetchDevicePositionMap, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortRefs } from "@/lib/deviceRackPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
@@ -63,6 +65,16 @@ interface RawCircuit {
   mirror_of_id: string | null;
 }
 
+// Tiêu đề tab trình duyệt theo ĐÚNG rack đang xem (yêu cầu người dùng
+// 2026-08-08 — xem giải thích chung ở app/dashboard/page.tsx) — 1 query nhỏ
+// riêng (chỉ lấy "code"), KHÔNG dùng chung getRackAndPorts() bên dưới (query
+// đó kéo theo toàn bộ port của rack, lãng phí nếu chỉ cần 1 chữ cho tiêu đề).
+export async function generateMetadata({ params }: { params: { rackId: string } }): Promise<Metadata> {
+  const supabase = await createSupabaseServerClient();
+  const { data } = await supabase.from("racks").select("code").eq("id", params.rackId).maybeSingle();
+  return { title: data ? `Rack ${data.code}` : "Chi tiết rack" };
+}
+
 function firstOf<T>(v: T | T[] | null | undefined): T | null {
   if (!v) return null;
   return Array.isArray(v) ? v[0] ?? null : v;
@@ -120,21 +132,35 @@ async function getRackAndPorts(supabase: SupabaseClient, rackId: string) {
   return { rack: rack as RackInfo, ports };
 }
 
-export default async function RackDetailPage({ params }: { params: { rackId: string } }) {
+// Tách khỏi RackDetailPage + bọc <Suspense> (tối ưu 2026-08-08, cùng đợt với
+// app/odf-trunk/page.tsx — xem architecture.md) — trước đây TOÀN BỘ 7 lời gọi
+// (kể cả fetchAllOdfPorts/fetchDeviceCircuits quét CẢ TRẠM, findAllDeviceTrunkPairs
+// nặng) phải xong hết mới trả byte HTML đầu tiên, dù RackHeader/RackAdminPanel/
+// DangerZone chỉ cần getRackAndPorts (đã lọc theo rackId, nhẹ) + 4 fetch nhẹ.
+// Gộp CHUNG 1 async component (không tách riêng PortTable/TransitFormatWarning
+// thành 2 Suspense) để fetchAllOdfPorts/fetchDeviceCircuits chỉ gọi ĐÚNG 1 lần,
+// không lặp lại giữa 2 nhánh cần cùng dữ liệu gốc.
+async function RackDetailBody({
+  supabase,
+  rack,
+  ports,
+  options,
+  devices,
+  deviceAliases,
+  devicePositionMap,
+}: {
+  supabase: SupabaseClient;
+  rack: RackInfo;
+  ports: PortView[];
+  options: CircuitOptions;
+  devices: DeviceRow[];
+  deviceAliases: DeviceAliasRow[];
+  devicePositionMap: DevicePositionMapRow[];
+}) {
   // fetchAllOdfPorts (không phải fetchAllTrunkPorts) — "Chuyển tiếp" có thể
   // trỏ tới rack trung kế HOẶC ODF/DDF nội bộ (domain='device'), cần cả 2 để
   // nhận diện/chuẩn hóa đúng (yêu cầu người dùng 2026-07-27).
-  const supabase = await createSupabaseServerClient();
-  const [data, options, devices, deviceAliases, devicePositionMap, trunkPorts, deviceCircuits] = await Promise.all([
-    getRackAndPorts(supabase, params.rackId),
-    fetchCircuitOptions(supabase),
-    fetchDevices(supabase),
-    fetchDeviceAliases(supabase),
-    fetchDevicePositionMap(supabase),
-    fetchAllOdfPorts(supabase),
-    fetchDeviceCircuits(supabase),
-  ]);
-  if (!data) notFound();
+  const [trunkPorts, deviceCircuits] = await Promise.all([fetchAllOdfPorts(supabase), fetchDeviceCircuits(supabase)]);
   // Huy hiệu "Đã liên kết"/"Chưa liên kết" trên từng dòng port (yêu cầu người
   // dùng 2026-08-02) — tái dùng ĐÚNG 2 hàm rà soát đã có ở /data-quality (mục
   // 44/45), không viết thuật toán khác ở đây.
@@ -148,16 +174,6 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // sẵn CẢ trạm (không chỉ rack đang xem) vì EditRow cần tra cứu theo đúng
   // circuitId đang sửa, có thể là bất kỳ luồng trung kế nào.
   const circuitPairDetails = await findAllDeviceTrunkPairs(trunkPorts, deviceCircuits, unlinkedMirrorPairs);
-  const { rack, ports } = data;
-  // Rack ODF/DDF nội bộ (domain='device') dùng lại NGUYÊN trang này (đúng
-  // yêu cầu "dùng lại đúng bảng/nút bấm đã có" — RackHeader/RackAdminPanel
-  // không đổi gì) — chỉ khác link "quay lại" (nay trỏ về "/odf-device", nơi
-  // danh sách 112 rack này chuyển tới, xem architecture.md) và phần bảng
-  // port: domain='device' không có port_circuit_links thật nên không dùng
-  // PortTable (chỉ đọc bảng nối đó) — dùng DeviceRackPortView (đối chiếu
-  // text qua lib/deviceRackPorts.ts) thay thế, yêu cầu người dùng 2026-07-28.
-  const backHref = rack.domain === "device" ? "/odf-device" : "/odf-trunk";
-  const backLabel = rack.domain === "device" ? "← Hồ sơ ODF Thiết bị" : "← Danh sách rack";
   const devicePortRefs = rack.domain === "device" ? await fetchDeviceRackPortRefs(supabase, rack.code, trunkPorts) : null;
   // Lọc xuống đúng rack đang xem (yêu cầu người dùng 2026-07-28: khung cảnh
   // báo "Chuyển tiếp chưa chuẩn form" cũng phải hiện ở trang chi tiết, không
@@ -170,6 +186,60 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
   // thu nhỏ), vì hàm này cần nó làm từ điển tra ngược cho các "Chuyển tiếp"
   // trỏ sang rack khác.
   const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts, rack.id);
+
+  return (
+    <>
+      <TransitFormatWarning items={nonConformingTransit} />
+      {devicePortRefs ? (
+        <DeviceRackPortView portCount={rack.port_count} portRefEntries={[...devicePortRefs.entries()]} />
+      ) : (
+        <PortTable
+          rackId={rack.id}
+          initialPorts={ports}
+          options={options}
+          devices={devices}
+          deviceAliases={deviceAliases}
+          devicePositionMap={devicePositionMap}
+          stationId={rack.station_id}
+          trunkPorts={trunkPorts}
+          mirrorLinkStatuses={mirrorLinkStatuses}
+          circuitPairDetails={circuitPairDetails}
+        />
+      )}
+    </>
+  );
+}
+
+function RackDetailBodySkeleton() {
+  return (
+    <div className="animate-pulse rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
+      Đang tải danh sách port...
+    </div>
+  );
+}
+
+export default async function RackDetailPage({ params }: { params: { rackId: string } }) {
+  const supabase = await createSupabaseServerClient();
+  const data = await getRackAndPorts(supabase, params.rackId);
+  if (!data) notFound();
+  const { rack, ports } = data;
+  // 4 lời gọi nhẹ (không cần fetchAllOdfPorts/fetchDeviceCircuits toàn trạm)
+  // — đủ để RackHeader/RackAdminPanel hiện ngay, không đợi phần nặng bên dưới.
+  const [options, devices, deviceAliases, devicePositionMap] = await Promise.all([
+    fetchCircuitOptions(supabase),
+    fetchDevices(supabase),
+    fetchDeviceAliases(supabase),
+    fetchDevicePositionMap(supabase),
+  ]);
+  // Rack ODF/DDF nội bộ (domain='device') dùng lại NGUYÊN trang này (đúng
+  // yêu cầu "dùng lại đúng bảng/nút bấm đã có" — RackHeader/RackAdminPanel
+  // không đổi gì) — chỉ khác link "quay lại" (nay trỏ về "/odf-device", nơi
+  // danh sách 112 rack này chuyển tới, xem architecture.md) và phần bảng
+  // port: domain='device' không có port_circuit_links thật nên không dùng
+  // PortTable (chỉ đọc bảng nối đó) — dùng DeviceRackPortView (đối chiếu
+  // text qua lib/deviceRackPorts.ts) thay thế, yêu cầu người dùng 2026-07-28.
+  const backHref = rack.domain === "device" ? "/odf-device" : "/odf-trunk";
+  const backLabel = rack.domain === "device" ? "← Hồ sơ ODF Thiết bị" : "← Danh sách rack";
 
   return (
     <div>
@@ -207,23 +277,17 @@ export default async function RackDetailPage({ params }: { params: { rackId: str
       )}
 
       <div className="mt-6">
-        <TransitFormatWarning items={nonConformingTransit} />
-        {devicePortRefs ? (
-          <DeviceRackPortView portCount={rack.port_count} portRefEntries={[...devicePortRefs.entries()]} />
-        ) : (
-          <PortTable
-            rackId={rack.id}
-            initialPorts={ports}
+        <Suspense fallback={<RackDetailBodySkeleton />}>
+          <RackDetailBody
+            supabase={supabase}
+            rack={rack}
+            ports={ports}
             options={options}
             devices={devices}
             deviceAliases={deviceAliases}
             devicePositionMap={devicePositionMap}
-            stationId={rack.station_id}
-            trunkPorts={trunkPorts}
-            mirrorLinkStatuses={mirrorLinkStatuses}
-            circuitPairDetails={circuitPairDetails}
           />
-        )}
+        </Suspense>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import { findFuzzyDuplicateDevices, fetchIgnoredDevicePairs } from "@/lib/device
 import { findTrunkCircuitsMissingDeviceMirror } from "@/lib/reverseDeviceTrunkAudit";
 import { findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
 import { findAllDeviceTrunkPairs } from "@/lib/circuitPairSync";
+import type { Metadata } from "next";
 import DataQualityClient from "@/components/data-quality/DataQualityClient";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -19,6 +20,10 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 // ngày duy nhất. Bắt buộc force-dynamic như mọi trang đọc Supabase khác
 // (xem app/odf-trunk/page.tsx) để không bị cache dữ liệu cũ.
 export const dynamic = "force-dynamic";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Chất lượng dữ liệu" };
 
 export default async function DataQualityPage() {
   const supabase = await createSupabaseServerClient();

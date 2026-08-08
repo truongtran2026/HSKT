@@ -22,6 +22,16 @@ import type { UnlinkedMirrorPair, UnlinkedDeviceDevicePair } from "@/lib/unlinke
 // nào.
 export type MirrorLinkStatus = "linked" | "candidate";
 
+// Chữ hiển thị/lọc DÙNG CHUNG cho cột "Liên kết" (PortTable.tsx,
+// DeviceCircuitList.tsx — yêu cầu người dùng 2026-08-08: tách khỏi tên luồng
+// thành 1 cột riêng, lọc được). Gộp "candidate" (có gợi ý, chưa xác nhận) và
+// "không có gì đối chiếu" chung thành "Chưa liên kết" — chỉ 2 giá trị lọc,
+// đúng yêu cầu; icon/tooltip vẫn phân biệt 3 trạng thái (xem
+// components/ui/MirrorLinkStatusIcon.tsx).
+export function mirrorLinkStatusLabel(status: MirrorLinkStatus | undefined): "Đã liên kết" | "Chưa liên kết" {
+  return status === "linked" ? "Đã liên kết" : "Chưa liên kết";
+}
+
 export function computeMirrorLinkStatuses(
   trunkPorts: TrunkPortRow[],
   deviceCircuits: DeviceCircuitRow[],

@@ -2,6 +2,11 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { ROLE_LABEL } from "@/lib/roleLabel";
 import ChangePasswordForm from "@/components/settings/ChangePasswordForm";
 import UserManagementPanel from "@/components/settings/UserManagementPanel";
+import type { Metadata } from "next";
+
+// Tiêu đề tab trình duyệt theo đúng trang (yêu cầu người dùng 2026-08-08 —
+// xem giải thích đầy đủ ở app/dashboard/page.tsx).
+export const metadata: Metadata = { title: "Cài đặt chung" };
 
 // Thay PagePlaceholder cũ (Đợt Cài đặt chung, 2026-08-08) — placeholder cũ
 // ghi "auth chưa cần ở MVP" đã lỗi thời từ khi bật Supabase Auth thật +

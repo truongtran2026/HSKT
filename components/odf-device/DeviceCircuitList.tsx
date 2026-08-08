@@ -32,7 +32,7 @@ import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import DataTh from "@/components/ui/DataTh";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
-import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
+import MirrorLinkStatusIcon from "@/components/ui/MirrorLinkStatusIcon";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
@@ -40,7 +40,7 @@ import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
-import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
+import { unlinkCircuitMirror, mirrorLinkStatusLabel, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -96,13 +96,15 @@ function positionNextDisplay(raw: string | null, trunkPorts: TrunkPortRow[]): st
   return raw;
 }
 
-type SortKey = "name" | "trib" | "device" | "positionOwn" | "positionNext" | "interface" | "counterpart";
+type SortKey = "name" | "linkStatus" | "trib" | "device" | "positionOwn" | "positionNext" | "interface" | "counterpart";
 type FilterKey = SortKey | "notes";
 
-function cellText(c: DeviceCircuitRow, key: FilterKey): string | null {
+function cellText(c: DeviceCircuitRow, key: FilterKey, mirrorLinkStatuses?: Record<string, MirrorLinkStatus>): string | null {
   switch (key) {
     case "name":
       return c.name;
+    case "linkStatus":
+      return mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]);
     case "trib":
       return c.tribText;
     case "device":
@@ -120,11 +122,11 @@ function cellText(c: DeviceCircuitRow, key: FilterKey): string | null {
   }
 }
 
-function compareByKey(key: SortKey, a: DeviceCircuitRow, b: DeviceCircuitRow): number {
-  return compareValues(cellText(a, key), cellText(b, key));
+function compareByKey(key: SortKey, a: DeviceCircuitRow, b: DeviceCircuitRow, mirrorLinkStatuses?: Record<string, MirrorLinkStatus>): number {
+  return compareValues(cellText(a, key, mirrorLinkStatuses), cellText(b, key, mirrorLinkStatuses));
 }
 
-const FILTER_KEYS: FilterKey[] = ["name", "trib", "device", "positionOwn", "positionNext", "interface", "counterpart", "notes"];
+const FILTER_KEYS: FilterKey[] = ["name", "linkStatus", "trib", "device", "positionOwn", "positionNext", "interface", "counterpart", "notes"];
 
 // Ô "Vị trí ODF (tiếp theo)" tách 3 ô khi sửa/nhập (yêu cầu người dùng
 // 2026-07-27, tinh chỉnh lại yêu cầu ngày 2026-07-27 sau: tự nhận diện chế độ
@@ -263,8 +265,9 @@ const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = {
 // "Thao tác" luôn hiện. "Thiết bị" KHÔNG nằm trong danh sách này — cột đó đã
 // có cơ chế ẩn/hiện riêng theo bộ lọc (showDeviceColumn ở trên), không trộn
 // 2 cơ chế lại với nhau.
-type VisibleCol = "trib" | "positionOwn" | "positionNext" | "interface" | "counterpart" | "notes";
+type VisibleCol = "linkStatus" | "trib" | "positionOwn" | "positionNext" | "interface" | "counterpart" | "notes";
 const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  linkStatus: true,
   trib: true,
   positionOwn: true,
   positionNext: true,
@@ -273,6 +276,7 @@ const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
   notes: true,
 };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "linkStatus", label: "Liên kết" },
   { key: "trib", label: "Trib" },
   { key: "positionOwn", label: "Vị trí ODF (thiết bị)" },
   { key: "positionNext", label: "Vị trí ODF (tiếp theo)" },
@@ -318,6 +322,7 @@ export default function DeviceCircuitList({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     name: "",
+    linkStatus: "",
     trib: "",
     device: "",
     positionOwn: "",
@@ -872,7 +877,7 @@ export default function DeviceCircuitList({
       list = list.filter((c) => set.has(categoryByDeviceName.get(c.deviceName ?? "(chưa xác định)") ?? UNCATEGORIZED_LABEL));
     }
 
-    list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k), filters[k])));
+    list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k, mirrorLinkStatuses), filters[k])));
 
     // Chỉ hiện luồng vừa thêm/sửa hôm nay (yêu cầu người dùng 2026-07-31,
     // checkbox trong thanh công cụ) — lọc SAU các bộ lọc cột khác, cùng logic
@@ -881,7 +886,7 @@ export default function DeviceCircuitList({
       list = list.filter((c) => updatedTodayIds.has(c.id));
     }
 
-    const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
+    const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b, mirrorLinkStatuses));
     const sortedArr = sortDir === "desc" ? arr.reverse() : arr;
 
     // Mọi luồng vừa thêm/sửa HÔM NAY luôn nổi lên ĐẦU bảng, bất kể đang sắp
@@ -892,19 +897,20 @@ export default function DeviceCircuitList({
     const todayArr = sortedArr.filter((c) => updatedTodayIds.has(c.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const restArr = sortedArr.filter((c) => !updatedTodayIds.has(c.id));
     return [...todayArr, ...restArr];
-  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, onlyUpdatedToday, updatedTodayIds]);
+  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, onlyUpdatedToday, updatedTodayIds, mirrorLinkStatuses]);
 
   // Chỉ ẩn cột "Thiết bị" khi đã lọc còn ĐÚNG 1 thiết bị cụ thể (dòng nào
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
   // vẫn cần cột này để phân biệt các dòng.
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
-  const columnCount = (showDeviceColumn ? 9 : 8) + 1 - COLUMN_ITEMS.filter((c) => !visible[c.key]).length; // +1 cho cột tick chọn
+  const columnCount = (showDeviceColumn ? 10 : 9) + 1 - COLUMN_ITEMS.filter((c) => !visible[c.key]).length; // +1 cho cột tick chọn
 
   // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng).
   const exportColumns = useMemo(() => {
     const cols: { label: string; getValue: (c: DeviceCircuitRow) => string | number | null }[] = [
       { label: "Tên luồng", getValue: (c) => c.name },
     ];
+    if (visible.linkStatus) cols.push({ label: "Liên kết", getValue: (c) => mirrorLinkStatusLabel(mirrorLinkStatuses?.[c.id]) });
     if (visible.trib) cols.push({ label: "Trib", getValue: (c) => c.tribText });
     if (showDeviceColumn) cols.push({ label: "Thiết bị", getValue: (c) => c.deviceName });
     if (visible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (c) => c.devicePositionOwn });
@@ -913,7 +919,7 @@ export default function DeviceCircuitList({
     if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (c) => c.counterpartText });
     if (visible.notes) cols.push({ label: "Ghi chú", getValue: (c) => c.notes });
     return cols;
-  }, [visible, showDeviceColumn]);
+  }, [visible, showDeviceColumn, mirrorLinkStatuses]);
 
   // Đoạn text báo cáo sinh sẵn cho các luồng ĐANG TICK — tái dùng nguyên
   // `selected` (vốn dùng cho xóa hàng loạt, yêu cầu người dùng 2026-08-07:
@@ -2220,6 +2226,7 @@ export default function DeviceCircuitList({
             onClick={() =>
               setFilters({
                 name: "",
+                linkStatus: "",
                 trib: "",
                 device: "",
                 positionOwn: "",
@@ -2293,8 +2300,9 @@ export default function DeviceCircuitList({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 32 }} />
+            <col style={{ width: 40 }} />
             <col style={{ width: colWidths.name }} />
+            {visible.linkStatus && <col style={{ width: 110 }} />}
             {visible.trib && <col style={{ width: 110 }} />}
             {showDeviceColumn && <col style={{ width: colWidths.device }} />}
             {visible.positionOwn && <col style={{ width: colWidths.positionOwn }} />}
@@ -2306,7 +2314,7 @@ export default function DeviceCircuitList({
           </colgroup>
           <thead className="text-primary-800">
             <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-2 py-2 align-top">
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">
                 <input
                   type="checkbox"
                   checked={filtered.length > 0 && filtered.every((c) => selected.has(c.id))}
@@ -2325,6 +2333,18 @@ export default function DeviceCircuitList({
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
+              {visible.linkStatus && (
+                <DataTh
+                  label="Liên kết"
+                  sortKey="linkStatus"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.linkStatus}
+                  onFilterChange={(v) => setFilter("linkStatus", v)}
+                  filterPlaceholder="Đã/Chưa..."
+                />
+              )}
               {visible.trib && (
                 <DataTh
                   label="Trib"
@@ -2408,7 +2428,7 @@ export default function DeviceCircuitList({
                   onResize={(w) => resizeCol("notes", w)}
                 />
               )}
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top font-semibold">Thao tác</th>
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -2440,17 +2460,21 @@ export default function DeviceCircuitList({
                             : "hover:bg-primary-50/50"
                   }`}
                 >
-                  <td className="px-2 py-2 align-top">
+                  <td className="px-3 py-2 align-top">
                     <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} />
                   </td>
-                  <td className="px-4 py-2 text-slate-700 break-words">
+                  <td className="px-3 py-2 text-slate-700 break-words">
                     {displayName(c) || "—"}
-                    <MirrorLinkBadge status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
                     <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(c.updatedAt)}</div>
                   </td>
-                  {visible.trib && <td className="px-4 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>}
+                  {visible.linkStatus && (
+                    <td className="px-3 py-2 text-xs">
+                      <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[c.id]} circuitId={c.id} />
+                    </td>
+                  )}
+                  {visible.trib && <td className="px-3 py-2 text-slate-600 break-words">{c.tribText ?? "—"}</td>}
                   {showDeviceColumn && (
-                    <td className="px-4 py-2 text-slate-600 break-words">
+                    <td className="px-3 py-2 text-slate-600 break-words">
                       {c.deviceName ?? "(chưa xác định)"}
                       {!c.deviceId && (
                         <span className="ml-1 text-xs text-amber-600" title="Chưa chuẩn hóa — xem trang Danh mục thiết bị">
@@ -2460,7 +2484,7 @@ export default function DeviceCircuitList({
                     </td>
                   )}
                   {visible.positionOwn && (
-                    <td className={`px-4 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
+                    <td className={`px-3 py-2 break-words ${ownConflict ? "font-semibold text-red-700" : "text-slate-600"}`}>
                       {c.devicePositionOwn ?? "—"}
                       {ownConflict && (
                         <div className="text-xs font-normal text-red-600" title={othersForPosition(c.id, c.devicePositionOwn).join(", ")}>
@@ -2469,17 +2493,17 @@ export default function DeviceCircuitList({
                       )}
                     </td>
                   )}
-                  {visible.positionNext && <td className="px-4 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>}
-                  {visible.interface && <td className="px-4 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>}
-                  {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>}
+                  {visible.positionNext && <td className="px-3 py-2 text-slate-600 break-words">{positionNextDisplayById.get(c.id) ?? "—"}</td>}
+                  {visible.interface && <td className="px-3 py-2 text-slate-600 break-words">{c.interfaceType ?? "—"}</td>}
+                  {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{c.counterpartText ?? "—"}</td>}
                   {visible.notes && (
-                    <td className="px-4 py-2 text-slate-500 max-w-xs">
+                    <td className="px-3 py-2 text-slate-500 max-w-xs">
                       <div className="whitespace-pre-line line-clamp-3" title={c.notes ?? ""}>
                         {c.notes ?? "—"}
                       </div>
                     </td>
                   )}
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-2">
                     <div className="flex gap-2">
                       {/* Khóa Sửa khi đang Thêm mới HOẶC đang sửa 1 dòng KHÁC
                           (yêu cầu người dùng 2026-07-27) — dòng đang được sửa
@@ -2520,7 +2544,7 @@ export default function DeviceCircuitList({
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={columnCount} className="px-4 py-6 text-center text-slate-400">
-                  Không tìm thấy kết quả nào khớp bộ lọc.
+                  Không tìm thấy luồng nào khớp bộ lọc.
                 </td>
               </tr>
             )}

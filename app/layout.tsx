@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import CommandPalette from "@/components/ui/CommandPalette";
+import PageLoadTimer from "@/components/ui/PageLoadTimer";
 import RoleProvider from "@/components/RoleProvider";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -49,6 +50,7 @@ export default async function RootLayout({
           {/* Mount 1 lần duy nhất ở đây để có mặt trên MỌI trang — Cmd/Ctrl+K
               mở được dù đang ở trang nào, không phải thêm lại ở từng page.tsx. */}
           <CommandPalette />
+          <PageLoadTimer />
         </RoleProvider>
       </body>
     </html>

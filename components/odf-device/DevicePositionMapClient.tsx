@@ -645,7 +645,7 @@ export default function DevicePositionMapClient({
       </div>
 
       <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn lĩnh vực ở trên để xem, hoặc">
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.deviceName }} />
@@ -692,7 +692,7 @@ export default function DevicePositionMapClient({
                   onFilterChange={(v) => setFilter("odfPosition", v)}
                 />
               )}
-              <th className="sticky top-0 z-10 bg-primary-50 px-4 py-2 align-top text-left font-semibold">Thao tác</th>
+              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top text-left font-semibold">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -702,7 +702,7 @@ export default function DevicePositionMapClient({
                 <tr key={r.id} className="border-t border-slate-100 hover:bg-primary-50/50">
                   {editing ? (
                     <>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <input
                           className="input"
                           list="dpm-device-name-options"
@@ -712,7 +712,7 @@ export default function DevicePositionMapClient({
                         />
                       </td>
                       {visible.devicePosition && (
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-2">
                           <input
                             className="input"
                             value={editDraft.devicePosition}
@@ -721,7 +721,7 @@ export default function DevicePositionMapClient({
                         </td>
                       )}
                       {visible.odfPosition && (
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-2">
                           <input
                             className="input"
                             list="dpm-odf-position-options"
@@ -736,7 +736,7 @@ export default function DevicePositionMapClient({
                           />
                         </td>
                       )}
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         <div className="flex gap-2">
                           <button className="btn-primary" onClick={saveEdit} disabled={busy}>
                             Lưu
@@ -749,10 +749,10 @@ export default function DevicePositionMapClient({
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-2 text-slate-700 break-words">{r.deviceName}</td>
-                      {visible.devicePosition && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>}
-                      {visible.odfPosition && <td className="px-4 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>}
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2 text-slate-700 break-words">{r.deviceName}</td>
+                      {visible.devicePosition && <td className="px-3 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>}
+                      {visible.odfPosition && <td className="px-3 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>}
+                      <td className="px-3 py-2">
                         <RoleGate allow={["operator", "admin"]}>
                           <div className="flex gap-2">
                             <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy} title="Sửa" aria-label="Sửa">
@@ -775,7 +775,7 @@ export default function DevicePositionMapClient({
                   colSpan={2 + COLUMN_ITEMS.filter((c) => visible[c.key]).length}
                   className="px-4 py-6 text-center text-slate-400"
                 >
-                  Chưa có dòng nào khớp bộ lọc.
+                  Không tìm thấy thiết bị nào khớp bộ lọc.
                 </td>
               </tr>
             )}

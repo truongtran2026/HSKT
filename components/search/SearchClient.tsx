@@ -216,7 +216,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
       </div>
 
       <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn 1 rack ở trên để xem, hoặc">
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 100 }} />
@@ -301,16 +301,16 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
               const ds = deriveStatus(r);
               return (
                 <tr key={r.portId} className="border-t border-slate-100 hover:bg-primary-50/50">
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-2">
                     <Link href={`/odf-trunk/${r.rackId}`} className="font-medium text-primary-700 hover:underline">
                       {r.rackCode}
                     </Link>
                   </td>
-                  {visible.route && <td className="px-4 py-2 text-slate-600 break-words">{r.cableRouteName}</td>}
-                  {visible.port && <td className="px-4 py-2 text-right text-slate-600">{r.portNumber}</td>}
-                  {visible.fiber && <td className="px-4 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>}
+                  {visible.route && <td className="px-3 py-2 text-slate-600 break-words">{r.cableRouteName}</td>}
+                  {visible.port && <td className="px-3 py-2 text-right text-slate-600">{r.portNumber}</td>}
+                  {visible.fiber && <td className="px-3 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>}
                   {visible.status && (
-                    <td className="px-4 py-2">
+                    <td className="px-3 py-2">
                       <span
                         className={
                           "rounded px-2 py-0.5 text-xs font-medium " +
@@ -325,8 +325,8 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
                       </span>
                     </td>
                   )}
-                  {visible.name && <td className="px-4 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>}
-                  {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>}
+                  {visible.name && <td className="px-3 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>}
+                  {visible.counterpart && <td className="px-3 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>}
                 </tr>
               );
             })}
