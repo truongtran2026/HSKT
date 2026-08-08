@@ -4698,3 +4698,36 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       port liền kề, xác nhận rowSpan/"Chuyển tiếp" vẫn đúng), kéo "Thiết bị"
       ở `DeviceCircuitList.tsx`, và thử kéo-thả ngay trong dropdown Gear ở ít
       nhất 1-2 bảng để xác nhận thứ tự đổi đúng đồng bộ với tiêu đề cột.
+
+- **Mục 83 (2026-08-08) — Checkbox chọn CẢ NHÓM trong `GroupedMultiSelect.tsx`.**
+  Người dùng: ở khung lọc "Tuyến cáp / rack" tại `/odf-trunk`
+  (`TrunkRackListPanel.tsx`, xem Mục 81) — chọn 3 rack "ODF 1/8", "ODF 1/9",
+  "ODF 1/10" đều thuộc chung 1 tuyến "144FO#1 ADN1 - 2T9" đang phải tick 3
+  lần, muốn có cách chọn cả tuyến 1 lần. Sửa ở đúng component DÙNG CHUNG
+  `components/ui/GroupedMultiSelect.tsx` (không phải sửa riêng
+  `TrunkRackListPanel.tsx`) — cùng lúc có lợi cho 2 nơi khác đang dùng chung
+  component này với cách nhóm y hệt (nhóm = tuyến cáp/lĩnh vực):
+  `ImportExportClient.tsx` (chọn rack/thiết bị để import/export) và
+  `DeviceCircuitList.tsx` (bộ lọc lĩnh vực/thiết bị).
+  - Thêm `toggleGroup(groupItems)`: đang chọn HẾT mọi item trong nhóm → bấm
+    để BỎ hết; còn lại (chưa chọn hết, kể cả đang chọn 0) → bấm để CHỌN hết
+    — cùng logic 2 trạng thái với "Chọn tất cả"/"Bỏ chọn" đã có, chỉ thu hẹp
+    phạm vi về đúng 1 nhóm.
+  - Tiêu đề mỗi nhóm đổi từ `<div>` chữ thường thành `<label>` bọc
+    `<input type="checkbox">` — tick phản ánh đúng trạng thái nhóm: tick đủ
+    (mọi item đã chọn), *indeterminate* (chọn dở dang — gán qua `ref`
+    callback vì thuộc tính `indeterminate` không có trong JSX/HTML attribute
+    chuẩn, phải set trực tiếp lên DOM element), hoặc trống (chưa chọn gì).
+    Chỉ hiện checkbox nhóm khi nhóm có **>1 mục** — nhóm chỉ 1 mục thì
+    checkbox riêng của mục đó đã đủ, thêm 1 checkbox nhóm nữa chỉ dư thừa/rối
+    mắt (bố cục — yêu cầu người dùng "chú ý bố cục cho hợp lý").
+  - Các item con thụt lề `pl-5` dưới tiêu đề nhóm để phân biệt rõ 2 cấp
+    (nhóm/tuyến cáp — item/rack lẻ) bằng mắt, không chỉ dựa vào cỡ chữ.
+  - Không đổi API component ra ngoài (props `items`/`selected`/`onChange`/
+    `buttonLabel` giữ nguyên) — cả 3 nơi dùng tự động có tính năng mới, không
+    cần sửa gì thêm ở file gọi.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test chuột
+    thật — cần người dùng tự mở dropdown "Tuyến cáp / rack" ở `/odf-trunk`,
+    bấm vào tên tuyến "144FO#1 ADN1 - 2T9" xem có tick/bỏ tick cả 3 rack
+    cùng lúc không, tick dở dang 1/3 rack rồi mở lại xem checkbox nhóm có
+    hiện đúng trạng thái *indeterminate* (dấu gạch ngang) không.
