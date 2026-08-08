@@ -45,6 +45,7 @@ export default function DataTh<K extends string>({
   reorderKey,
   onReorderColumn,
   className = "",
+  title,
 }: {
   label: string;
   align?: "left" | "right";
@@ -66,6 +67,10 @@ export default function DataTh<K extends string>({
   reorderKey?: K;
   onReorderColumn?: (draggedKey: K, targetKey: K) => void;
   className?: string;
+  // Ghi đè tooltip mặc định (label hoặc "label — bấm để sắp xếp") — dùng khi
+  // label hiển thị quá ngắn/không tự giải thích được (vd cột tick "✓" cần
+  // tooltip riêng "Tick để sinh đoạn text báo cáo").
+  title?: string;
 }) {
   const sortable = sortKey !== undefined && !!onSort;
   const active = sortable && activeSortKey === sortKey;
@@ -103,7 +108,7 @@ export default function DataTh<K extends string>({
           sortable ? "cursor-pointer select-none hover:text-primary-900" : ""
         } ${align === "right" ? "justify-end" : ""}`}
         onClick={sortable ? () => onSort!(sortKey!) : undefined}
-        title={sortable ? `${label} — bấm để sắp xếp` : label}
+        title={title ?? (sortable ? `${label} — bấm để sắp xếp` : label)}
       >
         {reorderable && (
           <span

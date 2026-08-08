@@ -104,9 +104,15 @@ export default function Sidebar({
 
   const body = (
     <>
-      <div className="flex items-start justify-between gap-2 px-5 py-5 border-b border-primary-600">
-        <span className="text-xl font-bold tracking-wide">Hồ sơ kỹ thuật</span>
-        <div className="flex shrink-0 items-center gap-1.5">
+      {/* Tiêu đề nằm RIÊNG 1 hàng (yêu cầu người dùng 2026-08-08: trước đây
+          tiêu đề + 2 icon cùng 1 hàng làm "Hồ sơ kỹ thuật" bị đẩy xuống dòng
+          giữa chừng, xấu) — icon tìm kiếm/ghim xuống hàng dưới, canh phải,
+          thu nhỏ tối đa (bỏ border/chữ, chỉ còn icon trần) để không còn gì
+          tranh chỗ ngang với tiêu đề nữa, chắc chắn đủ rộng dù sau này thêm
+          icon khác. */}
+      <div className="px-5 py-4 border-b border-primary-600">
+        <span className="block text-xl font-bold tracking-wide">Hồ sơ kỹ thuật</span>
+        <div className="mt-2 flex items-center justify-end gap-1">
           {/* Nút tìm kiếm luôn hiện (yêu cầu người dùng: không được để tính
               năng Command Palette chỉ truy cập qua phím tắt Cmd/Ctrl+K, vd
               trên máy không có bàn phím vật lý/mobile) — bắn CustomEvent cho
@@ -114,7 +120,7 @@ export default function Sidebar({
           <button
             type="button"
             onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
-            className="rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
+            className="rounded p-1.5 text-primary-100 hover:bg-primary-600/60 hover:text-white"
             title="Tìm kiếm nhanh (Cmd/Ctrl + K)"
             aria-label="Tìm kiếm nhanh"
           >
@@ -123,7 +129,7 @@ export default function Sidebar({
           <button
             type="button"
             onClick={togglePinned}
-            className="rounded border border-primary-500 px-1.5 py-1 text-primary-100 hover:bg-primary-600/60 hover:text-white"
+            className="rounded p-1.5 text-primary-100 hover:bg-primary-600/60 hover:text-white"
             title={
               pinned
                 ? "Bỏ ghim — ẩn bớt khung này để tăng bề rộng cho nội dung chính, đưa chuột sát mép trái để hiện lại tạm thời"

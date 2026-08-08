@@ -297,12 +297,43 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
 ];
 
 // Kéo-thả đổi thứ tự cột (yêu cầu người dùng 2026-08-08) — áp dụng cho TOÀN
-// BỘ cột tùy chọn kể cả "Sợi" (trước đây cố định giữa "Port" và "Tên luồng",
-// người dùng phản hồi "đã kéo thả thì kéo thả được hết chứ sao chừa lại một
-// vài cột" — bỏ ngoại lệ). "Sợi" không gộp rowSpan như 7 cột kia (luôn hiện
-// riêng từng port) — renderCell() xử lý riêng case này, xem bên dưới.
-type ReorderableCol = VisibleCol;
-const REORDERABLE_COLUMNS: ReorderableCol[] = ["linkStatus", "fiber", "interface", "transit", "counterpart", "responsePlan", "station", "notes"];
+// BỘ cột, KỂ CẢ 4 cột trước đây cố định cứng ("✓", "Port", "Tên luồng",
+// "Thao tác") — người dùng phản hồi 2 lần liên tiếp "đã kéo thả thì kéo thả
+// được hết chứ sao chừa lại một vài cột", lần 2 còn phát hiện thêm hệ quả:
+// bỏ ngoại lệ "Sợi" (lần sửa trước) vô tình làm "Sợi" tụt xuống SAU "Tên
+// luồng" trong thứ tự MẶC ĐỊNH (trước đó luôn đứng ngay sau "Port" từ lúc
+// làm project) vì JSX cũ đặt "Tên luồng" cố định trước khối cột tùy chọn.
+// Gộp CẢ 4 cột "cấu trúc" (không ẩn/hiện được) + 8 cột tùy chọn vào 1 mảng
+// thứ tự DUY NHẤT (`AllCol`) là cách triệt để nhất: tự kiểm soát đúng vị trí
+// mặc định của MỌI cột bằng 1 mảng khai báo tường minh, không còn phụ thuộc
+// JSX cố định chỗ nào nữa — không lặp lại kiểu lỗi này lần thứ 3.
+type StructuralCol = "tick" | "port" | "name" | "actions";
+type AllCol = StructuralCol | VisibleCol;
+// Đúng thứ tự mặc định từ lúc làm project (người dùng xác nhận lại
+// 2026-08-08): tick, Port, Sợi, Tên luồng, Trạng thái, Giao tiếp, Chuyển
+// tiếp, Đối phương, PA ứng cứu, Trạm thực hiện, Ghi chú, Thao tác.
+const DEFAULT_ALL_ORDER: AllCol[] = [
+  "tick",
+  "port",
+  "fiber",
+  "name",
+  "linkStatus",
+  "interface",
+  "transit",
+  "counterpart",
+  "responsePlan",
+  "station",
+  "notes",
+  "actions",
+];
+// 4 cột LUÔN hiện (không có checkbox ẩn/hiện ở Cài đặt cột) — vẫn kéo-thả
+// đổi VỊ TRÍ được như 8 cột tùy chọn, chỉ khác là không thể ẩn.
+const STRUCTURAL_COLUMNS = new Set<AllCol>(["tick", "port", "name", "actions"]);
+// Tập hợp cột TÙY CHỌN (đúng COLUMN_ITEMS) — dùng để lọc `colOrder` (kiểu
+// AllCol) trước khi đưa vào <ColumnPicker> (chỉ liệt kê/ẩn-hiện được 8 cột
+// này, không phải cả 12 — Gear là danh sách "ẩn/hiện", 4 cột cấu trúc không
+// ẩn được nên không thuộc về đó, dù vẫn kéo-thả được ở ngay tiêu đề cột).
+const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
 
 // Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
 // architecture.md) — trước đây có 1 bản `Th` viết riêng ở đây, đã gộp vào
@@ -409,12 +440,20 @@ export default function PortTable({
   }, []);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("odf-trunk-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("odf-trunk-col-visibility", DEFAULT_VISIBLE);
+  // Đổi storageKey sang "-v2" (yêu cầu người dùng 2026-08-08, cùng đợt gộp cả
+  // 4 cột cấu trúc vào chung 1 thứ tự) — key cũ chỉ lưu 8 cột tùy chọn, nếu
+  // tái dùng thì `loadOrder()` (lib/useColumnOrder.ts) sẽ đẩy 4 cột cấu trúc
+  // MỚI xuống CUỐI mảng đã lưu (đúng cơ chế "key thêm sau thì thêm vào cuối"
+  // của hàm đó) — SAI hoàn toàn với mặc định mong muốn (tick/Port phải đứng
+  // ĐẦU). Đổi key mới để mọi người tự động về đúng mặc định
+  // `DEFAULT_ALL_ORDER`, dù mất thứ tự tùy chỉnh cũ (chấp nhận được — bảng
+  // vừa đổi kiến trúc kéo-thả 2 lần liên tiếp trong cùng 1 ngày).
   const {
     order: colOrder,
     moveColumn,
     reset: resetColOrder,
-  } = useColumnOrder<ReorderableCol>("odf-trunk-col-order", REORDERABLE_COLUMNS);
-  const orderedVisible = colOrder.filter((key) => visible[key]);
+  } = useColumnOrder<AllCol>("odf-trunk-col-order-v2", DEFAULT_ALL_ORDER);
+  const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("port");
   // Tick chọn luồng để sinh đoạn text báo cáo (yêu cầu người dùng 2026-08-07)
   // — khóa theo circuit.id (không theo port), nên 1 luồng chiếm 2 port không
@@ -509,10 +548,6 @@ export default function PortTable({
   // (phải tính động vì 7 cột giờ ẩn/hiện được, không còn cố định 10 nữa).
   // Cột luôn hiện: tick, Port, Tên luồng, Thao tác = 4.
   const visibleColCount = 4 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
-  // Dòng "đang được ghép/sửa cùng port..." tự render tick+Port làm ô riêng
-  // rồi mới colSpan phần còn lại ("Sợi" giờ nằm trong cột tùy chọn kéo-thả
-  // được, không còn cố định ngay sau Port nên không tách riêng nữa).
-  const restColSpanAfterPort = visibleColCount - 2;
 
   // Toàn bộ port đang "dính" vào phiên sửa/tạo hiện tại — gồm portIds gốc +
   // port thứ 2 đang chọn ghép (kể cả khi port đó nằm ở 1 group HIỂN THỊ khác
@@ -1160,8 +1195,14 @@ export default function PortTable({
     }
   }
 
-  function colWidthOf(key: ReorderableCol): number {
-    switch (key) {
+  function colWidthOf(col: AllCol): number {
+    switch (col) {
+      case "tick":
+        return 40;
+      case "port":
+        return 56;
+      case "name":
+        return colWidths.name;
       case "linkStatus":
         return 110;
       case "fiber":
@@ -1178,23 +1219,42 @@ export default function PortTable({
         return 120;
       case "notes":
         return 170;
+      case "actions":
+        return 200;
     }
   }
 
-  function renderHeaderCell(key: ReorderableCol) {
-    // `activeSortKey` ép kiểu ReorderableCol (thay vì SortKey rộng hơn) chỉ
-    // để TypeScript suy luận đúng K cho <DataTh> ở đây. "transit" không có
-    // sortKey (2 port cùng nhóm có thể khác nội dung, không có 1 giá trị đại
-    // diện để sắp xếp — xem comment groupValue() ở đầu file).
+  function renderHeaderCell(col: AllCol) {
+    // `activeSortKey` ép kiểu AllCol (thay vì SortKey rộng hơn) chỉ để
+    // TypeScript suy luận đúng K cho <DataTh> ở đây. "transit"/"tick"/
+    // "actions" không có sortKey (transit: 2 port cùng nhóm có thể khác nội
+    // dung, không có 1 giá trị đại diện để sắp xếp; tick/actions: không phải
+    // dữ liệu, sắp xếp theo đó vô nghĩa).
     const common = {
-      key,
-      activeSortKey: sortKey as ReorderableCol,
+      key: col,
+      activeSortKey: sortKey as AllCol,
       sortDir,
-      onSort: toggleSort as (k: ReorderableCol) => void,
-      reorderKey: key,
+      onSort: toggleSort as (k: AllCol) => void,
+      reorderKey: col,
       onReorderColumn: moveColumn,
     } as const;
-    switch (key) {
+    switch (col) {
+      case "tick":
+        return <DataTh {...common} sortKey={undefined} label="✓" title="Tick để sinh đoạn text báo cáo" />;
+      case "port":
+        return <DataTh {...common} sortKey="port" label="Port" filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />;
+      case "name":
+        return (
+          <DataTh
+            {...common}
+            sortKey="name"
+            label="Tên luồng"
+            width={colWidths.name}
+            onResize={(w) => resizeCol("name", w)}
+            filterValue={filters.name}
+            onFilterChange={(v) => setFilter("name", v)}
+          />
+        );
       case "linkStatus":
         return (
           <DataTh
@@ -1250,6 +1310,8 @@ export default function PortTable({
         return <DataTh {...common} sortKey="station" label="Trạm thực hiện" filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />;
       case "notes":
         return <DataTh {...common} sortKey="notes" label="Ghi chú" filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />;
+      case "actions":
+        return <DataTh {...common} sortKey={undefined} label="Thao tác" />;
     }
   }
 
@@ -1257,71 +1319,162 @@ export default function PortTable({
   // tới vị trí này — hầu hết cột gộp rowSpan={group.ports.length} (chỉ vẽ ở
   // idx===0, trả về null ở dòng thứ 2 vì rowSpan đã che phủ sẵn), RIÊNG
   // "transit" có luật gộp khác (transitMerged, xem groupValue phía trên).
+  // "groupKey" (chuỗi id các port nối nhau, tính sẵn ở nơi gọi) chỉ dùng cho
+  // case "actions" (so sánh với dangerOpenKey) — tách riêng khỏi tên tham số
+  // `col` để không bị nhầm với định danh CỘT đang vẽ.
   function renderCell(
-    key: ReorderableCol,
-    ctx: { port: PortView; idx: number; group: Group; circuit: PortView["circuit"]; transitMerged: boolean }
+    col: AllCol,
+    ctx: { port: PortView; idx: number; group: Group; circuit: PortView["circuit"]; transitMerged: boolean; groupKey: string }
   ) {
-    const { port, idx, group, circuit, transitMerged } = ctx;
-    // "Sợi" luôn hiện riêng từng port (không gộp rowSpan như 7 cột kia) —
-    // gắn với port vật lý, không phải thuộc tính của luồng.
-    if (key === "fiber") {
+    const { port, idx, group, circuit, transitMerged, groupKey } = ctx;
+    // "Port"/"Sợi" luôn hiện riêng từng port (không gộp rowSpan) — gắn với
+    // port vật lý, không phải thuộc tính của luồng.
+    if (col === "port") {
       return (
-        <td key={key} className="px-3 py-2 text-slate-700">
+        <td key={col} className="px-3 py-2 text-slate-700">
+          {port.portNumber}
+        </td>
+      );
+    }
+    if (col === "fiber") {
+      return (
+        <td key={col} className="px-3 py-2 text-slate-700">
           {port.fiberNumber ?? "—"}
         </td>
       );
     }
-    if (key === "transit") {
+    if (col === "transit") {
       if (transitMerged) {
         return idx === 0 ? (
-          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
+          <td key={col} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={2}>
             {transitDisplayByPortId.get(group.ports[0].id) ?? ""}
           </td>
         ) : null;
       }
       return (
-        <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
+        <td key={col} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words">
           {transitDisplayByPortId.get(port.id) ?? ""}
         </td>
       );
     }
     if (idx !== 0) return null; // rowSpan ở dòng đầu đã che phủ dòng này.
     const rowSpan = group.ports.length;
-    switch (key) {
+    switch (col) {
+      case "tick":
+        return (
+          <td key={col} className="px-3 py-2" rowSpan={rowSpan}>
+            {circuit && (
+              <input type="checkbox" checked={ticked.has(circuit.id)} onChange={() => toggleTick(circuit.id)} title="Tick để sinh đoạn text báo cáo" />
+            )}
+          </td>
+        );
+      case "name":
+        return (
+          <td key={col} className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={rowSpan}>
+            {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
+          </td>
+        );
       case "linkStatus":
         return (
-          <td key={key} className="px-3 py-2 text-xs" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-xs" rowSpan={rowSpan}>
             {circuit && <MirrorLinkStatusIcon status={mirrorLinkStatuses?.[circuit.id]} circuitId={circuit.id} />}
           </td>
         );
       case "interface":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
             {circuit?.interfaceType ?? ""}
           </td>
         );
       case "counterpart":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
             {circuit?.counterpartText ?? ""}
           </td>
         );
       case "responsePlan":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
             {circuit?.responsePlanText ?? ""}
           </td>
         );
       case "station":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-slate-600" rowSpan={rowSpan}>
             {circuit?.executionStationText ?? ""}
           </td>
         );
       case "notes":
         return (
-          <td key={key} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
+          <td key={col} className="px-3 py-2 text-slate-600 whitespace-pre-line break-words" rowSpan={rowSpan}>
             {circuit?.notes ?? ""}
+          </td>
+        );
+      case "actions":
+        return (
+          <td key={col} className="px-3 py-2" rowSpan={rowSpan}>
+            <div className="flex flex-wrap gap-2">
+              {circuit ? (
+                <>
+                  <RoleGate allow={["operator", "admin"]}>
+                    <button
+                      className="text-primary-600 hover:underline disabled:text-slate-300"
+                      onClick={() => openEditExisting(group)}
+                      disabled={busy}
+                      title="Sửa"
+                      aria-label="Sửa"
+                    >
+                      <IconEdit />
+                    </button>
+                  </RoleGate>
+                  <RoleGate allow={["operator", "admin"]}>
+                    {dangerOpenKey === groupKey ? (
+                      <button
+                        className="text-red-600 hover:underline disabled:text-slate-300"
+                        onClick={() => deleteGroup(group)}
+                        disabled={busy}
+                        title="Xóa"
+                        aria-label="Xóa"
+                      >
+                        <IconTrash />
+                      </button>
+                    ) : (
+                      <button
+                        className="text-slate-400 hover:underline"
+                        onClick={() => setDangerOpenKey(groupKey)}
+                        disabled={busy}
+                        title="Hiện nút xóa luồng này"
+                      >
+                        ⋯
+                      </button>
+                    )}
+                  </RoleGate>
+                  <button className="text-slate-500 hover:underline" onClick={() => copyGroup(group)} disabled={busy}>
+                    Copy
+                  </button>
+                  <RoleGate allow={["operator", "admin"]}>
+                    <button className="text-amber-600 hover:underline" onClick={() => openMove(group)} disabled={busy}>
+                      Chuyển tuyến
+                    </button>
+                  </RoleGate>
+                </>
+              ) : (
+                <>
+                  <RoleGate allow={["operator", "admin"]}>
+                    <button className="text-primary-600 hover:underline" onClick={() => openCreateNew(port)} disabled={busy}>
+                      {port.transitText ? "Sửa" : "Thêm luồng"}
+                    </button>
+                  </RoleGate>
+                  {clipboard && (
+                    <RoleGate allow={["operator", "admin"]}>
+                      <button className="text-slate-500 hover:underline" onClick={() => openCreateNew(port, clipboard)} disabled={busy}>
+                        Dán
+                      </button>
+                    </RoleGate>
+                  )}
+                </>
+              )}
+            </div>
           </td>
         );
     }
@@ -1378,10 +1531,10 @@ export default function PortTable({
           />
           <ColumnPicker
             items={COLUMN_ITEMS}
-            order={colOrder}
+            order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}
             visible={visible}
             onToggle={toggleColumn}
-            onReorderColumn={moveColumn}
+            onReorderColumn={moveColumn as (dragged: VisibleCol, target: VisibleCol) => void}
             onResetOrder={resetColOrder}
           />
         </div>
@@ -1395,34 +1548,12 @@ export default function PortTable({
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
-            <col style={{ width: 40 }} />
-            <col style={{ width: 56 }} />
-            <col style={{ width: colWidths.name }} />
-            {orderedVisible.map((key) => (
-              <col key={key} style={{ width: colWidthOf(key) }} />
+            {orderedAll.map((col) => (
+              <col key={col} style={{ width: colWidthOf(col) }} />
             ))}
-            <col style={{ width: 200 }} />
           </colgroup>
           <thead className="text-primary-800">
-            <tr>
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold" title="Tick để sinh đoạn text báo cáo">
-                ✓
-              </th>
-              <DataTh label="Port" sortKey="port" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
-              <DataTh
-                label="Tên luồng"
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.name}
-                onResize={(w) => resizeCol("name", w)}
-                filterValue={filters.name}
-                onFilterChange={(v) => setFilter("name", v)}
-              />
-              {orderedVisible.map((key) => renderHeaderCell(key))}
-              <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
-            </tr>
+            <tr>{orderedAll.map((col) => renderHeaderCell(col))}</tr>
           </thead>
           <tbody>
             {sortedGroups.length === 0 && (
@@ -1481,10 +1612,8 @@ export default function PortTable({
                 const primaryPortNumber = ports.find((p) => p.id === edit!.portIds[0])?.portNumber;
                 return group.ports.map((port) => (
                   <tr key={port.id} className="border-t border-slate-100 bg-primary-50/40 text-slate-400 italic">
-                    <td className="px-3 py-2" />
-                    <td className="px-3 py-2">{port.portNumber}</td>
-                    <td className="px-3 py-2" colSpan={restColSpanAfterPort}>
-                      Đang được ghép/sửa cùng port {primaryPortNumber} ở dòng đang sửa.
+                    <td className="px-3 py-2" colSpan={visibleColCount}>
+                      Port {port.portNumber} — đang được ghép/sửa cùng port {primaryPortNumber} ở dòng đang sửa.
                     </td>
                   </tr>
                 ));
@@ -1493,10 +1622,8 @@ export default function PortTable({
                 const primaryPortNumber = ports.find((p) => p.id === move!.sourcePortIds[0])?.portNumber;
                 return group.ports.map((port) => (
                   <tr key={port.id} className="border-t border-slate-100 bg-amber-50/40 text-slate-400 italic">
-                    <td className="px-3 py-2" />
-                    <td className="px-3 py-2">{port.portNumber}</td>
-                    <td className="px-3 py-2" colSpan={restColSpanAfterPort}>
-                      Đang được chuyển tuyến cùng port {primaryPortNumber} ở dòng phía trên.
+                    <td className="px-3 py-2" colSpan={visibleColCount}>
+                      Port {port.portNumber} — đang được chuyển tuyến cùng port {primaryPortNumber} ở dòng phía trên.
                     </td>
                   </tr>
                 ));
@@ -1522,86 +1649,7 @@ export default function PortTable({
                   // đã từng gặp lỗi cùng loại bên DeviceCircuitList.tsx).
                   className={`scroll-mt-24 border-t border-slate-100 hover:bg-primary-50/50 ${isCopiedSource ? "bg-amber-50/70" : ""} ${highlightPortId === port.id ? "bg-amber-100" : ""}`}
                 >
-                  {idx === 0 && (
-                    <td className="px-3 py-2" rowSpan={group.ports.length}>
-                      {circuit && (
-                        <input type="checkbox" checked={ticked.has(circuit.id)} onChange={() => toggleTick(circuit.id)} title="Tick để sinh đoạn text báo cáo" />
-                      )}
-                    </td>
-                  )}
-                  <td className="px-3 py-2 text-slate-700">{port.portNumber}</td>
-                  {idx === 0 && (
-                    <td className="px-3 py-2 font-medium text-slate-800 break-words" rowSpan={group.ports.length}>
-                      {circuit ? circuit.name : <span className="text-slate-300">— trống —</span>}
-                    </td>
-                  )}
-                  {orderedVisible.map((key) => renderCell(key, { port, idx, group, circuit, transitMerged }))}
-                  {idx === 0 && (
-                    <td className="px-3 py-2" rowSpan={group.ports.length}>
-                      <div className="flex flex-wrap gap-2">
-                        {circuit ? (
-                          <>
-                            <RoleGate allow={["operator", "admin"]}>
-                              <button
-                                className="text-primary-600 hover:underline disabled:text-slate-300"
-                                onClick={() => openEditExisting(group)}
-                                disabled={busy}
-                                title="Sửa"
-                                aria-label="Sửa"
-                              >
-                                <IconEdit />
-                              </button>
-                            </RoleGate>
-                            <RoleGate allow={["operator", "admin"]}>
-                              {dangerOpenKey === key ? (
-                                <button
-                                  className="text-red-600 hover:underline disabled:text-slate-300"
-                                  onClick={() => deleteGroup(group)}
-                                  disabled={busy}
-                                  title="Xóa"
-                                  aria-label="Xóa"
-                                >
-                                  <IconTrash />
-                                </button>
-                              ) : (
-                                <button
-                                  className="text-slate-400 hover:underline"
-                                  onClick={() => setDangerOpenKey(key)}
-                                  disabled={busy}
-                                  title="Hiện nút xóa luồng này"
-                                >
-                                  ⋯
-                                </button>
-                              )}
-                            </RoleGate>
-                            <button className="text-slate-500 hover:underline" onClick={() => copyGroup(group)} disabled={busy}>
-                              Copy
-                            </button>
-                            <RoleGate allow={["operator", "admin"]}>
-                              <button className="text-amber-600 hover:underline" onClick={() => openMove(group)} disabled={busy}>
-                                Chuyển tuyến
-                              </button>
-                            </RoleGate>
-                          </>
-                        ) : (
-                          <>
-                            <RoleGate allow={["operator", "admin"]}>
-                              <button className="text-primary-600 hover:underline" onClick={() => openCreateNew(port)} disabled={busy}>
-                                {port.transitText ? "Sửa" : "Thêm luồng"}
-                              </button>
-                            </RoleGate>
-                            {clipboard && (
-                              <RoleGate allow={["operator", "admin"]}>
-                                <button className="text-slate-500 hover:underline" onClick={() => openCreateNew(port, clipboard)} disabled={busy}>
-                                  Dán
-                                </button>
-                              </RoleGate>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  )}
+                  {orderedAll.map((col) => renderCell(col, { port, idx, group, circuit, transitMerged, groupKey: key }))}
                 </tr>
               ));
             })}

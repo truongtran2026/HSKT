@@ -4731,3 +4731,62 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     bấm vào tên tuyến "144FO#1 ADN1 - 2T9" xem có tick/bỏ tick cả 3 rack
     cùng lúc không, tick dở dang 1/3 rack rồi mở lại xem checkbox nhóm có
     hiện đúng trạng thái *indeterminate* (dấu gạch ngang) không.
+
+- **Mục 84 (2026-08-08) — `PortTable.tsx`: kéo-thả TOÀN BỘ cột (kể cả 4 cột
+  cấu trúc) + sửa lỗi thứ tự mặc định bị lệch.** Người dùng phát hiện: vào
+  `/odf-trunk/[rackId]`, thứ tự mặc định KHÔNG còn đúng như từ lúc làm
+  project (tick, Port, **Sợi**, Tên luồng, Trạng thái, Giao tiếp, Chuyển
+  tiếp, ..., Thao tác) — "Sợi" bị tụt xuống SAU "Tên luồng". Nguyên nhân: Mục
+  82 bổ sung (bỏ ngoại lệ "Sợi", cùng ngày) gộp "Sợi" vào `orderedVisible`,
+  nhưng khối đó vẫn render SAU vị trí cố định cứng của "Tên luồng" trong JSX
+  — bỏ ngoại lệ nhưng JSX xung quanh vẫn còn cố định, chỉ dời được lỗi đi
+  chỗ khác. Người dùng đồng thời yêu cầu thẳng: "phải cho kéo thả hết toàn
+  bộ chứ" — không chỉ 8 cột tùy chọn, mà cả 4 cột trước giờ luôn cố định
+  ("✓"/tick, "Port", "Tên luồng", "Thao tác").
+  - Giải pháp TRIỆT ĐỂ (không vá tiếp từng trường hợp lẻ): gộp CẢ 12 cột (4
+    cấu trúc + 8 tùy chọn) vào 1 kiểu `AllCol` DUY NHẤT với 1 mảng thứ tự
+    mặc định tường minh `DEFAULT_ALL_ORDER` (đúng thứ tự người dùng xác nhận
+    lại) — không còn bất kỳ vị trí nào cố định trong JSX nữa, `<colgroup>`/
+    `<thead>`/hàng dữ liệu đều chỉ còn 1 dòng `{orderedAll.map(...)}` duy
+    nhất (trước đây mỗi nơi có 2-4 chỗ JSX cố định xen giữa các đoạn map).
+    - `STRUCTURAL_COLUMNS` (tick/port/name/actions) — LUÔN có mặt trong
+      `orderedAll` bất kể `visible` (không có checkbox ẩn/hiện ở Gear —
+      4 cột này không ẩn được, chỉ đổi VỊ TRÍ được).
+    - `<ColumnPicker>` (Gear) vẫn CHỈ liệt kê 8 cột tùy chọn như cũ — lọc
+      `colOrder` (kiểu `AllCol`) xuống còn `VisibleCol` trước khi truyền
+      (`order={colOrder.filter(OPTIONAL_COL_SET.has)}`) vì Gear là danh sách
+      "ẩn/hiện", 4 cột cấu trúc không thuộc phạm vi đó — vẫn kéo-thả được ở
+      NGAY TIÊU ĐỀ CỘT của chúng (đã có `reorderKey`/`onReorderColumn` như
+      mọi cột khác), chỉ không xuất hiện trong dropdown Gear.
+    - `renderCell()` gộp thêm case `"tick"`/`"name"`/`"actions"` (rowSpan
+      theo nhóm, y hệt logic đã có) và `"port"` (không rowSpan, luôn hiện
+      riêng port — chuyển từ code cũ ở body sang, không đổi hành vi).
+      "actions" cần thêm `groupKey` vào `ctx` (chuỗi id các port nối nhau,
+      dùng so sánh `dangerOpenKey`) vì tên tham số cột đổi từ `key` sang
+      `col` để tránh nhầm với biến `key` (hash nhóm) ở scope ngoài.
+    - `DataTh.tsx` thêm prop `title?` (ghi đè tooltip mặc định) — cột "✓"
+      cần tooltip riêng "Tick để sinh đoạn text báo cáo" thay vì tooltip mặc
+      định (chỉ lặp lại label "✓", vô nghĩa).
+    - Đổi `storageKey` thứ tự cột từ `"odf-trunk-col-order"` sang
+      `"-v2"` — key cũ chỉ có 8 phần tử (không có 4 cột cấu trúc); nếu tái
+      dùng, `loadOrder()` (lib/useColumnOrder.ts) sẽ đẩy 4 cột MỚI xuống
+      CUỐI mảng đã lưu (SAI mặc định mong muốn, tick/Port phải đứng ĐẦU) —
+      đổi key để mọi người về đúng `DEFAULT_ALL_ORDER`, chấp nhận mất tùy
+      chỉnh thứ tự cũ (bảng vừa đổi kiến trúc kéo-thả 2 lần trong 1 ngày).
+    - 2 dòng placeholder "đang được ghép/sửa cùng port... ở dòng khác" đơn
+      giản hóa thành 1 ô `colSpan={visibleColCount}` duy nhất (trước đây tự
+      vẽ riêng ô tick+Port rồi mới colSpan phần còn lại — không còn đúng khi
+      Port có thể ở BẤT KỲ vị trí nào, đơn giản hóa luôn thể).
+  - **Sidebar.tsx** (cùng lượt, người dùng báo trong cùng tin nhắn): tiêu đề
+    "Hồ sơ kỹ thuật" bị xuống dòng ("Hồ sơ kỹ" / "thuật") vì cùng hàng với 2
+    icon 🔍/ghim chiếm hết chỗ ngang trong khung `w-64`. Sửa: tách tiêu đề ra
+    HÀNG RIÊNG (luôn đủ rộng, không tranh chỗ với gì), 2 icon xuống hàng dưới
+    canh phải — đồng thời bỏ border/rút gọn padding 2 nút (`p-1.5`, không
+    còn khung viền) để gọn hơn, còn dư chỗ cho icon khác sau này mà không
+    lặp lại lỗi này.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test chuột
+    thật — cần người dùng tự vào 1 rack cụ thể ở `/odf-trunk`, xác nhận thứ
+    tự mặc định đúng lại (tick, Port, Sợi, Tên luồng, Trạng thái, Giao tiếp,
+    Chuyển tiếp, ...), thử kéo CẢ cột "✓"/"Port"/"Tên luồng"/"Thao tác" sang
+    vị trí khác xem có hoạt động đúng không (đặc biệt rowSpan khi rack có
+    luồng ghép 2 port liền kề), và xác nhận Sidebar hết bị xuống dòng.
