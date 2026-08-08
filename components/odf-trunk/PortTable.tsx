@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
-import { useSort, type SortDir } from "@/lib/useSort";
+import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
 import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
@@ -25,13 +25,14 @@ import { buildTrunkPortReportText } from "@/lib/circuitReportText";
 import type { CircuitOptions } from "@/lib/circuitOptions";
 import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
 import { formatLastUpdated } from "@/lib/format";
-import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
-import FilterInput from "@/components/ui/FilterInput";
+import DataTh from "@/components/ui/DataTh";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import { IconEdit, IconTrash } from "@/components/ui/icons";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
@@ -282,55 +283,9 @@ const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
   { key: "notes", label: "Ghi chú" },
 ];
 
-// Tiêu đề cột GỘP nhãn+sắp xếp+lọc vào ĐÚNG 1 <th> sticky — yêu cầu người
-// dùng 2026-07-28: rack dài tới cả trăm port, cuộn xuống phải giữ được tiêu
-// đề cột. Bắt buộc gộp 1 hàng duy nhất (không tách hàng lọc riêng bên dưới
-// như trước): 2 hàng sticky riêng từng gây lỗi chữ đè nhau khi cuộn ở
-// DeviceCircuitList.tsx (hàng dưới phải tự tính "top" theo chiều cao hàng
-// trên, dễ lệch nếu nội dung xuống dòng) — đã fix ở đó bằng đúng cách gộp 1
-// hàng này, áp dụng lại y hệt ở đây thay vì SortableTh/ResizableTh cũ.
-function Th<K extends string>({
-  label,
-  sortKey,
-  activeKey,
-  dir,
-  onSort,
-  width,
-  onResize,
-  filterValue,
-  onFilterChange,
-}: {
-  label: string;
-  sortKey?: K;
-  activeKey?: K;
-  dir?: SortDir;
-  onSort?: (key: K) => void;
-  width?: number;
-  onResize?: (width: number) => void;
-  filterValue: string;
-  onFilterChange: (v: string) => void;
-}) {
-  const sortable = sortKey !== undefined && !!onSort;
-  const active = sortable && activeKey === sortKey;
-  return (
-    <th className="sticky top-0 z-10 relative bg-primary-50 px-3 py-2 text-left align-top">
-      <div
-        className={`mb-1 flex items-center gap-1 font-semibold ${sortable ? "cursor-pointer select-none hover:text-primary-900" : ""}`}
-        onClick={sortable ? () => onSort!(sortKey!) : undefined}
-        title={sortable ? "Bấm để sắp xếp" : undefined}
-      >
-        {label}
-        {sortable && (
-          <span className={`text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
-            {active ? (dir === "asc" ? "▲" : "▼") : "⇅"}
-          </span>
-        )}
-      </div>
-      <FilterInput value={filterValue} onChange={onFilterChange} />
-      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
-    </th>
-  );
-}
+// Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
+// architecture.md) — trước đây có 1 bản `Th` viết riêng ở đây, đã gộp vào
+// DataTh dùng chung với DeviceCircuitList.tsx và các bảng khác.
 
 export default function PortTable({
   rackId,
@@ -497,6 +452,27 @@ export default function PortTable({
     const arr = [...filteredGroups].sort((a, b) => compareValues(groupValue(a, sortKey), groupValue(b, sortKey)));
     return sortDir === "desc" ? arr.reverse() : arr;
   }, [filteredGroups, sortKey, sortDir]);
+
+  // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng, xem
+  // architecture.md) — 1 dòng xuất = 1 port (đúng nguyên tắc CLAUDE.md #1,
+  // không gộp theo rowspan hiển thị) — flatten `sortedGroups` (đã qua lọc +
+  // sắp xếp) về đúng danh sách port đang hiện trên màn hình.
+  const exportRows = useMemo(() => sortedGroups.flatMap((g) => g.ports), [sortedGroups]);
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (p: PortView) => string | number | null }[] = [
+      { label: "Port", getValue: (p) => p.portNumber },
+    ];
+    if (visible.fiber) cols.push({ label: "Sợi", getValue: (p) => p.fiberNumber });
+    cols.push({ label: "Tên luồng", getValue: (p) => p.circuit?.name ?? "" });
+    if (visible.interface) cols.push({ label: "Giao tiếp", getValue: (p) => p.circuit?.interfaceType ?? "" });
+    if (visible.transit) cols.push({ label: "Chuyển tiếp", getValue: (p) => transitDisplay(p.transitText, trunkPorts) });
+    if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (p) => p.circuit?.counterpartText ?? "" });
+    if (visible.responsePlan) cols.push({ label: "PA ứng cứu", getValue: (p) => p.circuit?.responsePlanText ?? "" });
+    if (visible.station) cols.push({ label: "Trạm thực hiện", getValue: (p) => p.circuit?.executionStationText ?? "" });
+    if (visible.notes) cols.push({ label: "Ghi chú", getValue: (p) => p.circuit?.notes ?? "" });
+    return cols;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, trunkPorts]);
 
   // Tổng số cột ĐANG hiện — dùng cho colSpan của EditRow/MoveRow/dòng trống
   // (phải tính động vì 7 cột giờ ẩn/hiện được, không còn cố định 10 nữa).
@@ -1192,6 +1168,12 @@ export default function PortTable({
         <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
           Lịch sử tra cứu
         </button>
+        <ExportExcelButton
+          columns={exportColumns}
+          rows={exportRows}
+          sheetName={`Rack ${currentRackCode || rackId}`}
+          fileNamePrefix={`ODF_trung_ke_${currentRackCode || rackId}`}
+        />
         <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
       </div>
       <CircuitReportPanel items={reportItems} />
@@ -1220,15 +1202,15 @@ export default function PortTable({
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold" title="Tick để sinh đoạn text báo cáo">
                 ✓
               </th>
-              <Th label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
+              <DataTh label="Port" sortKey="port" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.port} onFilterChange={(v) => setFilter("port", v)} />
               {visible.fiber && (
-                <Th label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
+                <DataTh label="Sợi" sortKey="fiber" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.fiber} onFilterChange={(v) => setFilter("fiber", v)} />
               )}
-              <Th
+              <DataTh
                 label="Tên luồng"
                 sortKey="name"
-                activeKey={sortKey}
-                dir={sortDir}
+                activeSortKey={sortKey}
+                sortDir={sortDir}
                 onSort={toggleSort}
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
@@ -1236,10 +1218,10 @@ export default function PortTable({
                 onFilterChange={(v) => setFilter("name", v)}
               />
               {visible.interface && (
-                <Th label="Giao tiếp" sortKey="interface" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
+                <DataTh label="Giao tiếp" sortKey="interface" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.interface} onFilterChange={(v) => setFilter("interface", v)} />
               )}
               {visible.transit && (
-                <Th
+                <DataTh
                   label="Chuyển tiếp"
                   width={colWidths.transit}
                   onResize={(w) => resizeCol("transit", w)}
@@ -1248,14 +1230,14 @@ export default function PortTable({
                 />
               )}
               {visible.counterpart && (
-                <Th label="Đối phương" sortKey="counterpart" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
+                <DataTh label="Đối phương" sortKey="counterpart" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.counterpart} onFilterChange={(v) => setFilter("counterpart", v)} />
               )}
               {visible.responsePlan && (
-                <Th
+                <DataTh
                   label="PA ứng cứu"
                   sortKey="responsePlan"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   width={colWidths.responsePlan}
                   onResize={(w) => resizeCol("responsePlan", w)}
@@ -1264,10 +1246,10 @@ export default function PortTable({
                 />
               )}
               {visible.station && (
-                <Th label="Trạm thực hiện" sortKey="station" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
+                <DataTh label="Trạm thực hiện" sortKey="station" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.station} onFilterChange={(v) => setFilter("station", v)} />
               )}
               {visible.notes && (
-                <Th label="Ghi chú" sortKey="notes" activeKey={sortKey} dir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
+                <DataTh label="Ghi chú" sortKey="notes" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filterValue={filters.notes} onFilterChange={(v) => setFilter("notes", v)} />
               )}
               <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 text-left align-top font-semibold">Thao tác</th>
             </tr>
@@ -1436,14 +1418,26 @@ export default function PortTable({
                         {circuit ? (
                           <>
                             <RoleGate allow={["operator", "admin"]}>
-                              <button className="text-primary-600 hover:underline" onClick={() => openEditExisting(group)} disabled={busy}>
-                                Sửa
+                              <button
+                                className="text-primary-600 hover:underline disabled:text-slate-300"
+                                onClick={() => openEditExisting(group)}
+                                disabled={busy}
+                                title="Sửa"
+                                aria-label="Sửa"
+                              >
+                                <IconEdit />
                               </button>
                             </RoleGate>
                             <RoleGate allow={["operator", "admin"]}>
                               {dangerOpenKey === key ? (
-                                <button className="text-red-600 hover:underline" onClick={() => deleteGroup(group)} disabled={busy}>
-                                  Xóa
+                                <button
+                                  className="text-red-600 hover:underline disabled:text-slate-300"
+                                  onClick={() => deleteGroup(group)}
+                                  disabled={busy}
+                                  title="Xóa"
+                                  aria-label="Xóa"
+                                >
+                                  <IconTrash />
                                 </button>
                               ) : (
                                 <button

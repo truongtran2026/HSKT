@@ -57,3 +57,23 @@ export function exportDeviceExcel(rows: DeviceCircuitRow[], deviceNames: string[
   XLSX.utils.book_append_sheet(wb, sheet, "Hồ sơ đấu nối");
   XLSX.writeFile(wb, `Ho_so_dau_noi_ADN1_${todayStamp()}.xlsx`);
 }
+
+export interface ExcelColumn<T> {
+  label: string;
+  getValue: (row: T) => string | number | null | undefined;
+}
+
+// Xuất Excel CHUNG cho mọi bảng trong app (quy định chung, yêu cầu người dùng
+// 2026-08-08: "trên bất kỳ bảng nào cũng có thể export ra excel theo cột đã
+// hiển thị") — khác 2 hàm trên (cố định cột theo cấu trúc file gốc, chỉ dùng
+// ở trang /import-export), hàm này nhận thẳng danh sách cột + dòng đang hiện
+// TRÊN MÀN HÌNH của bảng gọi nó (đã qua sort/filter/ẩn-hiện-cột phía client),
+// xuất ĐÚNG những gì người dùng đang thấy — không phải một view cố định khác.
+export function exportRowsToExcel<T>(columns: ExcelColumn<T>[], rows: T[], opts: { sheetName: string; fileNamePrefix: string }) {
+  const aoa = [columns.map((c) => c.label), ...rows.map((r) => columns.map((c) => c.getValue(r) ?? ""))];
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  // Tên sheet Excel giới hạn 31 ký tự, không được chứa 1 số ký tự đặc biệt.
+  XLSX.utils.book_append_sheet(wb, sheet, opts.sheetName.slice(0, 31));
+  XLSX.writeFile(wb, `${opts.fileNamePrefix}_${todayStamp()}.xlsx`);
+}

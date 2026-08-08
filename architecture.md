@@ -4255,3 +4255,131 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       nhập lần lượt viewer/operator/admin (`npm run create-role-accounts`) để
       xác nhận đúng nút bị ẩn theo đúng vai trò, và tự thử đổi mật khẩu/quản
       lý tài khoản trên trang `/settings`.
+
+80. **Chuẩn hóa bảng dữ liệu + mở rộng Quản lý tài khoản + đổi tên + thu gọn
+    panel "Phát hiện..." (2026-08-08)** — yêu cầu người dùng: 9 bảng dữ liệu lớn
+    trong app làm sort/filter/resize/ẩn-hiện-cột không đồng nhất (2 pattern
+    header khác nhau, chỉ 3/9 bảng có ẩn/hiện cột), lỗi ô filter lệch hàng khi
+    resize cột, thiếu nút Xuất Excel trên từng bảng, bảng load hết dữ liệu
+    ngay khi mở tab (chậm), nút thao tác nên là icon, và admin chưa quản lý
+    được tài khoản cấp dưới đầy đủ.
+    - **Quy định chung cho MỌI bảng dữ liệu từ nay** (áp dụng lại cho 9 bảng
+      hiện có, dùng làm chuẩn cho bảng mới sau này):
+      - Header: `components/ui/DataTh.tsx` (mới) — 1 component gộp
+        nhãn+sắp xếp+lọc+kéo dãn vào ĐÚNG 1 `<th>` sticky, THAY THẾ
+        `SortableTh`/`ResizableTh` (2 file cũ — đã XÓA hẳn, không còn nơi nào
+        dùng sau khi đổi hết 9 bảng) VÀ các bản viết tay riêng (`Th` ở
+        `PortTable.tsx`, `SortFilterTh`/`FilterOnlyTh` ở
+        `DeviceCircuitList.tsx`). **Sửa đúng gốc lỗi lệch
+        hàng khi resize**: nhãn cột trong `DataTh` LUÔN `truncate` (1 dòng,
+        cắt bằng "...", có `title` đầy đủ) — cột hẹp trước đây làm nhãn dài
+        xuống 2 dòng, đẩy `FilterInput` ở cột đó lệch xuống so với cột bên
+        cạnh (label 1 dòng); nay nhãn không bao giờ đổi chiều cao `<th>`.
+      - `<table className="table-fixed">` + `<colgroup>` bắt buộc mọi bảng
+        (đã đúng ở 8/9, riêng `DashboardClient.tsx` (`TableView`) trước đây
+        `min-w-full` không `colgroup` — đã sửa, resize giờ mới có tác dụng).
+      - Ẩn/hiện cột: `components/ui/ColumnPicker.tsx` đổi nút chữ "Cột hiển
+        thị (n/m)" thành icon Gear (badge số cột đang ẨN, không phải đang
+        hiện) — áp dụng `useColumnVisibility` cho toàn bộ 9 bảng (trước chỉ
+        3/9 có: `PortTable`, `DeviceCircuitList`, `DeviceRackPortView`).
+      - Xuất Excel theo cột đang hiển thị: `lib/exportExcel.ts` thêm hàm
+        generic `exportRowsToExcel<T>(columns, rows, opts)` (2 hàm cũ
+        `exportTrunkExcel`/`exportDeviceExcel` GIỮ NGUYÊN, chỉ dùng ở trang
+        `/import-export` riêng, không đụng) + `components/ui/
+        ExportExcelButton.tsx` (mới, icon Download) gói lại thành 1 nút dùng
+        chung — mỗi bảng tự truyền `columns` đã lọc theo `visible` +
+        `rows` đã qua sort/filter hiện tại, xuất ĐÚNG những gì đang thấy trên
+        màn hình (không phải 1 view cố định khác như trang Import/Export).
+      - Icon hóa nút thao tác: `components/ui/icons.tsx` (mới) — SVG inline
+        tay vẽ (`IconPin`/`IconPinOff`/`IconEdit`/`IconTrash`/`IconCheck`/
+        `IconGear`/`IconDownload`), KHÔNG thêm thư viện icon ngoài. Áp dụng
+        cho nút Ghim/Bỏ ghim (`Sidebar.tsx`) và mọi nút Sửa/Xóa/Ack (giữ
+        `title`/`aria-label` đầy đủ tên thao tác — chỉ ẩn chữ khỏi hiển thị,
+        không bỏ hẳn; vài chỗ đứng riêng lẻ ngoài bảng — vd "Xóa rack này",
+        "Sửa tên tuyến" — giữ icon+chữ vì có ngữ cảnh câu văn xung quanh,
+        không phải ô hẹp trong bảng).
+      - **Mặc định KHÔNG hiện dữ liệu tới khi chọn lọc** — `components/ui/
+        EmptyUntilFiltered.tsx` (mới, dùng chung): hiện khung "Chọn ... để
+        xem, hoặc" + nút "Xem tất cả" — bấm 1 trong 2 mới render bảng. Áp
+        dụng ở `DeviceCircuitList.tsx`, `SearchClient.tsx`,
+        `DeviceSearchClient.tsx`, `DeviceCategoryClient.tsx`,
+        `DevicePositionMapClient.tsx` (đều thêm state `viewAll` tách biệt
+        với bộ lọc lĩnh vực/thiết bị hiện có — bấm nút lọc "Tất cả" cũng coi
+        như đã chọn xem, không chỉ riêng nút "Xem tất cả"). `/odf-trunk`
+        (`RackListTable` qua rack trung kế): trước đây KHÔNG có slicer nào,
+        hiện thẳng 41 rack — thêm `components/odf-trunk/
+        TrunkRackListPanel.tsx` (mới) dùng `GroupedMultiSelect` theo tuyến
+        cáp (tái dùng y hệt cách `ImportExportClient.tsx` đã chọn rack trung
+        kế) + `EmptyUntilFiltered`. `/odf-device` (rack thiết bị, 112 dòng):
+        theo lựa chọn người dùng — KHÔNG bắt buộc chọn trước (bảng nhỏ hơn
+        nhiều so với 2000+ dòng luồng), giữ nguyên hành vi hiện toàn bộ, chỉ
+        hưởng lợi gián tiếp từ `RackListTable.tsx` đã có sẵn ô lọc "Mã rack".
+        **KHÔNG đụng** các khung "Phát hiện..." (`data-quality/*`) — giữ
+        nguyên để xem tốc độ phản hồi trước, đúng yêu cầu người dùng.
+      - `RackListTable.tsx` (dùng chung 2 nơi) viết lại đầy đủ theo quy định
+        trên (`DataTh`, `ColumnPicker`, `ExportExcelButton`) — không đổi
+        props/hành vi lọc theo cột đã có.
+    - **Mở rộng "Quản lý tài khoản" (Admin)** — 3 việc người dùng nêu chưa
+      làm được ở đợt 79: xóa tài khoản cấp dưới, đặt lại mật khẩu tài khoản
+      cấp dưới, liệt kê rõ quyền từng vai trò.
+      - `app/api/admin/users/[userId]/route.ts` — thêm `DELETE` (chặn tự
+        xóa chính mình, cùng pattern guard với PATCH đổi vai trò đã có).
+      - `app/api/admin/users/[userId]/password/route.ts` (mới) — `POST
+        {password}`, `admin.auth.admin.updateUserById(userId, {password})`
+        (KHÔNG chặn tự đặt lại mật khẩu chính mình — khác đổi vai trò, không
+        có rủi ro tự khóa quyền).
+      - `components/settings/UserManagementPanel.tsx` — thêm cột "Thao tác"
+        mỗi dòng (icon Edit = đặt lại mật khẩu inline, icon Trash = xóa,
+        disable ở dòng chính mình), và khối tĩnh phía trên bảng liệt kê ĐÚNG
+        quyền từng vai trò (khớp thật với RLS — `supabase/migrations/
+        20260806000001_authenticated_rls.sql`/`20260807000001_fix_role_
+        policies.sql`, không phải mô tả tự suy diễn) để admin biết chính xác
+        đang cấp/thu hồi gì.
+      - `lib/roleLabel.ts` — đổi nhãn hiển thị `"Viewer (chỉ xem)"` →
+        `"View (chỉ xem)"` (yêu cầu người dùng "không dùng khái niệm
+        viewer") — CHỈ đổi chữ, giá trị `"viewer"` lưu thật ở
+        `app_metadata.role`/RLS/API GIỮ NGUYÊN (đổi cả giá trị đó rủi ro cao
+        hơn nhiều, người dùng chọn không làm).
+    - **Đổi tên (3 chỗ)**: `app/odf-trunk/page.tsx` "ODF Trung kế" → "Hồ sơ
+      ODF Trung kế"; `app/odf-device/vi-tri-thiet-bi/page.tsx` "Vị trí thiết
+      bị → ODF/DDF" → "Thư viện vị trí thiết bị"; `components/Sidebar.tsx` +
+      `app/import-export/page.tsx` "Import / Export Excel" → "Import/Export
+      dữ liệu".
+    - **Thu gọn khung "Phát hiện..." — ĐÃ LÀM** (đề xuất ở lần cập nhật đầu
+      của mục này, người dùng xác nhận làm luôn ngay sau đó): `lib/
+      useCollapsed.ts` (mới) — `useCollapsed(storageKey, defaultCollapsed=
+      true)`, rập khuôn lazy-init localStorage của `lib/useColumnVisibility.ts`
+      (đọc NGAY trong `useState` initializer, không nháy khung hình mặc định
+      rồi mới lật sang giá trị đã lưu). Áp trực tiếp vào 11 khung "Phát
+      hiện..." (không tách component `CollapsiblePanel` dùng chung được vì
+      mỗi khung có 1 tông màu Tailwind riêng — `border-sky-200`/`border-
+      violet-200`/`border-rose-200`/`border-red-200`/`border-amber-200` —
+      Tailwind JIT cần thấy đúng class tĩnh trong source, không ghép được
+      `border-${color}-200` động; mỗi file tự thêm `useCollapsed()` + nút
+      +/− cạnh `<h2>`, giữ nguyên class màu tĩnh của chính nó):
+      `components/odf-trunk/TransitFormatWarning.tsx`,
+      `components/data-quality/TrunkMissingDeviceMirrorTab.tsx`,
+      `UnlinkedMirrorPairsTab.tsx`, `MismatchedLinkedPairsTab.tsx`,
+      `UnlinkedDeviceMirrorPairsTab.tsx`, `TransitPositionMismatchTab.tsx`,
+      `DeviceLibraryMismatchTab.tsx`, `DivergentTransitTab.tsx`, và 3 khung
+      viết trực tiếp trong `DataQualityClient.tsx` (`DeviceDupTab`,
+      `PositionConflictsTab`, `OwnPositionDuplicatesTab`). Mặc định ĐÓNG,
+      tiêu đề (kèm số đếm, vd "Phát hiện 12 dòng...") LUÔN hiện dù đóng hay
+      mở — biết có gì mà không cần mở; nút +/− nhớ trạng thái riêng từng
+      khung (key `hskt:collapsed:<tên khung>`). Đóng/mở chỉ ẩn/hiện DOM —
+      KHÔNG giảm chi phí tải dữ liệu phía server (`app/data-quality/page.tsx`
+      vẫn tính TOÀN BỘ dữ liệu phát hiện trước khi trả HTML, như đã ghi ở đề
+      xuất ban đầu) — giảm thật cần đổi kiến trúc trang sang tải-khi-mở, lớn
+      hơn nhiều, KHÔNG làm đợt này (chưa có yêu cầu).
+    - **Kiểm chứng**: `npx tsc --noEmit` sạch, `npm run build` sạch. Bundle
+      từng route tăng đáng kể (vd `/dashboard` 195kB→292kB) — do `xlsx`
+      (SheetJS) giờ được import ở 8+ trang thay vì chỉ `/import-export`, mỗi
+      route tự bundle riêng phần đó thay vì dùng chung 1 chunk (Next.js chưa
+      gom vào nhóm "shared by all") — hợp lý, đánh đổi cần thiết để mọi bảng
+      export được, không phải rò rỉ/lỗi. Chưa test UI thật bằng trình duyệt
+      (không có công cụ tự động hóa trong môi trường này) — cần người dùng tự
+      bấm thử: resize cột hẹp xem ô lọc còn thẳng hàng không, xuất Excel thử
+      vài bảng, vào `/odf-trunk` xem mặc định rỗng + chọn tuyến cáp, vào
+      `/settings` (admin) thử xóa/đặt lại mật khẩu 1 tài khoản test, và vào
+      `/data-quality` bấm +/− vài khung "Phát hiện..." xem đóng/mở đúng +
+      reload lại trang xem có nhớ đúng trạng thái đã đóng/mở không.

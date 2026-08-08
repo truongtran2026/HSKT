@@ -1,7 +1,8 @@
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import { derivePortStatus } from "@/lib/portStatus";
-import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackListTable";
+import { type RackListItem } from "@/components/odf-trunk/RackListTable";
+import TrunkRackListPanel from "@/components/odf-trunk/TrunkRackListPanel";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -79,12 +80,12 @@ export default async function OdfTrunkPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-primary-800">ODF Trung kế</h1>
+      <h1 className="text-2xl font-bold text-primary-800">Hồ sơ ODF Trung kế</h1>
       <p className="text-slate-500 mt-1">Bấm vào 1 rack để xem/sửa chi tiết từng port.</p>
 
       <div className="mt-6">
         <TransitFormatWarning items={nonConformingTransit} />
-        <RackListTable racks={racks} />
+        <TrunkRackListPanel racks={racks} />
       </div>
     </div>
   );

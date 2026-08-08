@@ -7,9 +7,11 @@ import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
-import SortableTh from "@/components/ui/SortableTh";
-import ResizableTh from "@/components/ui/ResizableTh";
-import FilterInput from "@/components/ui/FilterInput";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { derivePortStatus, type DerivedPortStatus } from "@/lib/portStatus";
 import type { TrunkPortRow } from "@/lib/trunkPorts";
 
@@ -76,11 +78,39 @@ const FREE_FILTER_KEYS: FreeFilterKey[] = ["route", "port", "fiber", "name", "co
 type ResizableCol = "route" | "name" | "counterpart";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220, name: 220, counterpart: 200 };
 
+// Rack luôn hiện — 6 cột còn lại ẩn/hiện được (quy định chung mọi bảng).
+type VisibleCol = "route" | "port" | "fiber" | "status" | "name" | "counterpart";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  route: true,
+  port: true,
+  fiber: true,
+  status: true,
+  name: true,
+  counterpart: true,
+};
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "route", label: "Tuyến cáp" },
+  { key: "port", label: "Port" },
+  { key: "fiber", label: "Sợi" },
+  { key: "status", label: "Trạng thái" },
+  { key: "name", label: "Tên luồng" },
+  { key: "counterpart", label: "Đối phương" },
+];
+
 export default function SearchClient({ rows }: { rows: SearchRow[] }) {
   const [mode, setMode] = useState<FilterMode>("all");
   const [rackId, setRackId] = useState(""); // "" = tất cả rack
+  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08: 2000+ port load
+  // hết ngay lúc mở tab làm chậm) — chỉ hiện khi đã chọn đúng 1 rack HOẶC chủ
+  // động bấm "Xem tất cả" (cùng cơ chế DeviceCircuitList.tsx).
+  const [viewAll, setViewAll] = useState(false);
+  // Chọn 1 rack HOẶC đổi sang "Cổng trống"/"Đường dự phòng" (đều tự thu hẹp
+  // đáng kể so với toàn bộ port) đều coi là đã chọn phạm vi — không bắt buộc
+  // riêng chọn rack mới hiện bảng.
+  const scopeChosen = viewAll || rackId !== "" || mode !== "all";
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("rack");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-trunk-col-visibility", DEFAULT_VISIBLE);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     route: "",
     port: "",
@@ -117,6 +147,19 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
 
     return list.filter((r) => FREE_FILTER_KEYS.every((k) => matchesFilter(freeCellText(r, k), filters[k])));
   }, [sorted, mode, rackId, filters]);
+
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (r: SearchRow) => string | number | null }[] = [{ label: "Rack", getValue: (r) => r.rackCode }];
+    if (visible.route) cols.push({ label: "Tuyến cáp", getValue: (r) => r.cableRouteName });
+    if (visible.port) cols.push({ label: "Port", getValue: (r) => r.portNumber });
+    if (visible.fiber) cols.push({ label: "Sợi", getValue: (r) => r.fiberNumber });
+    if (visible.status) cols.push({ label: "Trạng thái", getValue: (r) => STATUS_LABEL[deriveStatus(r)] });
+    if (visible.name) cols.push({ label: "Tên luồng", getValue: (r) => r.circuit?.name ?? "" });
+    if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (r) => r.circuit?.counterpartText ?? "" });
+    return cols;
+  }, [visible]);
+
+  const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
   return (
     <div>
@@ -166,71 +209,91 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
             Xóa bộ lọc
           </button>
         )}
+        <div className="ml-auto flex gap-2">
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm ODF trung kế" fileNamePrefix="Tim_kiem_ODF_trung_ke" />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
 
+      <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn 1 rack ở trên để xem, hoặc">
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 100 }} />
-            <col style={{ width: colWidths.route }} />
-            <col style={{ width: 70 }} />
-            <col style={{ width: 70 }} />
-            <col style={{ width: 110 }} />
-            <col style={{ width: colWidths.name }} />
-            <col style={{ width: colWidths.counterpart }} />
+            {visible.route && <col style={{ width: colWidths.route }} />}
+            {visible.port && <col style={{ width: 70 }} />}
+            {visible.fiber && <col style={{ width: 70 }} />}
+            {visible.status && <col style={{ width: 110 }} />}
+            {visible.name && <col style={{ width: colWidths.name }} />}
+            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <SortableTh label="Rack" sortKey="rack" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <ResizableTh
-                label="Tuyến cáp"
-                sortKey="route"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.route}
-                onResize={(w) => resizeCol("route", w)}
-              />
-              <SortableTh label="Port" sortKey="port" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortableTh label="Sợi" sortKey="fiber" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortableTh label="Trạng thái" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <ResizableTh
-                label="Tên luồng"
-                sortKey="name"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.name}
-                onResize={(w) => resizeCol("name", w)}
-              />
-              <ResizableTh
-                label="Đối phương"
-                sortKey="counterpart"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.counterpart}
-                onResize={(w) => resizeCol("counterpart", w)}
-              />
-            </tr>
-            <tr className="bg-white">
-              <th className="px-2 py-1" />
-              <th className="px-2 py-1">
-                <FilterInput value={filters.route} onChange={(v) => setFilter("route", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.port} onChange={(v) => setFilter("port", v)} align="right" />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.fiber} onChange={(v) => setFilter("fiber", v)} align="right" />
-              </th>
-              <th className="px-2 py-1" />
-              <th className="px-2 py-1">
-                <FilterInput value={filters.name} onChange={(v) => setFilter("name", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.counterpart} onChange={(v) => setFilter("counterpart", v)} />
-              </th>
+              <DataTh label="Rack" sortKey="rack" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              {visible.route && (
+                <DataTh
+                  label="Tuyến cáp"
+                  sortKey="route"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.route}
+                  onResize={(w) => resizeCol("route", w)}
+                  filterValue={filters.route}
+                  onFilterChange={(v) => setFilter("route", v)}
+                />
+              )}
+              {visible.port && (
+                <DataTh
+                  label="Port"
+                  sortKey="port"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.port}
+                  onFilterChange={(v) => setFilter("port", v)}
+                />
+              )}
+              {visible.fiber && (
+                <DataTh
+                  label="Sợi"
+                  sortKey="fiber"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.fiber}
+                  onFilterChange={(v) => setFilter("fiber", v)}
+                />
+              )}
+              {visible.status && <DataTh label="Trạng thái" sortKey="status" activeSortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+              {visible.name && (
+                <DataTh
+                  label="Tên luồng"
+                  sortKey="name"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.name}
+                  onResize={(w) => resizeCol("name", w)}
+                  filterValue={filters.name}
+                  onFilterChange={(v) => setFilter("name", v)}
+                />
+              )}
+              {visible.counterpart && (
+                <DataTh
+                  label="Đối phương"
+                  sortKey="counterpart"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.counterpart}
+                  onResize={(w) => resizeCol("counterpart", w)}
+                  filterValue={filters.counterpart}
+                  onFilterChange={(v) => setFilter("counterpart", v)}
+                />
+              )}
             </tr>
           </thead>
           <tbody>
@@ -243,31 +306,33 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
                       {r.rackCode}
                     </Link>
                   </td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{r.cableRouteName}</td>
-                  <td className="px-4 py-2 text-right text-slate-600">{r.portNumber}</td>
-                  <td className="px-4 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={
-                        "rounded px-2 py-0.5 text-xs font-medium " +
-                        (ds === "empty"
-                          ? "bg-slate-100 text-slate-500"
-                          : ds === "standby"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-emerald-100 text-emerald-700")
-                      }
-                    >
-                      {STATUS_LABEL[ds]}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>
-                  <td className="px-4 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>
+                  {visible.route && <td className="px-4 py-2 text-slate-600 break-words">{r.cableRouteName}</td>}
+                  {visible.port && <td className="px-4 py-2 text-right text-slate-600">{r.portNumber}</td>}
+                  {visible.fiber && <td className="px-4 py-2 text-right text-slate-600">{r.fiberNumber ?? "—"}</td>}
+                  {visible.status && (
+                    <td className="px-4 py-2">
+                      <span
+                        className={
+                          "rounded px-2 py-0.5 text-xs font-medium " +
+                          (ds === "empty"
+                            ? "bg-slate-100 text-slate-500"
+                            : ds === "standby"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-emerald-100 text-emerald-700")
+                        }
+                      >
+                        {STATUS_LABEL[ds]}
+                      </span>
+                    </td>
+                  )}
+                  {visible.name && <td className="px-4 py-2 text-slate-700 break-words">{r.circuit?.name ?? "—"}</td>}
+                  {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{r.circuit?.counterpartText ?? "—"}</td>}
                 </tr>
               );
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy port nào khớp bộ lọc.
                 </td>
               </tr>
@@ -275,6 +340,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
           </tbody>
         </table>
       </div>
+      </EmptyUntilFiltered>
     </div>
   );
 }

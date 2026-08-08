@@ -19,7 +19,7 @@ export default async function ImportExportPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-primary-800">Import / Export Excel</h1>
+      <h1 className="text-2xl font-bold text-primary-800">Import/Export dữ liệu</h1>
       <p className="mt-1 text-slate-500">
         Xuất dữ liệu ra Excel để lưu trữ/đối chiếu hoặc chỉnh sửa ngoài Excel. Phần Import (đọc file đã sửa, xác nhận thay đổi rồi ghi ngược vào hệ thống)
         sẽ làm ở đợt sau.

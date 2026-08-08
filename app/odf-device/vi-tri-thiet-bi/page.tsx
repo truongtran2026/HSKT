@@ -20,7 +20,7 @@ export default async function DevicePositionMapPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-primary-800">Vị trí thiết bị → ODF/DDF</h1>
+      <h1 className="text-2xl font-bold text-primary-800">Thư viện vị trí thiết bị</h1>
       <p className="text-slate-500 mt-1">
         Danh mục tra cứu: 1 thiết bị tại 1 vị trí cụ thể đấu ra đúng vị trí ODF/DDF nào. Dùng để sau này nhập/sửa
         luồng thiết bị chỉ cần chọn thiết bị + vị trí là tự điền đúng vị trí ODF/DDF, tránh gõ tay sai định dạng.

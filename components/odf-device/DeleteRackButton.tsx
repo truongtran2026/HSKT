@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
 import RoleGate from "@/components/ui/RoleGate";
+import { IconTrash } from "@/components/ui/icons";
 
 // Xóa hẳn 1 rack ODF/DDF thiết bị (yêu cầu người dùng 2026-07-28) — CHỈ dùng
 // cho domain='device' (xem app/odf-trunk/[rackId]/page.tsx, chỉ render nút
@@ -53,10 +54,11 @@ export default function DeleteRackButton({ rackId, rackCode }: { rackId: string;
         {error && <p className="mb-1 text-sm text-red-600">Lỗi: {error}</p>}
         <button
           type="button"
-          className="text-sm text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
+          className="flex items-center gap-1.5 text-sm text-red-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300"
           onClick={handleDelete}
           disabled={busy}
         >
+          <IconTrash className="h-4 w-4" />
           {busy ? "Đang xóa..." : "Xóa rack này"}
         </button>
       </div>

@@ -6,11 +6,13 @@ import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { isStandbyCircuitName } from "@/lib/text";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
-import SortableTh from "@/components/ui/SortableTh";
-import ResizableTh from "@/components/ui/ResizableTh";
-import FilterInput from "@/components/ui/FilterInput";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 
 // Bản "Hồ sơ đấu nối (thiết bị)" của trang Tìm kiếm nhanh (yêu cầu người dùng
@@ -65,11 +67,33 @@ const FREE_FILTER_KEYS: FreeFilterKey[] = ["device", "trib", "positionOwn", "pos
 type ResizableCol = "name" | "positionNext" | "counterpart";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 240, positionNext: 220, counterpart: 200 };
 
+// Tên luồng luôn hiện — 5 cột còn lại ẩn/hiện được (quy định chung mọi bảng).
+type VisibleCol = "device" | "trib" | "positionOwn" | "positionNext" | "counterpart";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  device: true,
+  trib: true,
+  positionOwn: true,
+  positionNext: true,
+  counterpart: true,
+};
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "device", label: "Thiết bị" },
+  { key: "trib", label: "Trib" },
+  { key: "positionOwn", label: "Vị trí ODF (thiết bị)" },
+  { key: "positionNext", label: "Vị trí ODF (tiếp theo)" },
+  { key: "counterpart", label: "Đối phương" },
+];
+
 export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] }) {
   const [mode, setMode] = useState<FilterMode>("all");
   const [deviceName, setDeviceName] = useState(""); // "" = tất cả thiết bị
+  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
+  // đã chọn thiết bị/chế độ lọc cụ thể HOẶC chủ động bấm "Xem tất cả".
+  const [viewAll, setViewAll] = useState(false);
+  const scopeChosen = viewAll || deviceName !== "" || mode !== "all";
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("search-device-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("search-device-col-visibility", DEFAULT_VISIBLE);
   const [filters, setFilters] = useState<Record<FreeFilterKey, string>>({
     device: "",
     trib: "",
@@ -101,6 +125,18 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
     if (mode === "standby") list = list.filter((r) => isStandbyCircuitName(r.name));
     return list.filter((r) => FREE_FILTER_KEYS.every((k) => matchesFilter(freeCellText(r, k), filters[k])));
   }, [sorted, mode, deviceName, filters]);
+
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (r: DeviceCircuitRow) => string | number | null }[] = [{ label: "Tên luồng", getValue: (r) => r.name }];
+    if (visible.device) cols.push({ label: "Thiết bị", getValue: (r) => r.deviceName });
+    if (visible.trib) cols.push({ label: "Trib", getValue: (r) => r.tribText });
+    if (visible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (r) => r.devicePositionOwn });
+    if (visible.positionNext) cols.push({ label: "Vị trí ODF (tiếp theo)", getValue: (r) => r.devicePositionNext });
+    if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (r) => r.counterpartText });
+    return cols;
+  }, [visible]);
+
+  const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
   return (
     <div>
@@ -147,21 +183,26 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
             Xóa bộ lọc
           </button>
         )}
+        <div className="ml-auto flex gap-2">
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm Hồ sơ đấu nối" fileNamePrefix="Tim_kiem_Ho_so_dau_noi" />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
 
+      <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn thiết bị ở trên để xem, hoặc">
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.name }} />
-            <col style={{ width: 160 }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 150 }} />
-            <col style={{ width: colWidths.positionNext }} />
-            <col style={{ width: colWidths.counterpart }} />
+            {visible.device && <col style={{ width: 160 }} />}
+            {visible.trib && <col style={{ width: 90 }} />}
+            {visible.positionOwn && <col style={{ width: 150 }} />}
+            {visible.positionNext && <col style={{ width: colWidths.positionNext }} />}
+            {visible.counterpart && <col style={{ width: colWidths.counterpart }} />}
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <ResizableTh
+              <DataTh
                 label="Tên luồng"
                 sortKey="name"
                 activeSortKey={sortKey}
@@ -170,45 +211,65 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
               />
-              <SortableTh label="Thiết bị" sortKey="device" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Trib" sortKey="trib" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Vị trí ODF (thiết bị)" sortKey="positionOwn" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <ResizableTh
-                label="Vị trí ODF (tiếp theo)"
-                sortKey="positionNext"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.positionNext}
-                onResize={(w) => resizeCol("positionNext", w)}
-              />
-              <ResizableTh
-                label="Đối phương"
-                sortKey="counterpart"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.counterpart}
-                onResize={(w) => resizeCol("counterpart", w)}
-              />
-            </tr>
-            <tr className="bg-white">
-              <th className="px-2 py-1" />
-              <th className="px-2 py-1">
-                <FilterInput value={filters.device} onChange={(v) => setFilter("device", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.trib} onChange={(v) => setFilter("trib", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.positionOwn} onChange={(v) => setFilter("positionOwn", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.positionNext} onChange={(v) => setFilter("positionNext", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.counterpart} onChange={(v) => setFilter("counterpart", v)} />
-              </th>
+              {visible.device && (
+                <DataTh
+                  label="Thiết bị"
+                  sortKey="device"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.device}
+                  onFilterChange={(v) => setFilter("device", v)}
+                />
+              )}
+              {visible.trib && (
+                <DataTh
+                  label="Trib"
+                  sortKey="trib"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.trib}
+                  onFilterChange={(v) => setFilter("trib", v)}
+                />
+              )}
+              {visible.positionOwn && (
+                <DataTh
+                  label="Vị trí ODF (thiết bị)"
+                  sortKey="positionOwn"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.positionOwn}
+                  onFilterChange={(v) => setFilter("positionOwn", v)}
+                />
+              )}
+              {visible.positionNext && (
+                <DataTh
+                  label="Vị trí ODF (tiếp theo)"
+                  sortKey="positionNext"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.positionNext}
+                  onResize={(w) => resizeCol("positionNext", w)}
+                  filterValue={filters.positionNext}
+                  onFilterChange={(v) => setFilter("positionNext", v)}
+                />
+              )}
+              {visible.counterpart && (
+                <DataTh
+                  label="Đối phương"
+                  sortKey="counterpart"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.counterpart}
+                  onResize={(w) => resizeCol("counterpart", w)}
+                  filterValue={filters.counterpart}
+                  onFilterChange={(v) => setFilter("counterpart", v)}
+                />
+              )}
             </tr>
           </thead>
           <tbody>
@@ -219,16 +280,16 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
                     {r.name}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-slate-600 break-words">{r.deviceName ?? "—"}</td>
-                <td className="px-4 py-2 text-slate-600 break-words">{r.tribText ?? "—"}</td>
-                <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionOwn ?? "—"}</td>
-                <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionNext ?? "—"}</td>
-                <td className="px-4 py-2 text-slate-600 break-words">{r.counterpartText ?? "—"}</td>
+                {visible.device && <td className="px-4 py-2 text-slate-600 break-words">{r.deviceName ?? "—"}</td>}
+                {visible.trib && <td className="px-4 py-2 text-slate-600 break-words">{r.tribText ?? "—"}</td>}
+                {visible.positionOwn && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionOwn ?? "—"}</td>}
+                {visible.positionNext && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePositionNext ?? "—"}</td>}
+                {visible.counterpart && <td className="px-4 py-2 text-slate-600 break-words">{r.counterpartText ?? "—"}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy luồng nào khớp bộ lọc.
                 </td>
               </tr>
@@ -236,6 +297,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
           </tbody>
         </table>
       </div>
+      </EmptyUntilFiltered>
     </div>
   );
 }

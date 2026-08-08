@@ -6,6 +6,7 @@ import { fetchReportHistory, deleteReportHistoryEntry, type ReportHistoryRow } f
 import { formatLastUpdated } from "@/lib/format";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import RoleGate from "@/components/ui/RoleGate";
+import { IconTrash } from "@/components/ui/icons";
 
 // "Lịch sử tra cứu" dùng CHUNG cho cả Hồ sơ ODF trung kế lẫn Hồ sơ đấu nối
 // (yêu cầu người dùng 2026-08-07) — khung trượt mở từ nút trên cả 2 trang,
@@ -60,8 +61,15 @@ export default function ReportHistoryDrawer({ open, onClose }: { open: boolean; 
                   {copiedId === row.id ? "Đã copy!" : "Copy"}
                 </button>
                 <RoleGate allow={["operator", "admin"]}>
-                  <button type="button" className="text-red-500 hover:underline disabled:opacity-50" disabled={busyId === row.id} onClick={() => remove(row)}>
-                    Xóa
+                  <button
+                    type="button"
+                    className="text-red-500 hover:underline disabled:opacity-50"
+                    disabled={busyId === row.id}
+                    onClick={() => remove(row)}
+                    title="Xóa"
+                    aria-label="Xóa"
+                  >
+                    <IconTrash className="h-3.5 w-3.5" />
                   </button>
                 </RoleGate>
               </div>

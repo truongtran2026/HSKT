@@ -42,3 +42,25 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
 
   return NextResponse.json({ ok: true });
 }
+
+// Xóa hẳn 1 tài khoản (yêu cầu người dùng 2026-08-08 — trước đây Admin không
+// xóa được tài khoản Operator/View cấp dưới, phải làm tay qua Supabase
+// Dashboard). CHẶN tự xóa chính mình — cùng lý do với chặn tự đổi vai trò ở
+// trên (tránh khóa quyền admin của chính mình).
+export async function DELETE(_request: Request, { params }: { params: Promise<{ userId: string }> }) {
+  const { user, error } = await requireAdmin();
+  if (error) return error;
+
+  const { userId } = await params;
+  if (userId === user.id) {
+    return NextResponse.json({ error: "Không thể tự xóa chính tài khoản đang đăng nhập." }, { status: 400 });
+  }
+
+  const admin = getSupabaseAdminServer();
+  const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
+  if (deleteError) {
+    return NextResponse.json({ error: deleteError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}

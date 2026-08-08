@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { formatRackCodeDisplay } from "@/lib/rackCode";
 import { translatePgError } from "@/lib/translatePgError";
 import RoleGate from "@/components/ui/RoleGate";
+import { IconEdit } from "@/components/ui/icons";
 
 export interface RackHeaderData {
   id: string;
@@ -61,7 +62,12 @@ export default function RackHeader({ rack }: { rack: RackHeaderData }) {
         <p className="text-slate-500 mt-1">
           {rack.cableRouteName} · {rack.odfType === "welded" ? "Hàn nối" : "Phân phối"} · {rack.portCount} port{" "}
           <RoleGate allow={["operator", "admin"]}>
-            <button className="ml-1 text-primary-600 hover:underline text-sm" onClick={() => setEditing(true)}>
+            <button
+              className="ml-1 inline-flex items-center gap-1 text-primary-600 hover:underline text-sm"
+              onClick={() => setEditing(true)}
+              title="Sửa tên tuyến"
+            >
+              <IconEdit className="h-3.5 w-3.5" />
               Sửa tên tuyến
             </button>
           </RoleGate>

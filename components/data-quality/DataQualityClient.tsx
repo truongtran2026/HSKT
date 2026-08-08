@@ -22,6 +22,7 @@ import {
 import { syncAllDeviceMirrorGaps } from "@/lib/deviceDeviceSync";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import { useCollapsed } from "@/lib/useCollapsed";
 import RoleGate from "@/components/ui/RoleGate";
 import TransitFormatWarning from "@/components/odf-trunk/TransitFormatWarning";
 import TrunkMissingDeviceMirrorTab from "@/components/data-quality/TrunkMissingDeviceMirrorTab";
@@ -423,6 +424,7 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
   const [page, setPage] = useState(0);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { collapsed, toggle } = useCollapsed("hskt:collapsed:deviceDup");
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -491,108 +493,123 @@ function DeviceDupTab({ candidates }: { candidates: DeviceDupCandidate[] }) {
 
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-      <h2 className="font-semibold text-amber-800">Phát hiện {candidates.length} cặp thiết bị tên gần giống nhau</h2>
-      <p className="mt-1 text-xs text-amber-700">
-        So khớp gần đúng trên tên đã chuẩn hóa (khoảng cách chỉnh sửa ≤ 2 ký tự) — KHÔNG tự gộp, vì tên gần giống có thể
-        vẫn là 2 thiết bị thật khác nhau. Bấm &quot;Gộp vào...&quot; nếu đúng là 1 thiết bị bị ghi 2 kiểu, hoặc
-        &quot;Bỏ qua&quot; nếu là 2 thiết bị khác nhau thật — bỏ qua rồi sẽ không hiện lại cặp này nữa.
-      </p>
-      {error && <p className="mt-2 text-xs text-red-600">Lỗi: {error}</p>}
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input
-          className="input w-auto max-w-[260px] border-amber-300"
-          placeholder="Lọc theo tên thiết bị..."
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(0);
-          }}
-        />
-        <span className="text-xs text-amber-600">
-          {filtered.length}/{candidates.length} cặp
-        </span>
-        <label className="ml-auto flex items-center gap-1 text-xs text-amber-700">
-          Số dòng/trang:
-          <select
-            className="input w-auto py-1"
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            {[5, 10, 20, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-amber-800">Phát hiện {candidates.length} cặp thiết bị tên gần giống nhau</h2>
+        <button
+          type="button"
+          onClick={toggle}
+          className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-sm font-bold text-amber-700 hover:bg-amber-100"
+          title={collapsed ? "Mở rộng" : "Thu gọn"}
+          aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
       </div>
+      {collapsed ? null : (
+        <>
+          <p className="mt-1 text-xs text-amber-700">
+            So khớp gần đúng trên tên đã chuẩn hóa (khoảng cách chỉnh sửa ≤ 2 ký tự) — KHÔNG tự gộp, vì tên gần giống có thể
+            vẫn là 2 thiết bị thật khác nhau. Bấm &quot;Gộp vào...&quot; nếu đúng là 1 thiết bị bị ghi 2 kiểu, hoặc
+            &quot;Bỏ qua&quot; nếu là 2 thiết bị khác nhau thật — bỏ qua rồi sẽ không hiện lại cặp này nữa.
+          </p>
+          {error && <p className="mt-2 text-xs text-red-600">Lỗi: {error}</p>}
 
-      <ul className="mt-2 space-y-2 text-sm text-amber-800">
-        {paged.map((c) => {
-          const busy = busyKey === keyOf(c);
-          return (
-            <li key={keyOf(c)} className="rounded-md border border-amber-200 bg-white p-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  <span className="font-medium">{c.deviceA.name}</span> ({c.deviceA.circuitCount} luồng) &nbsp;↔&nbsp;{" "}
-                  <span className="font-medium">{c.deviceB.name}</span> ({c.deviceB.circuitCount} luồng)
-                  <span className="ml-2 text-xs text-amber-500">khoảng cách {c.editDistance}</span>
-                </span>
-                <span className="flex gap-2">
-                  {/* Gộp luôn xóa hẳn 1 thiết bị (mergeDeviceInto) — admin_delete
-                      trong RLS chỉ cho admin, khác "Bỏ qua" (chỉ ghi nhận, không
-                      xóa gì) — operator được phép. */}
-                  <RoleGate allow={["admin"]}>
-                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "a")} disabled={busy}>
-                      {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceA.name}"`}
-                    </button>
-                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "b")} disabled={busy}>
-                      {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceB.name}"`}
-                    </button>
-                  </RoleGate>
-                  <RoleGate allow={["operator", "admin"]}>
-                    <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => ignore(c)} disabled={busy}>
-                      Bỏ qua
-                    </button>
-                  </RoleGate>
-                </span>
-              </div>
-              {(c.deviceA.circuits.length > 0 || c.deviceB.circuits.length > 0) && (
-                <div className="mt-1 flex flex-col gap-0.5 text-xs text-amber-600">
-                  <CircuitLinkList label={c.deviceA.name} circuits={c.deviceA.circuits} />
-                  <CircuitLinkList label={c.deviceB.name} circuits={c.deviceB.circuits} />
-                </div>
-              )}
-            </li>
-          );
-        })}
-        {paged.length === 0 && <li className="text-amber-400">Không có cặp nào khớp bộ lọc.</li>}
-      </ul>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="input w-auto max-w-[260px] border-amber-300"
+              placeholder="Lọc theo tên thiết bị..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+            />
+            <span className="text-xs text-amber-600">
+              {filtered.length}/{candidates.length} cặp
+            </span>
+            <label className="ml-auto flex items-center gap-1 text-xs text-amber-700">
+              Số dòng/trang:
+              <select
+                className="input w-auto py-1"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(0);
+                }}
+              >
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      {pageCount > 1 && (
-        <div className="mt-2 flex items-center gap-2 text-sm text-amber-700">
-          <button
-            className="btn-secondary px-2 py-1"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={pageClamped === 0}
-          >
-            ← Trước
-          </button>
-          <span>
-            Trang {pageClamped + 1}/{pageCount}
-          </span>
-          <button
-            className="btn-secondary px-2 py-1"
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={pageClamped >= pageCount - 1}
-          >
-            Sau →
-          </button>
-        </div>
+          <ul className="mt-2 space-y-2 text-sm text-amber-800">
+            {paged.map((c) => {
+              const busy = busyKey === keyOf(c);
+              return (
+                <li key={keyOf(c)} className="rounded-md border border-amber-200 bg-white p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      <span className="font-medium">{c.deviceA.name}</span> ({c.deviceA.circuitCount} luồng) &nbsp;↔&nbsp;{" "}
+                      <span className="font-medium">{c.deviceB.name}</span> ({c.deviceB.circuitCount} luồng)
+                      <span className="ml-2 text-xs text-amber-500">khoảng cách {c.editDistance}</span>
+                    </span>
+                    <span className="flex gap-2">
+                      {/* Gộp luôn xóa hẳn 1 thiết bị (mergeDeviceInto) — admin_delete
+                          trong RLS chỉ cho admin, khác "Bỏ qua" (chỉ ghi nhận, không
+                          xóa gì) — operator được phép. */}
+                      <RoleGate allow={["admin"]}>
+                        <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "a")} disabled={busy}>
+                          {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceA.name}"`}
+                        </button>
+                        <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => merge(c, "b")} disabled={busy}>
+                          {busy ? "Đang xử lý..." : `Gộp vào "${c.deviceB.name}"`}
+                        </button>
+                      </RoleGate>
+                      <RoleGate allow={["operator", "admin"]}>
+                        <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => ignore(c)} disabled={busy}>
+                          Bỏ qua
+                        </button>
+                      </RoleGate>
+                    </span>
+                  </div>
+                  {(c.deviceA.circuits.length > 0 || c.deviceB.circuits.length > 0) && (
+                    <div className="mt-1 flex flex-col gap-0.5 text-xs text-amber-600">
+                      <CircuitLinkList label={c.deviceA.name} circuits={c.deviceA.circuits} />
+                      <CircuitLinkList label={c.deviceB.name} circuits={c.deviceB.circuits} />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+            {paged.length === 0 && <li className="text-amber-400">Không có cặp nào khớp bộ lọc.</li>}
+          </ul>
+
+          {pageCount > 1 && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-amber-700">
+              <button
+                className="btn-secondary px-2 py-1"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={pageClamped === 0}
+              >
+                ← Trước
+              </button>
+              <span>
+                Trang {pageClamped + 1}/{pageCount}
+              </span>
+              <button
+                className="btn-secondary px-2 py-1"
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={pageClamped >= pageCount - 1}
+              >
+                Sau →
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -635,6 +652,7 @@ function PositionConflictsTab({ conflicts }: { conflicts: DevicePositionConflict
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(5);
   const [page, setPage] = useState(0);
+  const { collapsed, toggle } = useCollapsed("hskt:collapsed:positionConflicts");
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -656,87 +674,102 @@ function PositionConflictsTab({ conflicts }: { conflicts: DevicePositionConflict
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-      <h2 className="font-semibold text-red-800">Phát hiện {conflicts.length} vị trí DDF/ODF bị gán cho nhiều hơn 1 thiết bị</h2>
-      <p className="mt-1 text-xs text-red-700">
-        Bấm vào tên luồng để nhảy tới đúng dòng ở &quot;Hồ sơ đấu nối&quot; rồi tự sửa tay — không tự đoán đâu là đúng.
-      </p>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input
-          className="input w-auto max-w-[260px] border-red-300"
-          placeholder="Lọc theo vị trí / thiết bị / tên luồng..."
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(0);
-          }}
-        />
-        <span className="text-xs text-red-600">
-          {filtered.length}/{conflicts.length} vị trí
-        </span>
-        <label className="ml-auto flex items-center gap-1 text-xs text-red-700">
-          Số dòng/trang:
-          <select
-            className="input w-auto py-1"
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            {[5, 10, 20, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-red-800">Phát hiện {conflicts.length} vị trí DDF/ODF bị gán cho nhiều hơn 1 thiết bị</h2>
+        <button
+          type="button"
+          onClick={toggle}
+          className="shrink-0 rounded border border-red-300 px-2 py-0.5 text-sm font-bold text-red-700 hover:bg-red-100"
+          title={collapsed ? "Mở rộng" : "Thu gọn"}
+          aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
       </div>
+      {collapsed ? null : (
+        <>
+          <p className="mt-1 text-xs text-red-700">
+            Bấm vào tên luồng để nhảy tới đúng dòng ở &quot;Hồ sơ đấu nối&quot; rồi tự sửa tay — không tự đoán đâu là đúng.
+          </p>
 
-      <ul className="mt-2 space-y-2 text-sm text-red-700">
-        {paged.map((conflict) => (
-          <li key={conflict.positionText}>
-            <span className="font-medium">Vị trí &quot;{conflict.positionText}&quot;:</span>{" "}
-            {conflict.entries.map((e, i) => (
-              <span key={i}>
-                {i > 0 && "; "}
-                {e.deviceName} (
-                <a
-                  href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-red-900"
-                >
-                  {e.circuitName}
-                </a>
-                )
-              </span>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="input w-auto max-w-[260px] border-red-300"
+              placeholder="Lọc theo vị trí / thiết bị / tên luồng..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+            />
+            <span className="text-xs text-red-600">
+              {filtered.length}/{conflicts.length} vị trí
+            </span>
+            <label className="ml-auto flex items-center gap-1 text-xs text-red-700">
+              Số dòng/trang:
+              <select
+                className="input w-auto py-1"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(0);
+                }}
+              >
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <ul className="mt-2 space-y-2 text-sm text-red-700">
+            {paged.map((conflict) => (
+              <li key={conflict.positionText}>
+                <span className="font-medium">Vị trí &quot;{conflict.positionText}&quot;:</span>{" "}
+                {conflict.entries.map((e, i) => (
+                  <span key={i}>
+                    {i > 0 && "; "}
+                    {e.deviceName} (
+                    <a
+                      href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-red-900"
+                    >
+                      {e.circuitName}
+                    </a>
+                    )
+                  </span>
+                ))}
+              </li>
             ))}
-          </li>
-        ))}
-        {paged.length === 0 && <li className="text-red-400">Không có vị trí nào khớp bộ lọc.</li>}
-      </ul>
+            {paged.length === 0 && <li className="text-red-400">Không có vị trí nào khớp bộ lọc.</li>}
+          </ul>
 
-      {pageCount > 1 && (
-        <div className="mt-2 flex items-center gap-2 text-sm text-red-700">
-          <button
-            className="btn-secondary px-2 py-1"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={pageClamped === 0}
-          >
-            ← Trước
-          </button>
-          <span>
-            Trang {pageClamped + 1}/{pageCount}
-          </span>
-          <button
-            className="btn-secondary px-2 py-1"
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={pageClamped >= pageCount - 1}
-          >
-            Sau →
-          </button>
-        </div>
+          {pageCount > 1 && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-red-700">
+              <button
+                className="btn-secondary px-2 py-1"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={pageClamped === 0}
+              >
+                ← Trước
+              </button>
+              <span>
+                Trang {pageClamped + 1}/{pageCount}
+              </span>
+              <button
+                className="btn-secondary px-2 py-1"
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={pageClamped >= pageCount - 1}
+              >
+                Sau →
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -759,6 +792,7 @@ function OwnPositionDuplicatesTab({
   libraryDuplicates: LibraryOwnPositionDuplicate[];
 }) {
   const [search, setSearch] = useState("");
+  const { collapsed, toggle } = useCollapsed("hskt:collapsed:ownPositionDuplicates");
 
   const filteredCircuit = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -791,72 +825,87 @@ function OwnPositionDuplicatesTab({
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-      <h2 className="font-semibold text-red-800">
-        Phát hiện {total} thiết bị có ≥2 Trib khác nhau cùng ra 1 vị trí ODF/DDF
-      </h2>
-      <p className="mt-1 text-xs text-red-700">
-        1 thiết bị + 1 Trib chỉ có đúng 1 cách ra — trừ &quot;Kết nối trực tiếp&quot; (không tính ở đây, được phép dùng
-        chung cho nhiều Trib). Tự vào sửa tay, không tự đoán đâu là đúng.
-      </p>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input
-          className="input w-auto max-w-[260px] border-red-300"
-          placeholder="Lọc theo thiết bị / vị trí / Trib..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-red-800">
+          Phát hiện {total} thiết bị có ≥2 Trib khác nhau cùng ra 1 vị trí ODF/DDF
+        </h2>
+        <button
+          type="button"
+          onClick={toggle}
+          className="shrink-0 rounded border border-red-300 px-2 py-0.5 text-sm font-bold text-red-700 hover:bg-red-100"
+          title={collapsed ? "Mở rộng" : "Thu gọn"}
+          aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
       </div>
-
-      {filteredCircuit.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Từ Hồ sơ đấu nối</p>
-          <ul className="mt-1 space-y-2 text-sm text-red-700">
-            {filteredCircuit.map((d, i) => (
-              <li key={`${d.deviceName}|${d.positionText}|${i}`}>
-                <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;:{" "}
-                {d.entries.map((e, j) => (
-                  <span key={e.circuitId}>
-                    {j > 0 && "; "}
-                    {e.trib} (
-                    <a
-                      href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline hover:text-red-900"
-                    >
-                      {e.circuitName || "(chưa đặt tên)"}
-                    </a>
-                    )
-                  </span>
-                ))}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {filteredLibrary.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-500">
-            Từ thư viện Vị trí thiết bị (dữ liệu cũ — tự vào{" "}
-            <a href="/odf-device/vi-tri-thiet-bi" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-900">
-              /odf-device/vi-tri-thiet-bi
-            </a>{" "}
-            sửa)
+      {collapsed ? null : (
+        <>
+          <p className="mt-1 text-xs text-red-700">
+            1 thiết bị + 1 Trib chỉ có đúng 1 cách ra — trừ &quot;Kết nối trực tiếp&quot; (không tính ở đây, được phép dùng
+            chung cho nhiều Trib). Tự vào sửa tay, không tự đoán đâu là đúng.
           </p>
-          <ul className="mt-1 space-y-2 text-sm text-red-700">
-            {filteredLibrary.map((d, i) => (
-              <li key={`${d.deviceName}|${d.positionText}|${i}`}>
-                <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;: Trib{" "}
-                {d.entries.map((e) => e.devicePosition).join(", ")}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
-      {filteredCircuit.length === 0 && filteredLibrary.length === 0 && <p className="mt-2 text-red-400">Không có dòng nào khớp bộ lọc.</p>}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="input w-auto max-w-[260px] border-red-300"
+              placeholder="Lọc theo thiết bị / vị trí / Trib..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {filteredCircuit.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-500">Từ Hồ sơ đấu nối</p>
+              <ul className="mt-1 space-y-2 text-sm text-red-700">
+                {filteredCircuit.map((d, i) => (
+                  <li key={`${d.deviceName}|${d.positionText}|${i}`}>
+                    <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;:{" "}
+                    {d.entries.map((e, j) => (
+                      <span key={e.circuitId}>
+                        {j > 0 && "; "}
+                        {e.trib} (
+                        <a
+                          href={`/odf-device/sua-luong#${rowAnchor(e.circuitId)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-red-900"
+                        >
+                          {e.circuitName || "(chưa đặt tên)"}
+                        </a>
+                        )
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {filteredLibrary.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-500">
+                Từ thư viện Vị trí thiết bị (dữ liệu cũ — tự vào{" "}
+                <a href="/odf-device/vi-tri-thiet-bi" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-900">
+                  /odf-device/vi-tri-thiet-bi
+                </a>{" "}
+                sửa)
+              </p>
+              <ul className="mt-1 space-y-2 text-sm text-red-700">
+                {filteredLibrary.map((d, i) => (
+                  <li key={`${d.deviceName}|${d.positionText}|${i}`}>
+                    <span className="font-medium">{d.deviceName}</span> — vị trí &quot;{d.positionText}&quot;: Trib{" "}
+                    {d.entries.map((e) => e.devicePosition).join(", ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {filteredCircuit.length === 0 && filteredLibrary.length === 0 && <p className="mt-2 text-red-400">Không có dòng nào khớp bộ lọc.</p>}
+        </>
+      )}
     </div>
   );
 }

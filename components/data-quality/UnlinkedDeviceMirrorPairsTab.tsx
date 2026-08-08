@@ -7,6 +7,7 @@ import { linkDeviceDevicePair } from "@/lib/unlinkedMirrorPairs";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import { useCollapsed } from "@/lib/useCollapsed";
 
 // Khung rà soát "2 luồng THIẾT BỊ-THIẾT BỊ (cả 2 đầu local ADN1) đã có sẵn cả
 // 2 phía, khớp đúng thiết bị đích + Trib, nhưng chưa liên kết mirror_of_id"
@@ -26,6 +27,7 @@ export default function UnlinkedDeviceMirrorPairsTab({ items }: { items: Unlinke
   const [error, setError] = useState<string | null>(null);
   const [linkedKeys, setLinkedKeys] = useState<Set<string>>(new Set());
   const [syncChoices, setSyncChoices] = useState<Map<string, "none" | "a" | "b">>(new Map());
+  const { collapsed, toggle } = useCollapsed("hskt:collapsed:unlinkedDeviceMirrorPairs");
 
   function pairKey(it: UnlinkedDeviceDevicePair) {
     return `${it.circuitAId}|${it.circuitBId}`;
@@ -91,9 +93,22 @@ export default function UnlinkedDeviceMirrorPairsTab({ items }: { items: Unlinke
 
   return (
     <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
-      <h2 className="font-semibold text-sky-800">
-        Phát hiện {remaining.length} cặp luồng thiết bị-thiết bị khớp Trib nhưng CHƯA liên kết mirror
-      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-sky-800">
+          Phát hiện {remaining.length} cặp luồng thiết bị-thiết bị khớp Trib nhưng CHƯA liên kết mirror
+        </h2>
+        <button
+          type="button"
+          onClick={toggle}
+          className="shrink-0 rounded border border-sky-300 px-2 py-0.5 text-sm font-bold text-sky-700 hover:bg-sky-100"
+          title={collapsed ? "Mở rộng" : "Thu gọn"}
+          aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
+      </div>
+      {collapsed ? null : (
+        <>
       <p className="mt-1 text-xs text-sky-700">
         2 luồng dưới đây (cả 2 đầu đều là thiết bị local ADN1, ở &quot;Hồ sơ đấu nối&quot;) khớp đúng thiết bị đích +
         Trib nhưng được lưu ĐỘC LẬP từ trước, chưa liên kết mirror. <strong>% giống tên chỉ để gợi ý độ tin cậy</strong>,
@@ -232,6 +247,8 @@ export default function UnlinkedDeviceMirrorPairsTab({ items }: { items: Unlinke
             Sau →
           </button>
         </div>
+      )}
+        </>
       )}
     </div>
   );

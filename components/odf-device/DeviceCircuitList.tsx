@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { compareValues } from "@/lib/sort";
-import { useSort, type SortDir } from "@/lib/useSort";
+import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { isPlaceholderCircuitName, normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
@@ -28,15 +28,17 @@ import {
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { buildDeviceCircuitReportText } from "@/lib/circuitReportText";
-import FilterInput from "@/components/ui/FilterInput";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import SearchableSelect from "@/components/ui/SearchableSelect";
-import ColumnResizeHandle from "@/components/ui/ColumnResizeHandle";
+import DataTh from "@/components/ui/DataTh";
 import SlideOverPanel from "@/components/ui/SlideOverPanel";
 import MirrorLinkBadge from "@/components/ui/MirrorLinkBadge";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
+import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
 import { unlinkCircuitMirror, type MirrorLinkStatus } from "@/lib/mirrorLinkStatus";
 import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPairDetail } from "@/lib/circuitPairSync";
@@ -56,84 +58,10 @@ import { translatePgError } from "@/lib/translatePgError";
 import type { DeviceRow } from "@/lib/devices";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 
-// Tiêu đề cột (bấm sắp xếp) GỘP CHUNG với ô lọc trong ĐÚNG 1 <th> — cố ý
-// không tách 2 hàng <tr> riêng (tiêu đề + lọc) như trước nữa: sticky 2 hàng
-// riêng cần tính "top" của hàng dưới theo chiều cao hàng trên, dễ lệch/che
-// nhau khi cuộn (đã gặp thực tế). Gộp 1 hàng thì chỉ cần sticky top-0 duy
-// nhất, không còn phép tính nào có thể sai.
-//
-// KHÔNG ép min-w/whitespace-nowrap cố định cho mọi cột (đã bỏ — phản hồi
-// người dùng 2026-07-27: bảng không chịu co theo khung hình trình duyệt).
-// Ép cứng 130px x8 cột = hơn 1000px sàn bất kể nội dung cột đó ngắn hay dài
-// (khác PortTable.tsx không ép gì, tự co theo nội dung thật) — bỏ đi để
-// bảng tự co khớp dữ liệu thật, chỉ tới ngưỡng đó mới cần cuộn ngang.
-// width/onResize để trống (undefined) thì cột không kéo dãn được, giữ đúng
-// hành vi cũ (yêu cầu người dùng 2026-07-27: "các bảng dữ liệu đều" phải kéo
-// dãn được — thêm tùy chọn ở ĐÂY thay vì dùng ResizableTh dùng chung vì header
-// này gộp chung sắp xếp + lọc trong 1 <th>, cấu trúc khác ResizableTh).
-function SortFilterTh<K extends string>({
-  label,
-  sortKey,
-  activeKey,
-  dir,
-  onSort,
-  filterValue,
-  onFilterChange,
-  width,
-  onResize,
-}: {
-  label: string;
-  sortKey: K;
-  activeKey: K;
-  dir: SortDir;
-  onSort: (key: K) => void;
-  filterValue: string;
-  onFilterChange: (v: string) => void;
-  width?: number;
-  onResize?: (width: number) => void;
-}) {
-  const active = activeKey === sortKey;
-  return (
-    <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top">
-      <div
-        className="mb-1 flex cursor-pointer select-none items-center gap-1 font-semibold hover:text-primary-900"
-        onClick={() => onSort(sortKey)}
-        title="Bấm để sắp xếp"
-      >
-        {label}
-        <span className={`text-xs ${active ? "text-primary-700" : "text-primary-300"}`}>
-          {active ? (dir === "asc" ? "▲" : "▼") : "⇅"}
-        </span>
-      </div>
-      <FilterInput value={filterValue} onChange={onFilterChange} />
-      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
-    </th>
-  );
-}
-
-// Cột có lọc nhưng KHÔNG sắp xếp được (vd Ghi chú — text dài, sắp xếp không
-// có nhiều ý nghĩa).
-function FilterOnlyTh({
-  label,
-  filterValue,
-  onFilterChange,
-  width,
-  onResize,
-}: {
-  label: string;
-  filterValue: string;
-  onFilterChange: (v: string) => void;
-  width?: number;
-  onResize?: (width: number) => void;
-}) {
-  return (
-    <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top">
-      <div className="mb-1 font-semibold">{label}</div>
-      <FilterInput value={filterValue} onChange={onFilterChange} />
-      {width !== undefined && onResize && <ColumnResizeHandle width={width} onResize={onResize} />}
-    </th>
-  );
-}
+// Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
+// architecture.md) — trước đây có 2 bản viết riêng (SortFilterTh/
+// FilterOnlyTh) ở đây, đã gộp vào DataTh dùng chung với PortTable.tsx và các
+// bảng khác.
 
 // rowAnchor() chuyển sang lib/deviceCircuitAnchor.ts (file "use client" này
 // không dùng trực tiếp được từ Server Component như DeviceRackPortView.tsx)
@@ -373,6 +301,14 @@ export default function DeviceCircuitList({
   const router = useRouter();
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
   const [deviceNames, setDeviceNames] = useState<string[] | null>(null); // null = tất cả thiết bị (trong phạm vi lĩnh vực)
+  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08: bảng 2000+ luồng
+  // load hết ngay lúc mở tab làm chậm) — chỉ hiện khi đã chọn lĩnh vực/thiết
+  // bị THẬT (categoryFilter/deviceNames khác null) HOẶC người dùng chủ động
+  // bấm "Xem tất cả". Khác với trước đây (categoryFilter=null mặc định coi là
+  // "xem hết") — giờ null CHỈ còn nghĩa "chưa lọc theo lĩnh vực", việc có HIỆN
+  // bảng hay không tách riêng qua viewAll.
+  const [viewAll, setViewAll] = useState(false);
+  const scopeChosen = viewAll || categoryFilter !== null || deviceNames !== null;
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>(
     "odf-device-circuits-col-widths",
@@ -907,7 +843,11 @@ export default function DeviceCircuitList({
   }
 
   function resetCategory() {
+    // Bấm "Tất cả" là 1 lựa chọn CHỦ ĐỘNG (khác lúc mới mở tab chưa chọn gì)
+    // — coi như viewAll luôn, để bảng hiện ngay thay vì quay lại màn hình
+    // trống rồi phải bấm thêm "Xem tất cả" lần nữa.
     setCategoryFilter(null);
+    setViewAll(true);
   }
 
   const scopedDeviceItems = useMemo(() => {
@@ -959,6 +899,21 @@ export default function DeviceCircuitList({
   // vẫn cần cột này để phân biệt các dòng.
   const showDeviceColumn = deviceNames === null || deviceNames.length !== 1;
   const columnCount = (showDeviceColumn ? 9 : 8) + 1 - COLUMN_ITEMS.filter((c) => !visible[c.key]).length; // +1 cho cột tick chọn
+
+  // Xuất Excel theo ĐÚNG cột đang hiển thị (quy định chung mọi bảng).
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (c: DeviceCircuitRow) => string | number | null }[] = [
+      { label: "Tên luồng", getValue: (c) => c.name },
+    ];
+    if (visible.trib) cols.push({ label: "Trib", getValue: (c) => c.tribText });
+    if (showDeviceColumn) cols.push({ label: "Thiết bị", getValue: (c) => c.deviceName });
+    if (visible.positionOwn) cols.push({ label: "Vị trí ODF (thiết bị)", getValue: (c) => c.devicePositionOwn });
+    if (visible.positionNext) cols.push({ label: "Vị trí ODF (tiếp theo)", getValue: (c) => c.devicePositionNext });
+    if (visible.interface) cols.push({ label: "Giao tiếp", getValue: (c) => c.interfaceType });
+    if (visible.counterpart) cols.push({ label: "Đối phương", getValue: (c) => c.counterpartText });
+    if (visible.notes) cols.push({ label: "Ghi chú", getValue: (c) => c.notes });
+    return cols;
+  }, [visible, showDeviceColumn]);
 
   // Đoạn text báo cáo sinh sẵn cho các luồng ĐANG TICK — tái dùng nguyên
   // `selected` (vốn dùng cho xóa hàng loạt, yêu cầu người dùng 2026-08-07:
@@ -2315,6 +2270,7 @@ export default function DeviceCircuitList({
           <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
             Lịch sử tra cứu
           </button>
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Hồ sơ đấu nối" fileNamePrefix="Ho_so_dau_noi" />
           <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
         </div>
       </div>
@@ -2329,6 +2285,11 @@ export default function DeviceCircuitList({
           thật sự cuộn ở chính nó (trang cuộn thay), khiến sticky vô tác dụng.
           Giới hạn chiều cao để khung THẬT SỰ tự cuộn, khi đó tiêu đề bảng mới
           dính lại đúng như mong đợi. */}
+      <EmptyUntilFiltered
+        active={scopeChosen}
+        onShowAll={() => setViewAll(true)}
+        prompt="Chọn lĩnh vực hoặc thiết bị ở trên để xem, hoặc"
+      >
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
@@ -2353,11 +2314,11 @@ export default function DeviceCircuitList({
                   title="Chọn/bỏ chọn tất cả đang hiện"
                 />
               </th>
-              <SortFilterTh
+              <DataTh
                 label="Tên luồng"
                 sortKey="name"
-                activeKey={sortKey}
-                dir={sortDir}
+                activeSortKey={sortKey}
+                sortDir={sortDir}
                 onSort={toggleSort}
                 filterValue={filters.name}
                 onFilterChange={(v) => setFilter("name", v)}
@@ -2365,22 +2326,22 @@ export default function DeviceCircuitList({
                 onResize={(w) => resizeCol("name", w)}
               />
               {visible.trib && (
-                <SortFilterTh
+                <DataTh
                   label="Trib"
                   sortKey="trib"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.trib}
                   onFilterChange={(v) => setFilter("trib", v)}
                 />
               )}
               {showDeviceColumn && (
-                <SortFilterTh
+                <DataTh
                   label="Thiết bị"
                   sortKey="device"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.device}
                   onFilterChange={(v) => setFilter("device", v)}
@@ -2389,11 +2350,11 @@ export default function DeviceCircuitList({
                 />
               )}
               {visible.positionOwn && (
-                <SortFilterTh
+                <DataTh
                   label="Vị trí ODF (thiết bị)"
                   sortKey="positionOwn"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.positionOwn}
                   onFilterChange={(v) => setFilter("positionOwn", v)}
@@ -2402,11 +2363,11 @@ export default function DeviceCircuitList({
                 />
               )}
               {visible.positionNext && (
-                <SortFilterTh
+                <DataTh
                   label="Vị trí ODF (tiếp theo)"
                   sortKey="positionNext"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.positionNext}
                   onFilterChange={(v) => setFilter("positionNext", v)}
@@ -2415,22 +2376,22 @@ export default function DeviceCircuitList({
                 />
               )}
               {visible.interface && (
-                <SortFilterTh
+                <DataTh
                   label="Giao tiếp"
                   sortKey="interface"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.interface}
                   onFilterChange={(v) => setFilter("interface", v)}
                 />
               )}
               {visible.counterpart && (
-                <SortFilterTh
+                <DataTh
                   label="Đối phương"
                   sortKey="counterpart"
-                  activeKey={sortKey}
-                  dir={sortDir}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
                   onSort={toggleSort}
                   filterValue={filters.counterpart}
                   onFilterChange={(v) => setFilter("counterpart", v)}
@@ -2439,7 +2400,7 @@ export default function DeviceCircuitList({
                 />
               )}
               {visible.notes && (
-                <FilterOnlyTh
+                <DataTh
                   label="Ghi chú"
                   filterValue={filters.notes}
                   onFilterChange={(v) => setFilter("notes", v)}
@@ -2533,15 +2494,22 @@ export default function DeviceCircuitList({
                             className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline"
                             onClick={() => openEdit(c)}
                             disabled={busy || creating || edit !== null}
-                            title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : undefined}
+                            title={creating ? "Đang thêm luồng mới — Lưu hoặc Hủy trước khi sửa" : edit !== null ? "Đang sửa 1 luồng khác — Lưu hoặc Hủy trước" : "Sửa"}
+                            aria-label="Sửa"
                           >
-                            Sửa
+                            <IconEdit />
                           </button>
                         )}
                       </RoleGate>
                       <RoleGate allow={["operator", "admin"]}>
-                        <button className="text-red-600 hover:underline" onClick={() => deleteCircuit(c)} disabled={busy}>
-                          Xóa
+                        <button
+                          className="text-red-600 hover:underline"
+                          onClick={() => deleteCircuit(c)}
+                          disabled={busy}
+                          title="Xóa"
+                          aria-label="Xóa"
+                        >
+                          <IconTrash />
                         </button>
                       </RoleGate>
                     </div>
@@ -2559,6 +2527,7 @@ export default function DeviceCircuitList({
           </tbody>
         </table>
       </div>
+      </EmptyUntilFiltered>
 
       <SlideOverPanel
         open={quickViewTrunkMatch !== null}

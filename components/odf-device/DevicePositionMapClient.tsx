@@ -10,11 +10,15 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import { useColumnWidths } from "@/lib/useColumnWidths";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import { translatePgError } from "@/lib/translatePgError";
-import ResizableTh from "@/components/ui/ResizableTh";
-import FilterInput from "@/components/ui/FilterInput";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
+import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
 import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
 import type { DeviceRow } from "@/lib/devices";
@@ -48,6 +52,15 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { deviceName: "", devicePosition: "", odfPosition: "" };
 
+// Tên thiết bị luôn hiện — 2 cột còn lại ẩn/hiện được (quy định chung mọi
+// bảng, xem architecture.md).
+type VisibleCol = "devicePosition" | "odfPosition";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { devicePosition: true, odfPosition: true };
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "devicePosition", label: "Vị trí thiết bị" },
+  { key: "odfPosition", label: "Vị trí ODF/DDF" },
+];
+
 export default function DevicePositionMapClient({
   rows,
   devices,
@@ -62,7 +75,11 @@ export default function DevicePositionMapClient({
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<SortKey>("device-position-map-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-position-map-col-visibility", DEFAULT_VISIBLE);
   const [filters, setFilters] = useState<Record<SortKey, string>>({ deviceName: "", devicePosition: "", odfPosition: "" });
+  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
+  // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả".
+  const [viewAll, setViewAll] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -76,6 +93,7 @@ export default function DevicePositionMapClient({
   // tự bỏ lọc nếu muốn xem ngay.
   const [addHiddenNotice, setAddHiddenNotice] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
+  const scopeChosen = viewAll || categoryFilter !== null;
   // Mặc định MỞ SẴN (không thu gọn) — người dùng phản hồi 2026-07-27: bấm
   // lọc "Chưa phân loại" ở khung Lĩnh vực chỉ lọc bảng bên dưới, không liên
   // quan gì tới khung này, nên nếu thu gọn sẵn thì không biết chỗ nào để
@@ -257,7 +275,10 @@ export default function DevicePositionMapClient({
   }
 
   function resetCategory() {
+    // Bấm "Tất cả" là 1 lựa chọn CHỦ ĐỘNG — coi như viewAll luôn (cùng cách
+    // đã làm ở DeviceCircuitList.tsx).
     setCategoryFilter(null);
+    setViewAll(true);
     setAddHiddenNotice(null);
   }
 
@@ -275,6 +296,15 @@ export default function DevicePositionMapClient({
     const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
     return sortDir === "desc" ? arr.reverse() : arr;
   }, [rows, filters, categoryFilter, categoryByDeviceKey, sortKey, sortDir]);
+
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (r: DevicePositionMapRow) => string | number | null }[] = [
+      { label: "Tên thiết bị", getValue: (r) => r.deviceName },
+    ];
+    if (visible.devicePosition) cols.push({ label: "Vị trí thiết bị", getValue: (r) => r.devicePosition });
+    if (visible.odfPosition) cols.push({ label: "Vị trí ODF/DDF", getValue: (r) => r.odfPosition });
+    return cols;
+  }, [visible]);
 
   // Validate CHUNG cho cả Thêm dòng mới lẫn Sửa inline (yêu cầu người dùng
   // 2026-08-03): (1) tên thiết bị PHẢI khớp đúng 1 thiết bị thật đã chuẩn
@@ -464,6 +494,7 @@ export default function DevicePositionMapClient({
               onClick={() => {
                 setFilters({ deviceName: "", devicePosition: "", odfPosition: "" });
                 setCategoryFilter(null);
+                setViewAll(true);
                 setAddHiddenNotice(null);
               }}
             >
@@ -607,19 +638,24 @@ export default function DevicePositionMapClient({
             Xóa bộ lọc
           </button>
         )}
+        <div className="ml-auto flex gap-2">
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Vị trí thiết bị" fileNamePrefix="Thu_vien_vi_tri_thiet_bi" />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
 
+      <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn lĩnh vực ở trên để xem, hoặc">
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: colWidths.deviceName }} />
-            <col style={{ width: colWidths.devicePosition }} />
-            <col style={{ width: colWidths.odfPosition }} />
+            {visible.devicePosition && <col style={{ width: colWidths.devicePosition }} />}
+            {visible.odfPosition && <col style={{ width: colWidths.odfPosition }} />}
             <col style={{ width: 140 }} />
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <ResizableTh
+              <DataTh
                 label="Tên thiết bị"
                 sortKey="deviceName"
                 activeSortKey={sortKey}
@@ -627,38 +663,36 @@ export default function DevicePositionMapClient({
                 onSort={toggleSort}
                 width={colWidths.deviceName}
                 onResize={(w) => resizeCol("deviceName", w)}
+                filterValue={filters.deviceName}
+                onFilterChange={(v) => setFilter("deviceName", v)}
               />
-              <ResizableTh
-                label="Vị trí thiết bị"
-                sortKey="devicePosition"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.devicePosition}
-                onResize={(w) => resizeCol("devicePosition", w)}
-              />
-              <ResizableTh
-                label="Vị trí ODF/DDF"
-                sortKey="odfPosition"
-                activeSortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-                width={colWidths.odfPosition}
-                onResize={(w) => resizeCol("odfPosition", w)}
-              />
-              <th className="px-4 py-2 text-left font-semibold">Thao tác</th>
-            </tr>
-            <tr className="bg-white">
-              <th className="px-2 py-1">
-                <FilterInput value={filters.deviceName} onChange={(v) => setFilter("deviceName", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.devicePosition} onChange={(v) => setFilter("devicePosition", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.odfPosition} onChange={(v) => setFilter("odfPosition", v)} />
-              </th>
-              <th className="px-2 py-1" />
+              {visible.devicePosition && (
+                <DataTh
+                  label="Vị trí thiết bị"
+                  sortKey="devicePosition"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.devicePosition}
+                  onResize={(w) => resizeCol("devicePosition", w)}
+                  filterValue={filters.devicePosition}
+                  onFilterChange={(v) => setFilter("devicePosition", v)}
+                />
+              )}
+              {visible.odfPosition && (
+                <DataTh
+                  label="Vị trí ODF/DDF"
+                  sortKey="odfPosition"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.odfPosition}
+                  onResize={(w) => resizeCol("odfPosition", w)}
+                  filterValue={filters.odfPosition}
+                  onFilterChange={(v) => setFilter("odfPosition", v)}
+                />
+              )}
+              <th className="sticky top-0 z-10 bg-primary-50 px-4 py-2 align-top text-left font-semibold">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -677,27 +711,31 @@ export default function DevicePositionMapClient({
                           autoFocus
                         />
                       </td>
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          value={editDraft.devicePosition}
-                          onChange={(e) => setEditDraft({ ...editDraft, devicePosition: e.target.value })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          className="input"
-                          list="dpm-odf-position-options"
-                          value={editDraft.odfPosition}
-                          onChange={(e) => setEditDraft({ ...editDraft, odfPosition: e.target.value })}
-                          onBlur={() => {
-                            const match = matchTrunkPosition(editDraft.odfPosition, trunkPorts);
-                            const canonical = formatCanonicalOdfPosition(match);
-                            if (canonical && canonical !== editDraft.odfPosition)
-                              setEditDraft((d) => ({ ...d, odfPosition: canonical }));
-                          }}
-                        />
-                      </td>
+                      {visible.devicePosition && (
+                        <td className="px-4 py-2">
+                          <input
+                            className="input"
+                            value={editDraft.devicePosition}
+                            onChange={(e) => setEditDraft({ ...editDraft, devicePosition: e.target.value })}
+                          />
+                        </td>
+                      )}
+                      {visible.odfPosition && (
+                        <td className="px-4 py-2">
+                          <input
+                            className="input"
+                            list="dpm-odf-position-options"
+                            value={editDraft.odfPosition}
+                            onChange={(e) => setEditDraft({ ...editDraft, odfPosition: e.target.value })}
+                            onBlur={() => {
+                              const match = matchTrunkPosition(editDraft.odfPosition, trunkPorts);
+                              const canonical = formatCanonicalOdfPosition(match);
+                              if (canonical && canonical !== editDraft.odfPosition)
+                                setEditDraft((d) => ({ ...d, odfPosition: canonical }));
+                            }}
+                          />
+                        </td>
+                      )}
                       <td className="px-4 py-2">
                         <div className="flex gap-2">
                           <button className="btn-primary" onClick={saveEdit} disabled={busy}>
@@ -712,16 +750,16 @@ export default function DevicePositionMapClient({
                   ) : (
                     <>
                       <td className="px-4 py-2 text-slate-700 break-words">{r.deviceName}</td>
-                      <td className="px-4 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>
-                      <td className="px-4 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>
+                      {visible.devicePosition && <td className="px-4 py-2 text-slate-600 break-words">{r.devicePosition ?? "—"}</td>}
+                      {visible.odfPosition && <td className="px-4 py-2 text-slate-600 break-words">{r.odfPosition ?? "—"}</td>}
                       <td className="px-4 py-2">
                         <RoleGate allow={["operator", "admin"]}>
                           <div className="flex gap-2">
-                            <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy}>
-                              Sửa
+                            <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy} title="Sửa" aria-label="Sửa">
+                              <IconEdit />
                             </button>
-                            <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy}>
-                              Xóa
+                            <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy} title="Xóa" aria-label="Xóa">
+                              <IconTrash />
                             </button>
                           </div>
                         </RoleGate>
@@ -733,7 +771,10 @@ export default function DevicePositionMapClient({
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                <td
+                  colSpan={2 + COLUMN_ITEMS.filter((c) => visible[c.key]).length}
+                  className="px-4 py-6 text-center text-slate-400"
+                >
                   Chưa có dòng nào khớp bộ lọc.
                 </td>
               </tr>
@@ -741,6 +782,7 @@ export default function DevicePositionMapClient({
           </tbody>
         </table>
       </div>
+      </EmptyUntilFiltered>
     </div>
   );
 }

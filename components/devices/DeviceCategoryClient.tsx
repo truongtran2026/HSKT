@@ -15,9 +15,12 @@ import { confirmBulkDelete } from "@/lib/dangerousConfirm";
 import { formatLastUpdated } from "@/lib/format";
 import { translatePgError } from "@/lib/translatePgError";
 import { useColumnWidths } from "@/lib/useColumnWidths";
-import SortableTh from "@/components/ui/SortableTh";
-import ResizableTh from "@/components/ui/ResizableTh";
-import FilterInput from "@/components/ui/FilterInput";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
+import { IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
 import type { DeviceRow } from "@/lib/devices";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -29,6 +32,15 @@ type SortKey = "name" | "category" | "source";
 // dãn được).
 type ResizableCol = "name";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { name: 280 };
+
+// Tên thiết bị luôn hiện (như Port/Tên luồng ở các bảng khác) — Lĩnh vực/
+// Nguồn ẩn/hiện được (quy định chung mọi bảng, xem architecture.md).
+type VisibleCol = "category" | "source";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { category: true, source: true };
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "category", label: "Lĩnh vực" },
+  { key: "source", label: "Nguồn" },
+];
 
 function cellText(d: DeviceRow, key: SortKey): string {
   switch (key) {
@@ -99,8 +111,18 @@ export default function DeviceCategoryClient({
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("device-category-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("device-category-col-visibility", DEFAULT_VISIBLE);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
-  const [search, setSearch] = useState("");
+  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
+  // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả", cùng cơ chế đã
+  // làm ở DeviceCircuitList.tsx.
+  const [viewAll, setViewAll] = useState(false);
+  const scopeChosen = viewAll || categoryFilter !== null;
+  const [filters, setFilters] = useState<Record<SortKey, string>>({ name: "", category: "", source: "" });
+
+  function setFilter(key: SortKey, value: string) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
   // Tick giữ nguyên qua mọi lượt đổi lĩnh vực/tìm kiếm — tập id độc lập,
   // không phụ thuộc danh sách đang hiển thị (cùng bài học đã sửa ở
   // DeviceCircuitList: đổi bộ lọc không được xóa tick đã chọn).
@@ -152,7 +174,10 @@ export default function DeviceCategoryClient({
   }
 
   function resetCategory() {
+    // Bấm "Tất cả" là 1 lựa chọn CHỦ ĐỘNG — coi như viewAll luôn (cùng cách
+    // đã làm ở DeviceCircuitList.tsx).
     setCategoryFilter(null);
+    setViewAll(true);
   }
 
   const filtered = useMemo(() => {
@@ -161,10 +186,10 @@ export default function DeviceCategoryClient({
       const set = new Set(categoryFilter);
       list = list.filter((d) => set.has(deviceCategoryLabel(d.category)));
     }
-    list = list.filter((d) => matchesFilter(d.name, search));
+    list = list.filter((d) => (["name", "category", "source"] as SortKey[]).every((k) => matchesFilter(cellText(d, k), filters[k])));
     const arr = [...list].sort((a, b) => compareValues(cellText(a, sortKey), cellText(b, sortKey)));
     return sortDir === "desc" ? arr.reverse() : arr;
-  }, [devices, categoryFilter, search, sortKey, sortDir]);
+  }, [devices, categoryFilter, filters, sortKey, sortDir]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -197,6 +222,13 @@ export default function DeviceCategoryClient({
 
   const allVisibleSelected = filtered.length > 0 && filtered.every((d) => selected.has(d.id));
   const selectedDevices = useMemo(() => devices.filter((d) => selected.has(d.id)), [devices, selected]);
+
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (d: DeviceRow) => string | number | null }[] = [{ label: "Tên thiết bị", getValue: (d) => d.name }];
+    if (visible.category) cols.push({ label: "Lĩnh vực", getValue: (d) => deviceCategoryLabel(d.category) });
+    if (visible.source) cols.push({ label: "Nguồn", getValue: (d) => SOURCE_LABEL[d.source] });
+    return cols;
+  }, [visible]);
 
   async function applyBulkCategory() {
     if (selected.size === 0) return;
@@ -632,9 +664,6 @@ export default function DeviceCategoryClient({
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <div className="w-64">
-          <FilterInput value={search} onChange={setSearch} placeholder="Tìm theo tên thiết bị..." />
-        </div>
         <p className="text-sm text-slate-500">
           {filtered.length}/{devices.length} thiết bị · đã chọn {selected.size}
         </p>
@@ -649,6 +678,10 @@ export default function DeviceCategoryClient({
             Bỏ chọn tất cả ({selected.size})
           </button>
         )}
+        <div className="ml-auto flex gap-2">
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Danh mục thiết bị" fileNamePrefix="Danh_muc_thiet_bi" />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
 
       {selected.size > 0 && (
@@ -701,10 +734,12 @@ export default function DeviceCategoryClient({
             <RoleGate allow={["admin"]}>
               <button
                 type="button"
-                className="rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                 onClick={deleteSelectedDevices}
                 disabled={busy}
+                title="Xóa"
               >
+                <IconTrash className="h-4 w-4" />
                 {busy ? "Đang xóa..." : "Xóa"}
               </button>
             </RoleGate>
@@ -716,17 +751,18 @@ export default function DeviceCategoryClient({
         </div>
       )}
 
+      <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn lĩnh vực ở trên để xem, hoặc">
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 40 }} />
             <col style={{ width: colWidths.name }} />
-            <col style={{ width: 140 }} />
-            <col style={{ width: 100 }} />
+            {visible.category && <col style={{ width: 140 }} />}
+            {visible.source && <col style={{ width: 100 }} />}
           </colgroup>
-          <thead className="sticky top-0 z-10 bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <th className="px-4 py-2 font-semibold">
+              <th className="sticky top-0 z-10 bg-primary-50 px-4 py-2 align-top font-semibold">
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
@@ -734,7 +770,7 @@ export default function DeviceCategoryClient({
                   title="Chọn/bỏ chọn tất cả đang hiện"
                 />
               </th>
-              <ResizableTh
+              <DataTh
                 label="Tên thiết bị"
                 sortKey="name"
                 activeSortKey={sortKey}
@@ -742,9 +778,31 @@ export default function DeviceCategoryClient({
                 onSort={toggleSort}
                 width={colWidths.name}
                 onResize={(w) => resizeCol("name", w)}
+                filterValue={filters.name}
+                onFilterChange={(v) => setFilter("name", v)}
               />
-              <SortableTh label="Lĩnh vực" sortKey="category" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Nguồn" sortKey="source" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
+              {visible.category && (
+                <DataTh
+                  label="Lĩnh vực"
+                  sortKey="category"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.category}
+                  onFilterChange={(v) => setFilter("category", v)}
+                />
+              )}
+              {visible.source && (
+                <DataTh
+                  label="Nguồn"
+                  sortKey="source"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.source}
+                  onFilterChange={(v) => setFilter("source", v)}
+                />
+              )}
             </tr>
           </thead>
           <tbody>
@@ -760,13 +818,13 @@ export default function DeviceCategoryClient({
                   {d.name}
                   <div className="text-xs text-slate-400">Cập nhật lần cuối: {formatLastUpdated(d.updatedAt)}</div>
                 </td>
-                <td className="px-4 py-2 text-slate-600">{deviceCategoryLabel(d.category)}</td>
-                <td className="px-4 py-2 text-slate-500">{SOURCE_LABEL[d.source]}</td>
+                {visible.category && <td className="px-4 py-2 text-slate-600">{deviceCategoryLabel(d.category)}</td>}
+                {visible.source && <td className="px-4 py-2 text-slate-500">{SOURCE_LABEL[d.source]}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={2 + COLUMN_ITEMS.filter((c) => visible[c.key]).length} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy thiết bị nào khớp bộ lọc.
                 </td>
               </tr>
@@ -774,6 +832,7 @@ export default function DeviceCategoryClient({
           </tbody>
         </table>
       </div>
+      </EmptyUntilFiltered>
     </div>
   );
 }

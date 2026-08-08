@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { COMMAND_PALETTE_OPEN_EVENT } from "@/components/ui/CommandPalette";
 import { supabase } from "@/lib/supabase";
 import { ROLE_LABEL } from "@/lib/roleLabel";
+import { IconPin, IconPinOff } from "@/components/ui/icons";
 
 // "Xem" và "Sửa" từng tách riêng ở giai đoạn skeleton (khi CRUD thật chưa
 // tồn tại) nhưng ODF trung kế đã gộp xem+sửa ngay tại chỗ từ lâu (PortTable
@@ -46,7 +47,7 @@ const menuGroups = [
       { href: "/data-quality", label: "Chất lượng dữ liệu" },
       { href: "/devices", label: "Danh mục thiết bị" },
       { href: "/odf-device/vi-tri-thiet-bi", label: "Thư viện vị trí thiết bị" },
-      { href: "/import-export", label: "Import / Export Excel" },
+      { href: "/import-export", label: "Import/Export dữ liệu" },
       { href: "/settings", label: "Cài đặt chung" },
     ],
   },
@@ -122,7 +123,7 @@ export default function Sidebar({
           <button
             type="button"
             onClick={togglePinned}
-            className="rounded border border-primary-500 px-2 py-0.5 text-xs text-primary-100 hover:bg-primary-600/60 hover:text-white"
+            className="rounded border border-primary-500 px-1.5 py-1 text-primary-100 hover:bg-primary-600/60 hover:text-white"
             title={
               pinned
                 ? "Bỏ ghim — ẩn bớt khung này để tăng bề rộng cho nội dung chính, đưa chuột sát mép trái để hiện lại tạm thời"
@@ -130,7 +131,7 @@ export default function Sidebar({
             }
             aria-label={pinned ? "Bỏ ghim menu" : "Ghim menu"}
           >
-            {pinned ? "Bỏ ghim" : "Ghim"}
+            {pinned ? <IconPinOff className="h-3.5 w-3.5" /> : <IconPin className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

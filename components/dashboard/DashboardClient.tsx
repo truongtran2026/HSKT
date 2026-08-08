@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { normalizeVN } from "@/lib/text";
 import { matchesFilter } from "@/lib/tableFilter";
+import { useColumnWidths } from "@/lib/useColumnWidths";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import FilterInput from "@/components/ui/FilterInput";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import {
   BarChart,
   Bar,
@@ -370,6 +375,23 @@ function StatFilterBar({
   );
 }
 
+// Cột "Tuyến cáp" luôn hiện — 4 cột số liệu ẩn/hiện được (quy định chung mọi
+// bảng, xem architecture.md). Thứ tự sắp xếp bảng này dùng CHUNG với card/
+// column/pie qua dropdown "sortBy" ở khung cha (không thêm sắp xếp theo cột
+// riêng ở đây để tránh 2 nguồn sắp xếp xung đột nhau) — header ở đây chỉ có
+// lọc + kéo dãn qua DataTh (sortKey để trống).
+type VisibleCol = "total" | "inUse" | "standby" | "empty" | "ratio";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { total: true, inUse: true, standby: true, empty: true, ratio: true };
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "total", label: "Tổng port" },
+  { key: "inUse", label: "Đang dùng" },
+  { key: "standby", label: "Dự phòng" },
+  { key: "empty", label: "Trống" },
+  { key: "ratio", label: "Tỷ lệ" },
+];
+type ResizableCol = "route";
+const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220 };
+
 function TableView({
   routes,
   filters,
@@ -380,73 +402,100 @@ function TableView({
   onFilterChange: (key: StatFilterKey, value: string) => void;
 }) {
   const filtered = useMemo(() => routes.filter((r) => matchesStatFilters(r, filters)), [routes, filters]);
+  const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("dashboard-table-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("dashboard-table-col-visibility", DEFAULT_VISIBLE);
+
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (r: RouteStat) => string | number | null }[] = [{ label: "Tuyến cáp", getValue: (r) => r.cableRouteName }];
+    if (visible.total) cols.push({ label: "Tổng port", getValue: (r) => r.total });
+    if (visible.inUse) cols.push({ label: "Đang dùng", getValue: (r) => r.inUse });
+    if (visible.standby) cols.push({ label: "Dự phòng", getValue: (r) => r.standby });
+    if (visible.empty) cols.push({ label: "Trống", getValue: (r) => r.empty });
+    return cols;
+  }, [visible]);
+
+  const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table className="min-w-full text-sm">
-        <thead className="bg-primary-50 text-primary-800">
-          <tr>
-            <th className="px-4 py-2 text-left font-semibold">Tuyến cáp</th>
-            <th className="px-4 py-2 text-right font-semibold">Tổng port</th>
-            <th className="px-4 py-2 text-right font-semibold">Đang dùng</th>
-            <th className="px-4 py-2 text-right font-semibold">Dự phòng</th>
-            <th className="px-4 py-2 text-right font-semibold">Trống</th>
-            <th className="px-4 py-2 text-left font-semibold w-48">Tỷ lệ</th>
-          </tr>
-          <tr className="bg-white">
-            <th className="px-2 py-1">
-              <FilterInput value={filters.route} onChange={(v) => onFilterChange("route", v)} />
-            </th>
-            <th className="px-2 py-1">
-              <FilterInput value={filters.total} onChange={(v) => onFilterChange("total", v)} align="right" />
-            </th>
-            <th className="px-2 py-1">
-              <FilterInput value={filters.inUse} onChange={(v) => onFilterChange("inUse", v)} align="right" />
-            </th>
-            <th className="px-2 py-1">
-              <FilterInput value={filters.standby} onChange={(v) => onFilterChange("standby", v)} align="right" />
-            </th>
-            <th className="px-2 py-1">
-              <FilterInput value={filters.empty} onChange={(v) => onFilterChange("empty", v)} align="right" />
-            </th>
-            <th className="px-2 py-1" />
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((r) => (
-            <tr key={r.cableRouteName} className="border-t border-slate-100">
-              <td className="px-4 py-2 text-slate-700">{r.cableRouteName}</td>
-              <td className="px-4 py-2 text-right text-slate-600">{r.total}</td>
-              <td className="px-4 py-2 text-right text-emerald-600">
-                {r.inUse} ({pct(r.inUse, r.total)}%)
-              </td>
-              <td className="px-4 py-2 text-right text-amber-600">
-                {r.standby} ({pct(r.standby, r.total)}%)
-              </td>
-              <td className="px-4 py-2 text-right text-slate-500">
-                {r.empty} ({pct(r.empty, r.total)}%)
-              </td>
-              <td className="px-4 py-2">
-                <StackedBar r={r} />
-              </td>
-            </tr>
-          ))}
-          {routes.length === 0 && (
+    <div>
+      <div className="mb-2 flex justify-end gap-2">
+        <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
+        <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: colWidths.route }} />
+            {visible.total && <col style={{ width: 110 }} />}
+            {visible.inUse && <col style={{ width: 130 }} />}
+            {visible.standby && <col style={{ width: 130 }} />}
+            {visible.empty && <col style={{ width: 110 }} />}
+            {visible.ratio && <col style={{ width: 192 }} />}
+          </colgroup>
+          <thead className="text-primary-800">
             <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                Không có tuyến nào được chọn hiển thị.
-              </td>
+              <DataTh
+                label="Tuyến cáp"
+                width={colWidths.route}
+                onResize={(w) => resizeCol("route", w)}
+                filterValue={filters.route}
+                onFilterChange={(v) => onFilterChange("route", v)}
+              />
+              {visible.total && <DataTh label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} />}
+              {visible.inUse && (
+                <DataTh label="Đang dùng" align="right" filterValue={filters.inUse} onFilterChange={(v) => onFilterChange("inUse", v)} />
+              )}
+              {visible.standby && (
+                <DataTh label="Dự phòng" align="right" filterValue={filters.standby} onFilterChange={(v) => onFilterChange("standby", v)} />
+              )}
+              {visible.empty && <DataTh label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} />}
+              {visible.ratio && <th className="sticky top-0 z-10 bg-primary-50 px-3 py-2 align-top text-left font-semibold">Tỷ lệ</th>}
             </tr>
-          )}
-          {routes.length > 0 && filtered.length === 0 && (
-            <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                Không tìm thấy tuyến nào khớp bộ lọc.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filtered.map((r) => (
+              <tr key={r.cableRouteName} className="border-t border-slate-100">
+                <td className="px-4 py-2 text-slate-700 break-words">{r.cableRouteName}</td>
+                {visible.total && <td className="px-4 py-2 text-right text-slate-600">{r.total}</td>}
+                {visible.inUse && (
+                  <td className="px-4 py-2 text-right text-emerald-600">
+                    {r.inUse} ({pct(r.inUse, r.total)}%)
+                  </td>
+                )}
+                {visible.standby && (
+                  <td className="px-4 py-2 text-right text-amber-600">
+                    {r.standby} ({pct(r.standby, r.total)}%)
+                  </td>
+                )}
+                {visible.empty && (
+                  <td className="px-4 py-2 text-right text-slate-500">
+                    {r.empty} ({pct(r.empty, r.total)}%)
+                  </td>
+                )}
+                {visible.ratio && (
+                  <td className="px-4 py-2">
+                    <StackedBar r={r} />
+                  </td>
+                )}
+              </tr>
+            ))}
+            {routes.length === 0 && (
+              <tr>
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
+                  Không có tuyến nào được chọn hiển thị.
+                </td>
+              </tr>
+            )}
+            {routes.length > 0 && filtered.length === 0 && (
+              <tr>
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
+                  Không tìm thấy tuyến nào khớp bộ lọc.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

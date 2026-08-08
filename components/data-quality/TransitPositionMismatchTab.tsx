@@ -6,6 +6,7 @@ import type { TransitPositionMismatch } from "@/lib/transitPositionMismatches";
 import { applyLibraryFromTransit, applyTransitFromLibrary, applyCustomPosition } from "@/lib/transitPositionMismatches";
 import { supabase } from "@/lib/supabase";
 import { translatePgError } from "@/lib/translatePgError";
+import { useCollapsed } from "@/lib/useCollapsed";
 
 // Khung rà soát "ô Chuyển tiếp lệch tọa độ ODF so với thư viện Vị trí thiết
 // bị" (yêu cầu người dùng 2026-08-02, phát hiện từ ca thật ADN1.P2(2/1/2) —
@@ -22,6 +23,7 @@ export default function TransitPositionMismatchTab({ items }: { items: TransitPo
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(0);
   const [fixedKeys, setFixedKeys] = useState<Set<string>>(new Set());
+  const { collapsed, toggle } = useCollapsed("hskt:collapsed:transitPositionMismatch");
 
   const remaining = useMemo(() => items.filter((it) => !fixedKeys.has(it.transitLinkId)), [items, fixedKeys]);
 
@@ -46,69 +48,84 @@ export default function TransitPositionMismatchTab({ items }: { items: TransitPo
 
   return (
     <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
-      <h2 className="font-semibold text-rose-800">
-        Phát hiện {remaining.length} dòng &quot;Chuyển tiếp&quot; lệch tọa độ ODF so với thư viện Vị trí thiết bị
-      </h2>
-      <p className="mt-1 text-xs text-rose-700">
-        2 tọa độ dưới đây đến từ 2 nguồn ĐỘC LẬP (Chuyển tiếp bên trung kế / thư viện Vị trí thiết bị từ file Excel
-        thiết bị gốc) — không cái nào chắc chắn đúng, tự đối chiếu thực tế rồi chọn 1 trong 3 hướng xử lý.
-      </p>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input
-          className="input w-auto max-w-[260px] border-rose-300"
-          placeholder="Lọc theo thiết bị / rack / nội dung..."
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(0);
-          }}
-        />
-        <span className="text-xs text-rose-600">
-          {filtered.length}/{remaining.length} dòng
-        </span>
-        <label className="ml-auto flex items-center gap-1 text-xs text-rose-700">
-          Số dòng/trang:
-          <select
-            className="input w-auto py-1"
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            {[5, 10, 20, 50, 100].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold text-rose-800">
+          Phát hiện {remaining.length} dòng &quot;Chuyển tiếp&quot; lệch tọa độ ODF so với thư viện Vị trí thiết bị
+        </h2>
+        <button
+          type="button"
+          onClick={toggle}
+          className="shrink-0 rounded border border-rose-300 px-2 py-0.5 text-sm font-bold text-rose-700 hover:bg-rose-100"
+          title={collapsed ? "Mở rộng" : "Thu gọn"}
+          aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
       </div>
+      {collapsed ? null : (
+        <>
+          <p className="mt-1 text-xs text-rose-700">
+            2 tọa độ dưới đây đến từ 2 nguồn ĐỘC LẬP (Chuyển tiếp bên trung kế / thư viện Vị trí thiết bị từ file Excel
+            thiết bị gốc) — không cái nào chắc chắn đúng, tự đối chiếu thực tế rồi chọn 1 trong 3 hướng xử lý.
+          </p>
 
-      <ul className="mt-2 space-y-2 text-sm text-rose-900">
-        {paged.map((item) => (
-          <MismatchRow key={item.transitLinkId} item={item} onDone={() => setFixedKeys((prev) => new Set(prev).add(item.transitLinkId))} />
-        ))}
-        {paged.length === 0 && <li className="text-rose-400">Không có dòng nào khớp bộ lọc.</li>}
-      </ul>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              className="input w-auto max-w-[260px] border-rose-300"
+              placeholder="Lọc theo thiết bị / rack / nội dung..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+            />
+            <span className="text-xs text-rose-600">
+              {filtered.length}/{remaining.length} dòng
+            </span>
+            <label className="ml-auto flex items-center gap-1 text-xs text-rose-700">
+              Số dòng/trang:
+              <select
+                className="input w-auto py-1"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(0);
+                }}
+              >
+                {[5, 10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      {pageCount > 1 && (
-        <div className="mt-2 flex items-center gap-2 text-sm text-rose-700">
-          <button className="btn-secondary px-2 py-1" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={pageClamped === 0}>
-            ← Trước
-          </button>
-          <span>
-            Trang {pageClamped + 1}/{pageCount}
-          </span>
-          <button
-            className="btn-secondary px-2 py-1"
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={pageClamped >= pageCount - 1}
-          >
-            Sau →
-          </button>
-        </div>
+          <ul className="mt-2 space-y-2 text-sm text-rose-900">
+            {paged.map((item) => (
+              <MismatchRow key={item.transitLinkId} item={item} onDone={() => setFixedKeys((prev) => new Set(prev).add(item.transitLinkId))} />
+            ))}
+            {paged.length === 0 && <li className="text-rose-400">Không có dòng nào khớp bộ lọc.</li>}
+          </ul>
+
+          {pageCount > 1 && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-rose-700">
+              <button className="btn-secondary px-2 py-1" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={pageClamped === 0}>
+                ← Trước
+              </button>
+              <span>
+                Trang {pageClamped + 1}/{pageCount}
+              </span>
+              <button
+                className="btn-secondary px-2 py-1"
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={pageClamped >= pageCount - 1}
+              >
+                Sau →
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

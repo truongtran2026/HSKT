@@ -7,9 +7,10 @@ import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
-import SortableTh from "@/components/ui/SortableTh";
-import ResizableTh from "@/components/ui/ResizableTh";
-import FilterInput from "@/components/ui/FilterInput";
+import { useColumnVisibility } from "@/lib/useColumnVisibility";
+import DataTh from "@/components/ui/DataTh";
+import ColumnPicker from "@/components/ui/ColumnPicker";
+import ExportExcelButton from "@/components/ui/ExportExcelButton";
 
 export interface RackListItem {
   id: string;
@@ -81,9 +82,30 @@ const FILTER_KEYS: SortKey[] = ["code", "route", "odfType", "portCount", "inUse"
 type ResizableCol = "route";
 const DEFAULT_COL_WIDTHS: Record<ResizableCol, number> = { route: 220 };
 
+// Mã rack luôn hiện (như Port/Tên luồng ở các bảng khác) — 6 cột còn lại ẩn/
+// hiện được (quy định chung mọi bảng, xem architecture.md).
+type VisibleCol = "route" | "odfType" | "portCount" | "inUse" | "standby" | "empty";
+const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = {
+  route: true,
+  odfType: true,
+  portCount: true,
+  inUse: true,
+  standby: true,
+  empty: true,
+};
+const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
+  { key: "route", label: "Tuyến cáp" },
+  { key: "odfType", label: "Loại ODF" },
+  { key: "portCount", label: "Số port" },
+  { key: "inUse", label: "Đang dùng" },
+  { key: "standby", label: "Dự phòng" },
+  { key: "empty", label: "Trống" },
+];
+
 export default function RackListTable({ racks }: { racks: RackListItem[] }) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("code");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("rack-list-col-widths", DEFAULT_COL_WIDTHS);
+  const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("rack-list-col-visibility", DEFAULT_VISIBLE);
   const [filters, setFilters] = useState<Record<SortKey, string>>({
     code: "",
     route: "",
@@ -108,6 +130,21 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
     [sorted, filters]
   );
 
+  const exportColumns = useMemo(() => {
+    const cols: { label: string; getValue: (r: RackListItem) => string | number | null }[] = [
+      { label: "Mã rack", getValue: (r) => formatRackCodeDisplay(r.code) },
+    ];
+    if (visible.route) cols.push({ label: "Tuyến cáp", getValue: (r) => r.cableRouteName });
+    if (visible.odfType) cols.push({ label: "Loại ODF", getValue: (r) => odfTypeLabel(r.odfType) });
+    if (visible.portCount) cols.push({ label: "Số port", getValue: (r) => r.portCount });
+    if (visible.inUse) cols.push({ label: "Đang dùng", getValue: (r) => r.inUsePorts });
+    if (visible.standby) cols.push({ label: "Dự phòng", getValue: (r) => r.standbyPorts });
+    if (visible.empty) cols.push({ label: "Trống", getValue: (r) => emptyPortsOf(r) });
+    return cols;
+  }, [visible]);
+
+  const visibleColCount = 1 + COLUMN_ITEMS.filter((c) => visible[c.key]).length;
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
@@ -123,70 +160,106 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
             Xóa bộ lọc
           </button>
         )}
+        <div className="ml-auto flex gap-2">
+          <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Rack" fileNamePrefix="Danh_sach_rack" />
+          <ColumnPicker items={COLUMN_ITEMS} visible={visible} onToggle={toggleColumn} />
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             <col style={{ width: 120 }} />
-            <col style={{ width: colWidths.route }} />
-            <col style={{ width: 110 }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 90 }} />
+            {visible.route && <col style={{ width: colWidths.route }} />}
+            {visible.odfType && <col style={{ width: 110 }} />}
+            {visible.portCount && <col style={{ width: 90 }} />}
+            {visible.inUse && <col style={{ width: 90 }} />}
+            {visible.standby && <col style={{ width: 90 }} />}
+            {visible.empty && <col style={{ width: 90 }} />}
           </colgroup>
-          <thead className="bg-primary-50 text-primary-800">
+          <thead className="text-primary-800">
             <tr>
-              <SortableTh label="Mã rack" sortKey="code" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <ResizableTh
-                label="Tuyến cáp"
-                sortKey="route"
+              <DataTh
+                label="Mã rack"
+                sortKey="code"
                 activeSortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
-                width={colWidths.route}
-                onResize={(w) => resizeCol("route", w)}
+                filterValue={filters.code}
+                onFilterChange={(v) => setFilter("code", v)}
               />
-              <SortableTh label="Loại ODF" sortKey="odfType" activeKey={sortKey} dir={sortDir} onSort={toggleSort} />
-              <SortableTh
-                label="Số port"
-                sortKey="portCount"
-                activeKey={sortKey}
-                dir={sortDir}
-                onSort={toggleSort}
-                align="right"
-              />
-              {/* Tách "Đang dùng" (1 cột X/Y trước đây) thành 3 cột riêng Đang
-                  dùng/Dự phòng/Trống (yêu cầu người dùng 2026-07-28) — xem
-                  cách 2 trang gọi component này tính lại đúng theo dữ liệu
-                  luồng thật (không còn ports.status, xem architecture.md). */}
-              <SortableTh label="Đang dùng" sortKey="inUse" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortableTh label="Dự phòng" sortKey="standby" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortableTh label="Trống" sortKey="empty" activeKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
-            </tr>
-            <tr className="bg-white">
-              <th className="px-2 py-1">
-                <FilterInput value={filters.code} onChange={(v) => setFilter("code", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.route} onChange={(v) => setFilter("route", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.odfType} onChange={(v) => setFilter("odfType", v)} />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.portCount} onChange={(v) => setFilter("portCount", v)} align="right" />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.inUse} onChange={(v) => setFilter("inUse", v)} align="right" />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.standby} onChange={(v) => setFilter("standby", v)} align="right" />
-              </th>
-              <th className="px-2 py-1">
-                <FilterInput value={filters.empty} onChange={(v) => setFilter("empty", v)} align="right" />
-              </th>
+              {visible.route && (
+                <DataTh
+                  label="Tuyến cáp"
+                  sortKey="route"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  width={colWidths.route}
+                  onResize={(w) => resizeCol("route", w)}
+                  filterValue={filters.route}
+                  onFilterChange={(v) => setFilter("route", v)}
+                />
+              )}
+              {visible.odfType && (
+                <DataTh
+                  label="Loại ODF"
+                  sortKey="odfType"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  filterValue={filters.odfType}
+                  onFilterChange={(v) => setFilter("odfType", v)}
+                />
+              )}
+              {visible.portCount && (
+                <DataTh
+                  label="Số port"
+                  sortKey="portCount"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.portCount}
+                  onFilterChange={(v) => setFilter("portCount", v)}
+                />
+              )}
+              {visible.inUse && (
+                <DataTh
+                  label="Đang dùng"
+                  sortKey="inUse"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.inUse}
+                  onFilterChange={(v) => setFilter("inUse", v)}
+                />
+              )}
+              {visible.standby && (
+                <DataTh
+                  label="Dự phòng"
+                  sortKey="standby"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.standby}
+                  onFilterChange={(v) => setFilter("standby", v)}
+                />
+              )}
+              {visible.empty && (
+                <DataTh
+                  label="Trống"
+                  sortKey="empty"
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  align="right"
+                  filterValue={filters.empty}
+                  onFilterChange={(v) => setFilter("empty", v)}
+                />
+              )}
             </tr>
           </thead>
           <tbody>
@@ -197,17 +270,17 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
                     {formatRackCodeDisplay(rack.code)}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>
-                <td className="px-4 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{rack.portCount}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{rack.inUsePorts}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{rack.standbyPorts}</td>
-                <td className="px-4 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>
+                {visible.route && <td className="px-4 py-2 text-slate-600 break-words">{rack.cableRouteName}</td>}
+                {visible.odfType && <td className="px-4 py-2 text-slate-600">{odfTypeLabel(rack.odfType)}</td>}
+                {visible.portCount && <td className="px-4 py-2 text-right text-slate-600">{rack.portCount}</td>}
+                {visible.inUse && <td className="px-4 py-2 text-right text-slate-600">{rack.inUsePorts}</td>}
+                {visible.standby && <td className="px-4 py-2 text-right text-slate-600">{rack.standbyPorts}</td>}
+                {visible.empty && <td className="px-4 py-2 text-right text-slate-600">{emptyPortsOf(rack)}</td>}
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={visibleColCount} className="px-4 py-6 text-center text-slate-400">
                   Không tìm thấy rack nào khớp bộ lọc.
                 </td>
               </tr>
