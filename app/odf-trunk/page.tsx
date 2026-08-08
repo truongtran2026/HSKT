@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchNonConformingTransitLinks } from "@/lib/transitLinks";
 import { derivePortStatus } from "@/lib/portStatus";
@@ -70,13 +71,35 @@ async function getRacks(supabase: SupabaseClient): Promise<RackListItem[]> {
   });
 }
 
+// Tách riêng khỏi OdfTrunkPage + bọc <Suspense> (tối ưu 2026-08-08, người
+// dùng hỏi vì sao vào trang danh sách rack chậm) — trước đây trang này CHỜ
+// XONG CẢ fetchAllOdfPorts (toàn bộ port toàn trạm) + fetchNonConformingTransitLinks
+// rồi mới trả HTML, dù danh sách rack chính (TrunkRackListPanel) không cần 2
+// lời gọi đó chút nào (getRacks() tự có query riêng, nhẹ hơn nhiều). Kết quả:
+// người dùng phải đợi đúng bằng thời gian của khung cảnh báo "Chuyển tiếp
+// chưa chuẩn form" mới thấy được cả danh sách rack, kể cả khi khung đó đang
+// thu gọn/không quan tâm. Suspense cho phép HTML của danh sách rack (getRacks,
+// nhanh) trả về NGAY, còn khung cảnh báo (chậm hơn) tự "trôi" vào sau khi
+// xong — không đổi hành vi/dữ liệu hiển thị, chỉ đổi THỜI ĐIỂM nó xuất hiện.
+async function TransitWarningSection({ supabase }: { supabase: SupabaseClient }) {
+  const trunkPorts = await fetchAllOdfPorts(supabase);
+  // fetchNonConformingTransitLinks cần trunkPorts để đối chiếu phần ODF bên
+  // trong (xem lib/transitLinks.ts) -> phải chờ trunkPorts xong trước.
+  const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts);
+  return <TransitFormatWarning items={nonConformingTransit} />;
+}
+
+function TransitWarningSkeleton() {
+  return (
+    <div className="mb-4 animate-pulse rounded-lg border border-amber-100 bg-amber-50/60 px-4 py-2.5 text-sm text-amber-500">
+      Đang kiểm tra &quot;Chuyển tiếp&quot; chưa đúng chuẩn form...
+    </div>
+  );
+}
+
 export default async function OdfTrunkPage() {
   const supabase = await createSupabaseServerClient();
-  const [racks, trunkPorts] = await Promise.all([getRacks(supabase), fetchAllOdfPorts(supabase)]);
-  // fetchNonConformingTransitLinks cần trunkPorts để đối chiếu phần ODF bên
-  // trong (xem lib/transitLinks.ts) -> phải chờ trunkPorts xong trước, không
-  // gộp chung Promise.all ở trên được (phụ thuộc kết quả nhau).
-  const nonConformingTransit = await fetchNonConformingTransitLinks(supabase, trunkPorts);
+  const racks = await getRacks(supabase);
 
   return (
     <div>
@@ -84,7 +107,9 @@ export default async function OdfTrunkPage() {
       <p className="text-slate-500 mt-1">Bấm vào 1 rack để xem/sửa chi tiết từng port.</p>
 
       <div className="mt-6">
-        <TransitFormatWarning items={nonConformingTransit} />
+        <Suspense fallback={<TransitWarningSkeleton />}>
+          <TransitWarningSection supabase={supabase} />
+        </Suspense>
         <TrunkRackListPanel racks={racks} />
       </div>
     </div>

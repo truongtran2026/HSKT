@@ -4383,3 +4383,54 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
       `/settings` (admin) thử xóa/đặt lại mật khẩu 1 tài khoản test, và vào
       `/data-quality` bấm +/− vài khung "Phát hiện..." xem đóng/mở đúng +
       reload lại trang xem có nhớ đúng trạng thái đã đóng/mở không.
+
+    - **Đợt tiếp (2026-08-08) — tối ưu tốc độ vào "Hồ sơ ODF Trung kế"
+      (`/odf-trunk`)**: người dùng hỏi việc mở rộng khung "Phát hiện..." có
+      phải nguyên nhân làm chậm khi vào các tab khác không. Khảo sát cho thấy
+      2 trang có khung "Phát hiện..." nhưng tình trạng KHÁC hẳn nhau:
+      - `DeviceCircuitList.tsx` ("Hồ sơ đấu nối"): khung "Phát hiện vị trí
+        DDF/ODF trùng" chỉ là `useMemo(() => findDevicePositionConflicts
+        (circuits), [circuits])` — tính ngay ở trình duyệt từ `circuits` ĐÃ
+        tải sẵn cho bảng chính, KHÔNG gọi thêm Supabase. Không phải nguyên
+        nhân chậm — không sửa gì ở đây.
+      - `app/odf-trunk/page.tsx` ("Hồ sơ ODF Trung kế", trang danh sách
+        rack): NGƯỢC LẠI, đây đúng là nguyên nhân thật. Trang này gọi
+        `fetchAllOdfPorts()` (toàn bộ port toàn trạm) rồi
+        `fetchNonConformingTransitLinks()` CHỈ để phục vụ khung
+        `TransitFormatWarning` — danh sách rack chính
+        (`TrunkRackListPanel`/`getRacks()`) có query riêng, nhẹ hơn nhiều,
+        không cần 2 lời gọi đó. Trước sửa, toàn bộ `Promise.all(...)` +
+        `await fetchNonConformingTransitLinks(...)` phải xong hết thì Next
+        mới trả HTML — nghĩa là danh sách rack (đã sẵn sàng sớm) vẫn phải
+        đợi đúng bằng thời gian của khung cảnh báo (chậm hơn nhiều) mới hiện
+        ra, kể cả khi khung đó đang thu gọn/người dùng không quan tâm.
+      - **Cách sửa**: KHÔNG chuyển sang "tải khi bấm mở" (sẽ mất tính năng đã
+        làm ở đợt trước — tiêu đề collapsed vẫn hiện số đếm ngay cả khi chưa
+        mở) — thay vào đó dùng `<Suspense>` (React/Next.js App Router chuẩn):
+        tách phần tính `nonConformingTransit` ra 1 async Server Component
+        con (`TransitWarningSection`) bọc trong `<Suspense fallback=
+        {<TransitWarningSkeleton />}>`, còn `getRacks()` await trực tiếp
+        NGOÀI Suspense. Kết quả: HTML danh sách rack trả về NGAY khi
+        `getRacks()` xong (không đợi phần chậm), khung cảnh báo tự "trôi"
+        vào sau khi `fetchAllOdfPorts`/`fetchNonConformingTransitLinks` xong
+        — KHÔNG đổi dữ liệu/hành vi hiển thị (vẫn đủ số đếm, vẫn Ack được),
+        chỉ đổi THỜI ĐIỂM nó xuất hiện trên trang. Rủi ro thấp hơn nhiều so
+        với thêm API route + fetch phía client (không cần viết lại
+        `TransitFormatWarning.tsx`/thêm route mới/nhân đôi logic auth).
+      - Trang chi tiết 1 rack (`app/odf-trunk/[rackId]/page.tsx`) KHÔNG đụng
+        — ở đó `trunkPorts` cần cho nhiều tính năng khác (badge liên kết,
+        "Kiểm tra đồng bộ") nên không phải phí riêng của khung cảnh báo, và
+        câu truy vấn `fetchNonConformingTransitLinks` đã lọc theo đúng
+        `rack.id` từ đợt tối ưu 2026-08-01 — đã rẻ sẵn.
+      - File sửa: `app/odf-trunk/page.tsx` — thêm `TransitWarningSection`
+        (async) + `TransitWarningSkeleton`, `getRacks()` await riêng, không
+        còn gộp `Promise.all` với `fetchAllOdfPorts`.
+      - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa đo thời
+        gian tải thật (không có công cụ trình duyệt) — người dùng tự vào
+        `/odf-trunk` xem danh sách rack có hiện nhanh hơn, khung "Phát hiện
+        Chuyển tiếp chưa chuẩn form" có tự hiện vào ngay sau đó (không bị mất
+        hẳn) hay không.
+      - Cùng kỹ thuật (`<Suspense>` tách phần chậm) có thể áp dụng tiếp cho
+        `/data-quality` (11 khung tính hết trong 1 Server Component, xem đề
+        xuất chưa làm ở trên) để giảm thời gian vào trang đó — CHƯA làm, chỉ
+        ghi lại hướng đi nếu người dùng cần sau này.
