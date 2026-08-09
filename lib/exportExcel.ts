@@ -77,3 +77,40 @@ export function exportRowsToExcel<T>(columns: ExcelColumn<T>[], rows: T[], opts:
   XLSX.utils.book_append_sheet(wb, sheet, opts.sheetName.slice(0, 31));
   XLSX.writeFile(wb, `${opts.fileNamePrefix}_${todayStamp()}.xlsx`);
 }
+
+// Tên sheet Excel: tối đa 31 ký tự, KHÔNG được chứa \ / ? * [ ] : — mã rack
+// thật (vd "ODF 1/8") luôn có dấu "/", phải thay bằng "-" trước khi dùng làm
+// tên sheet, nếu không XLSX.writeFile() lỗi âm thầm hoặc file hỏng.
+function sanitizeSheetName(name: string): string {
+  return name.replace(/[\\/?*[\]:]/g, "-").trim() || "Sheet";
+}
+
+// Xuất Excel NHIỀU SHEET cùng lúc — mỗi sheet 1 nhóm dòng riêng, DÙNG CHUNG 1
+// bộ cột (yêu cầu người dùng 2026-08-09: xuất chi tiết port/sợi/tên luồng...
+// của NHIỀU rack ODF trung kế cùng lúc, mỗi rack 1 sheet, thay vì phải vào
+// từng rack bấm Xuất Excel riêng lẻ — xem TrunkRackListPanel.tsx). Tự đổi tên
+// nếu 2 sheet trùng nhau sau khi cắt còn 31 ký tự/thay ký tự cấm (hiếm khi
+// xảy ra với mã rack thật, nhưng vẫn phải chặn để không mất dữ liệu 1 rack).
+export function exportMultiSheetExcel<T>(
+  sheets: { sheetName: string; rows: T[] }[],
+  columns: ExcelColumn<T>[],
+  fileNamePrefix: string
+) {
+  const wb = XLSX.utils.book_new();
+  const usedNames = new Set<string>();
+  const header = columns.map((c) => c.label);
+  for (const { sheetName, rows } of sheets) {
+    const aoa = [header, ...rows.map((r) => columns.map((c) => c.getValue(r) ?? ""))];
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    const base = sanitizeSheetName(sheetName).slice(0, 31);
+    let name = base;
+    let suffix = 2;
+    while (usedNames.has(name)) {
+      name = `${base.slice(0, 28)}_${suffix}`;
+      suffix += 1;
+    }
+    usedNames.add(name);
+    XLSX.utils.book_append_sheet(wb, sheet, name);
+  }
+  XLSX.writeFile(wb, `${fileNamePrefix}_${todayStamp()}.xlsx`);
+}

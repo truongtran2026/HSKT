@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 
 // Dữ liệu 1 port trung kế đã chuẩn hóa — dùng chung cho trang Tìm kiếm nhanh
 // (giai đoạn 5) và Dashboard (giai đoạn 6), để cả 2 nơi cùng 1 nguồn dữ liệu
@@ -26,6 +27,14 @@ export interface TrunkPortRow {
      *  lib/mirrorLinkStatus.ts) — thêm 2026-08-02 để tính huy hiệu "Đã liên
      *  kết" mà không cần thêm 1 lượt query riêng như trước. */
     mirrorOfId: string | null;
+    /** Thêm 2026-08-09 cho tính năng xuất Excel chi tiết nhiều rack cùng lúc
+     *  ở /odf-trunk (xem components/odf-trunk/TrunkRackListPanel.tsx) — trước
+     *  đó thiếu 2 trường này nên phải query riêng mỗi rack; giờ có sẵn trong
+     *  `fetchAllOdfPorts()` (đã tải cả trạm cho việc khác) nên dùng thẳng,
+     *  không cần thêm 1 lượt query nào nữa. Không ảnh hưởng chỗ dùng cũ (chỉ
+     *  thêm field, không đổi field có sẵn). */
+    executionStationText: string | null;
+    notes: string | null;
   } | null;
 }
 
@@ -54,6 +63,8 @@ interface RawCircuit {
   counterpart_text: string | null;
   response_plan_text: string | null;
   mirror_of_id: string | null;
+  execution_station_text: string | null;
+  notes: string | null;
 }
 
 function firstOf<T>(v: T | T[] | null | undefined): T | null {
@@ -89,7 +100,7 @@ async function fetchAllRawPorts(client: SupabaseClient, domainFilter?: "trunk" |
       .select(
         `id, port_number, fiber_number,
          racks!inner ( id, code, cable_route_name, domain ),
-         port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text, mirror_of_id ) ),
+         port_circuit_links ( link_role, circuits ( id, name, interface_type, counterpart_text, response_plan_text, mirror_of_id, execution_station_text, notes ) ),
          transit_links!transit_links_source_port_id_fkey ( id, raw_text )`
       );
     if (domainFilter) query = query.eq("racks.domain", domainFilter);
@@ -128,6 +139,8 @@ function toTrunkPortRow(row: RawRow): TrunkPortRow {
           counterpartText: circuit.counterpart_text,
           responsePlanText: circuit.response_plan_text,
           mirrorOfId: circuit.mirror_of_id,
+          executionStationText: circuit.execution_station_text,
+          notes: circuit.notes,
         }
       : null,
   };
@@ -247,6 +260,23 @@ export function matchBareTrunkLink(text: string, trunkPorts: TrunkPortRow[]): Tr
   if (resolvedCount === 0 || resolvedCount > 2) return null;
   if (match.invalidPortNumbers && match.invalidPortNumbers.length > 0) return null;
   return match;
+}
+
+// Hiện tên tuyến cáp trung kế NGAY trong ô "Chuyển tiếp" khi text là 1 tọa độ
+// ODF TRƠN trỏ THẲNG sang 1 rack trung kế khác, không qua thiết bị nào (vd
+// "ODF 2/11 (15,16)" — khớp matchBareTrunkLink()). Dòng đã có cấu trúc 2 sẵn
+// (đã có tên thiết bị, splitOdfDeviceStructure khớp) thì giữ nguyên, không
+// tính lại. Chuyển từ PortTable.tsx sang đây (2026-08-09) — dùng chung cho cả
+// bảng chi tiết 1 rack VÀ tính năng xuất Excel nhiều rack cùng lúc ở
+// TrunkRackListPanel.tsx, tránh lặp lại cùng 1 logic ở 2 nơi.
+export function transitDisplay(raw: string | null, trunkPorts: TrunkPortRow[]): string {
+  if (!raw) return "";
+  if (splitOdfDeviceStructure(raw).matched) return raw;
+  const match = matchBareTrunkLink(raw, trunkPorts);
+  if (match && match.rackDomain === "trunk" && match.cableRouteName) {
+    return `${raw} - ${match.cableRouteName}`;
+  }
+  return raw;
 }
 
 // Tra ngược: đã biết rack (từ matchTrunkPosition ở Ô1), gõ 1-2 số Sợi ở Ô3 ->

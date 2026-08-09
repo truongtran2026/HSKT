@@ -4846,3 +4846,65 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     `DevicePositionMapClient.tsx` (xác nhận hàng đang sửa inline vẫn đúng
     cột sau khi đổi thứ tự) và `DeviceRackPortView.tsx` (tính năng kéo-thả
     hoàn toàn mới, chưa ai dùng thử).
+
+- **Mục 86 (2026-08-09) — Xuất Excel CHI TIẾT nhiều rack ODF trung kế cùng
+  lúc, ngay tại `/odf-trunk`.** Người dùng: trước đây muốn xem/xuất chi tiết
+  từng port/sợi/tên luồng của 1 ODF phải bấm vào đúng mã rack đó (trang
+  `/odf-trunk/[rackId]`, nút Export ở `PortTable.tsx`) — không có cách xuất
+  CHI TIẾT nhiều rack cùng lúc (vd cả tuyến "144FO#1 ADN1 - 2T9" gồm 3 rack,
+  hoặc chỉ chọn "ODF 1/8" + "ODF 1/10"). Phân biệt rõ với nút Export SẴN CÓ ở
+  `/odf-trunk` (trong `RackListTable.tsx`) — đó là xuất bảng THỐNG KÊ (tổng
+  port/đang dùng/dự phòng/trống theo từng rack), không phải chi tiết từng
+  port. Hỏi lại người dùng 2 điểm trước khi làm — đã chọn: (1) **1 sheet/
+  rack** (không gộp 1 sheet chung nhiều rack), (2) đặt nút xuất **ngay tại
+  `/odf-trunk`**, dùng chung bộ chọn "Tuyến cáp / rack" (`GroupedMultiSelect`,
+  xem Mục 83) đã có sẵn để lọc/xem — không bắt chọn lại lần 2.
+  - **`lib/trunkPorts.ts`**: `TrunkPortRow.circuit` thêm 2 field
+    `executionStationText`/`notes` (trước đây thiếu, chỉ có ở
+    `getRackAndPorts()` riêng của trang chi tiết 1 rack) — thêm vào
+    `RawCircuit`/select query/`toTrunkPortRow()` của `fetchAllOdfPorts()` —
+    đủ dữ liệu để build export nhiều rack THẲNG từ 1 lượt gọi
+    `fetchAllOdfPorts()` có sẵn, không cần thêm 1 query riêng theo rack IDs.
+    Thêm field CHỈ mở rộng (không đổi field cũ) nên không ảnh hưởng chỗ dùng
+    hiện có. Đồng thời **dời `transitDisplay()`** từ hàm riêng trong
+    `PortTable.tsx` sang đây (export ra ngoài) — dùng CHUNG cho cả bảng chi
+    tiết 1 rack VÀ tính năng xuất nhiều rack mới, không lặp lại logic "hiện
+    tên tuyến cáp trong ô Chuyển tiếp khi trỏ thẳng ODF trơn" ở 2 nơi.
+  - **`lib/exportExcel.ts`**: thêm `exportMultiSheetExcel<T>(sheets, columns,
+    fileNamePrefix)` (dùng chung `ExcelColumn<T>[]` như `exportRowsToExcel`
+    đã có, chỉ khác lặp `book_append_sheet()` nhiều lần thay vì 1 lần) +
+    `sanitizeSheetName()` — mã rack thật LUÔN có dấu "/" (vd "ODF 1/8"), tên
+    sheet Excel KHÔNG được chứa `\ / ? * [ ] :` nên phải thay bằng "-" trước
+    khi đặt tên sheet (nếu không `XLSX.writeFile()` lỗi hoặc file hỏng); có
+    xử lý trùng tên (đổi hậu tố `_2`, `_3`...) phòng trường hợp hiếm 2 mã
+    rack khác nhau sanitize về cùng 1 tên.
+  - **`components/odf-trunk/TrunkRackListPanel.tsx`**: thêm nút "Xuất chi
+    tiết (n rack)" cạnh `GroupedMultiSelect` — bấm mới CHẠY (không tính sẵn
+    lúc vào trang, giữ đúng tinh thần Suspense/tối ưu tải trang Mục 81/82)
+    đúng 6 hàm/lượt gọi mà `app/odf-trunk/[rackId]/page.tsx` dùng để tính
+    `trunkPorts`/`mirrorLinkStatuses` cho `PortTable.tsx`: `fetchAllOdfPorts`,
+    `fetchDeviceCircuits`, `fetchDevices`, `findUnlinkedMirrorPairs`,
+    `findUnlinkedDeviceDevicePairs`, `computeMirrorLinkStatuses` — gọi THẲNG
+    từ Client Component này (không qua Server Action/Route Handler) vì các
+    hàm này vốn đã nhận `SupabaseClient` làm tham số, không cố định server/
+    browser (xem comment gốc ở `lib/trunkPorts.ts`, đã dùng đúng ý định thiết
+    kế đó). Sau khi có `trunkPorts` (đã gồm mọi rack toàn trạm), gom theo
+    `rackId` bằng 1 `Map`, lọc xuống đúng các rack đang được chọn ở
+    `GroupedMultiSelect` (`effectiveRacks` — CHÍNH bộ lọc đang hiển thị bảng
+    thống kê bên dưới, không phải 1 lựa chọn riêng), build 10 cột export y
+    hệt `PortTable.tsx`'s `exportColumns` (Port, Sợi, Tên luồng, Trạng thái,
+    Giao tiếp, Chuyển tiếp, Đối phương, PA ứng cứu, Trạm thực hiện, Ghi chú)
+    cho từng rack rồi gọi `exportMultiSheetExcel`. `selectedRackIds === null`
+    (chưa đụng bộ chọn) mặc định coi là "cả 41 rack" — số trong nhãn nút tự
+    cập nhật theo đúng số rack sẽ xuất, không cần bấm thử mới biết.
+  - Không đổi gì ở `PortTable.tsx`'s export hiện có (vẫn xuất đúng 1 rack
+    đang xem, theo cột đang hiển thị/kéo-thả) — tính năng mới là BỔ SUNG,
+    không thay thế.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch (`/odf-trunk` tăng
+    ~5kB First Load JS do thêm logic tính mirror-link/transit — chấp nhận
+    được, chỉ trang này chịu, không ảnh hưởng trang khác). Chưa test chuột
+    thật — cần người dùng tự thử: chọn cả tuyến "144FO#1 ADN1 - 2T9" (tick
+    nhóm ở `GroupedMultiSelect`) rồi bấm "Xuất chi tiết", mở file xác nhận
+    đúng 3 sheet (1 sheet/rack, tên sheet = mã rack), cột "Trạng thái"/
+    "Chuyển tiếp" đúng y hệt khi xem trực tiếp từng rack; thử xuất khi chưa
+    chọn gì (mặc định cả 41 rack) xem có chạy được với dữ liệu lớn không.

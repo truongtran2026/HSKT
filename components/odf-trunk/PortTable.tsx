@@ -12,7 +12,7 @@ import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias,
 import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { writeTransitForPorts } from "@/lib/transitLinks";
-import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, type TrunkPortRow } from "@/lib/trunkPorts";
+import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, transitDisplay, type TrunkPortRow } from "@/lib/trunkPorts";
 import {
   autoCreateTrunkMirrorForCircuit,
   autoCreateTrunkTrunkMirrorForCircuit,
@@ -101,25 +101,9 @@ function linkedPortsFor(allPorts: PortView[], circuitId: string): PortView[] {
   return allPorts.filter((p) => p.circuit?.id === circuitId).sort((a, b) => a.portNumber - b.portNumber);
 }
 
-// Hiện tên tuyến cáp trung kế NGAY trong bảng danh sách (không cần bấm Sửa
-// mới thấy — yêu cầu người dùng 2026-07-29, cùng nguyên tắc đã áp dụng cho
-// cột "Vị trí ODF (tiếp theo)" bên DeviceCircuitList.tsx) — CHỈ áp dụng khi
-// "Chuyển tiếp" là 1 tọa độ ODF TRƠN trỏ THẲNG sang 1 rack trung kế khác,
-// không qua thiết bị nào (vd "ODF 2/11 (15,16)" — không có " - <thiết bị>
-// (<port>)" nên splitOdfDeviceStructure() không khớp được cấu trúc 2). Dòng
-// đã có cấu trúc 2 sẵn (đã có tên thiết bị) thì giữ nguyên, không tính lại.
-// Rào an toàn resolvedPorts<=2 giờ nằm trong matchBareTrunkLink() (lib/
-// trunkPorts.ts) — dùng chung với lib/transitLinks.ts để không lặp lại logic
-// này ở 2 nơi (xem comment đầy đủ tại định nghĩa hàm đó).
-function transitDisplay(raw: string | null, trunkPorts: TrunkPortRow[]): string {
-  if (!raw) return "";
-  if (splitOdfDeviceStructure(raw).matched) return raw;
-  const match = matchBareTrunkLink(raw, trunkPorts);
-  if (match && match.rackDomain === "trunk" && match.cableRouteName) {
-    return `${raw} - ${match.cableRouteName}`;
-  }
-  return raw;
-}
+// transitDisplay() chuyển sang lib/trunkPorts.ts (2026-08-09) — dùng chung
+// với tính năng xuất Excel chi tiết nhiều rack ở TrunkRackListPanel.tsx,
+// tránh lặp lại cùng 1 logic ở 2 nơi (xem comment đầy đủ tại định nghĩa mới).
 
 // Sắp xếp áp dụng ở CẤP NHÓM (sau khi đã gộp Tx/Rx theo port vật lý liền kề)
 // — không sắp xếp mảng ports thô, để không phá vỡ quy tắc gộp rowspan (luôn
