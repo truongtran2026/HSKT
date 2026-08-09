@@ -4908,3 +4908,12 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     đúng 3 sheet (1 sheet/rack, tên sheet = mã rack), cột "Trạng thái"/
     "Chuyển tiếp" đúng y hệt khi xem trực tiếp từng rack; thử xuất khi chưa
     chọn gì (mặc định cả 41 rack) xem có chạy được với dữ liệu lớn không.
+  - **Cập nhật 2026-08-09**: người dùng không thích hiện chữ "Xuất chi tiết
+    (n rack)" — đổi nút này thành ICON, dùng `IconFolderDown` MỚI thêm ở
+    `components/ui/icons.tsx` (dáng thư mục + mũi tên xuống) thay vì
+    `IconDownload` cũ (mũi tên đơn giản) — cố ý khác hình dáng để không nhầm
+    với nút "Xuất Excel" (thống kê) ngay bên cạnh, vẫn dùng `IconDownload`,
+    ở `RackListTable.tsx` bên dưới. Số rack đang chọn giờ hiện qua badge tròn
+    góc trên-phải nút (giống badge số cột ẩn ở `ColumnPicker.tsx`, nhưng màu
+    `bg-primary-600` để phân biệt màu `bg-amber-500` của badge đó) thay vì
+    nằm trong chữ trên nút; tooltip (`title`) vẫn giữ đủ câu mô tả cũ.
