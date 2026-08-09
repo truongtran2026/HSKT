@@ -132,34 +132,38 @@ export default function TrunkRackListPanel({ racks }: { racks: RackListItem[] })
     }
   }
 
+  // Icon (không hiện chữ, yêu cầu người dùng 2026-08-09) — dùng IconFolderDown
+  // để phân biệt với icon IconDownload của nút "Xuất Excel" thống kê (đặt
+  // NGAY CẠNH nhau trong toolbar của RackListTable qua prop `toolbarExtra`,
+  // theo đúng yêu cầu người dùng — trước đó tách rời ở hàng trên cùng
+  // GroupedMultiSelect, giờ gộp về 1 chỗ với các nút xuất khác). Badge số ở
+  // góc = số rack đang chọn ở picker phía trên, cùng số hiện trong tooltip.
+  const exportDetailButton = (
+    <button
+      type="button"
+      className="btn-secondary relative px-2 py-1.5"
+      onClick={exportDetail}
+      disabled={exporting || effectiveRacks.length === 0}
+      title={exporting ? "Đang xuất..." : `Xuất chi tiết từng port/sợi/tên luồng của ${effectiveRacks.length} rack đang chọn ở trên — mỗi rack 1 sheet riêng`}
+      aria-label="Xuất chi tiết nhiều rack"
+    >
+      <IconFolderDown />
+      {!exporting && (
+        <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-600 px-1 text-[10px] font-medium text-white">
+          {effectiveRacks.length}
+        </span>
+      )}
+    </button>
+  );
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <GroupedMultiSelect items={items} selected={selectedRackIds} onChange={setSelectedRackIds} buttonLabel="Tuyến cáp / rack" />
-        {/* Icon (không hiện chữ, yêu cầu người dùng 2026-08-09) — dùng
-            IconFolderDown để phân biệt với icon IconDownload của nút "Xuất
-            Excel" thống kê ở RackListTable.tsx bên dưới (2 nút gần nhau,
-            khác hẳn hình dáng để không nhầm chức năng). Badge số ở góc = số
-            rack đang chọn ở picker phía trên, cùng số hiện trong tooltip. */}
-        <button
-          type="button"
-          className="btn-secondary relative px-2 py-1.5"
-          onClick={exportDetail}
-          disabled={exporting || effectiveRacks.length === 0}
-          title={exporting ? "Đang xuất..." : `Xuất chi tiết từng port/sợi/tên luồng của ${effectiveRacks.length} rack đang chọn ở trên — mỗi rack 1 sheet riêng`}
-          aria-label="Xuất chi tiết nhiều rack"
-        >
-          <IconFolderDown />
-          {!exporting && (
-            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-600 px-1 text-[10px] font-medium text-white">
-              {effectiveRacks.length}
-            </span>
-          )}
-        </button>
       </div>
       {exportError && <p className="mb-3 text-sm text-red-600">Lỗi xuất Excel: {exportError}</p>}
       <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn tuyến cáp/rack ở trên để xem, hoặc">
-        <RackListTable racks={effectiveRacks} />
+        <RackListTable racks={effectiveRacks} toolbarExtra={exportDetailButton} />
       </EmptyUntilFiltered>
     </div>
   );

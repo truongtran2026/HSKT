@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { compareRackCode, formatRackCodeDisplay } from "@/lib/rackCode";
 import { compareValues } from "@/lib/sort";
@@ -116,7 +116,19 @@ const DEFAULT_ALL_ORDER: AllCol[] = ["code", ...COLUMN_ITEMS.map((c) => c.key)];
 const STRUCTURAL_COLUMNS = new Set<AllCol>(["code"]);
 const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
 
-export default function RackListTable({ racks }: { racks: RackListItem[] }) {
+export default function RackListTable({
+  racks,
+  toolbarExtra,
+}: {
+  racks: RackListItem[];
+  // Chỗ chèn thêm nút riêng của trang gọi (yêu cầu người dùng 2026-08-09: đặt
+  // nút "Xuất chi tiết nhiều rack" của TrunkRackListPanel.tsx NGAY CẠNH nút
+  // "Xuất Excel" (ExportExcelButton) có sẵn ở đây, thay vì tách rời ở hàng
+  // trên) — để component này KHÔNG phải biết về logic xuất-nhiều-rack (chỉ
+  // trang /odf-trunk mới có, /odf-device dùng RackListTable KHÔNG truyền
+  // prop này thì layout không đổi gì).
+  toolbarExtra?: ReactNode;
+}) {
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("code");
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("rack-list-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("rack-list-col-visibility", DEFAULT_VISIBLE);
@@ -268,6 +280,7 @@ export default function RackListTable({ racks }: { racks: RackListItem[] }) {
           </button>
         )}
         <div className="ml-auto flex gap-2">
+          {toolbarExtra}
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Rack" fileNamePrefix="Danh_sach_rack" />
           <ColumnPicker
             items={COLUMN_ITEMS}
