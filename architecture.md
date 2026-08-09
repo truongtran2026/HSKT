@@ -4981,3 +4981,75 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     (chỉ ảnh hưởng đúng phần đang lọc), cuộn bảng xuống rồi mở lại dropdown
     xem có còn bị header bảng đè không; thu nhỏ cửa sổ trình duyệt xem 2 biểu
     đồ có xếp chồng đúng thứ tự Tròn→Cột trên di động không.
+
+- **Mục 88 (2026-08-09) — QUY ĐỊNH CHUNG: mọi bảng dữ liệu PHẢI sắp xếp
+  tăng/giảm bằng cách BẤM VÀO CHỮ TIÊU ĐỀ cột (không phải dropdown rời).**
+  Người dùng chỉ ra: quy tắc "bấm tiêu đề cột để sắp xếp tăng/giảm" đã là
+  hành vi CHUẨN của 8/9 bảng từ trước (`lib/useSort.ts` + `DataTh`'s
+  `sortKey`/`activeSortKey`/`sortDir`/`onSort`) nhưng Mục 80 ("Quy định
+  chung cho MỌI bảng dữ liệu") lại CHƯA ghi rõ điều này thành 1 dòng quy định
+  — khiến khi viết lại `DashboardClient.tsx` (Mục 87) dễ lặp lại thiếu sót
+  (`TableView` khi đó chỉ có lọc/kéo dãn/kéo-thả cột qua `DataTh`, PHẦN SẮP
+  XẾP lại tách thành 1 dropdown "Sắp theo" riêng ở khung cha — không đúng
+  chuẩn). Ghi thành quy định chính thức: **`TableView`/bảng nào có cột sắp
+  xếp được thì PHẢI dùng `lib/useSort.ts` + truyền đủ
+  `sortKey`/`activeSortKey`/`sortDir`/`onSort` vào `DataTh` của đúng cột đó —
+  không dùng `<select>` sắp xếp rời khi bảng đã có sẵn cột tương ứng** (cột
+  không có dữ liệu để sắp — vd cột "Tỷ lệ" chỉ vẽ thanh biểu đồ — thì để
+  `sortKey` trống, vẫn đúng chuẩn).
+  - `DashboardClient.tsx`'s `TableView` sửa lại: bỏ hẳn dropdown "Sắp theo"
+    ở khung cha, thêm `useSort<SortKey>("route")` (mặc định "Tuyến cáp" tăng
+    dần, đúng "mặc định theo tên tuyến" người dùng nêu) ngay trong
+    `TableView`, wire `sortKey`/`activeSortKey`/`sortDir`/`onSort` cho cả 5
+    cột Tuyến cáp/Tổng port/Đang dùng/Dự phòng/**Trống** (cột "Trống" trước
+    đây không sort được — đúng luôn yêu cầu "cho phép sắp xếp theo port
+    trống nữa" cho phần Bảng). `SortKey` ("route"|"total"|"inUse"|"standby"|
+    "empty") tách khỏi `AllCol` (thiếu "ratio" — cột không sort được) — ép
+    kiểu `sortKey as AllCol`/`onSort as (k: AllCol) => void` khi gộp chung
+    `sortProps` cho nhiều case, giống pattern đã dùng ở `PortTable.tsx` (cột
+    "actions"/"tick" cũng không nằm trong `SortKey` của file đó).
+  - **Biểu đồ Tròn + Cột: bấm vào chú thích (legend) HOẶC bấm thẳng vào phần
+    hiển thị (lát cắt Tròn/cột màu của Cột) để ẩn/hiện từng phần** (yêu cầu
+    người dùng 2026-08-09) — legend có gạch ngang chữ khi đang ẩn. Tròn và
+    Cột giữ trạng thái ẩn RIÊNG (không dùng chung — ẩn "Trống" ở Tròn không
+    ảnh hưởng Cột). Cách làm (áp dụng được cho MỌI biểu đồ Tròn/Cột xếp chồng
+    sau này trong app, nên ghi thành mẫu dùng lại):
+    - `<Legend>` PHẢI truyền `payload` CỐ ĐỊNH (mảng 3 mục dựng tay từ
+      `STAT_KEYS`/`STAT_LABELS`, không để Recharts tự suy từ `data`/`<Bar>`
+      đang render) — vì `<Bar hide>` hay lọc bớt mảng `data` của `<Pie>` làm
+      Recharts tự xoá LUÔN mục đó khỏi legend tự sinh, không còn cách nào
+      bấm lại để hiện — đây là lỗi CHẮC CHẮN gặp nếu làm theo bản năng (chỉ
+      lọc `data`/gắn `hide` mà không tự truyền `payload`).
+    - Cột (`<BarChart>`): mỗi `<Bar dataKey>` thêm `hide={hidden.has(key)}`
+      (prop có sẵn của Recharts 2.x, giữ nguyên component mounted — không
+      giật hình khi ẩn/hiện) + `onClick={() => toggle(key)}` + `cursor=
+      "pointer"`.
+    - Tròn (`<PieChart>`): LỌC BỚT mảng `data` truyền cho `<Pie>` (Pie không
+      có `hide` per-slice, phải bỏ hẳn phần tử khỏi mảng — phần còn lại tự
+      giãn theo đúng tỷ lệ, đúng hành vi "ẩn 1 phần, phần khác giãn ra") —
+      mỗi `<Cell>` thêm `onClick={() => toggle(key)}` + `cursor="pointer"`.
+    - `Legend`'s `onClick`/`formatter` đọc `entry.dataKey` (đã gán cứng
+      trong `payload` ở trên) để biết bấm vào mục nào — `formatter` trả về
+      `<span style={{textDecoration: hidden ? "line-through" : "none"}}>`.
+  - **Biểu đồ Cột: thêm 4 icon sắp xếp RIÊNG, nằm NGAY TRONG khung của biểu
+    đồ này** (yêu cầu người dùng: "dùng icon không dùng chữ nhìn rối") — độc
+    lập với sắp xếp của Bảng (Bảng dùng bấm tiêu đề cột như quy định chung ở
+    trên; Tròn không cần vì chỉ có 1 số tổng, không có thứ tự). 4 tiêu chí:
+    Tên tuyến / Tổng sợi-port / % Đang dùng / % Trống (thêm mới, trước đây
+    chưa có) — MỖI tiêu chí có chiều tăng/giảm riêng: bấm icon đang chọn để
+    đảo chiều (▲/▼ hiện ở badge góc icon), bấm icon khác để chuyển tiêu chí
+    (về chiều mặc định riêng từng tiêu chí — tên: tăng dần, 3 tiêu chí còn
+    lại: giảm dần "nhiều nhất trước"). 4 icon mới ở `components/ui/icons.tsx`
+    — cố ý khác hẳn hình dáng nhau để không nhầm, KHÔNG dùng thư viện icon
+    ngoài (đúng tinh thần chung): `IconSortName` (chữ "A" trên/"Z" dưới +
+    mũi tên — sắp theo tên), `IconSortTotal` (dấu # — sắp theo tổng số),
+    `IconSortPercentUsed` (vòng tròn ĐẶC — % đang dùng), `IconSortPercentEmpty`
+    (vòng tròn RỖNG — % trống, cố ý đối xứng đặc/rỗng với icon trước để dễ
+    liên tưởng đang dùng/trống).
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test chuột
+    thật — cần người dùng tự thử ở `/dashboard`: bấm chữ tiêu đề từng cột ở
+    Bảng (kể cả cột "Trống") xem có sắp xếp + đảo chiều đúng không; ở biểu đồ
+    Tròn/Cột bấm vào chú thích VÀ bấm thẳng vào lát cắt/cột màu xem có ẩn/
+    hiện đúng phần đó không (gạch ngang chữ chú thích khi ẩn); bấm 4 icon sắp
+    xếp trong khung biểu đồ Cột xem đổi đúng thứ tự cột theo từng tiêu chí và
+    đảo chiều khi bấm lại icon đang chọn.

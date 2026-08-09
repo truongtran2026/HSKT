@@ -125,3 +125,60 @@ export function IconFolderDown({ className = DEFAULT_CLASS }: IconProps) {
     </svg>
   );
 }
+
+// 4 icon "sắp xếp biểu đồ Cột" (yêu cầu người dùng 2026-08-09, Dashboard —
+// "dùng icon không dùng chữ nhìn rối"). Mỗi icon là 1 tiêu chí sắp xếp khác
+// hẳn hình dáng nhau để không nhầm, đều dùng CHUNG với chỉ báo chiều tăng/
+// giảm (▲/▼) vẽ ĐÈ LÊN bằng badge riêng ở nơi gọi (xem ColSortButton trong
+// DashboardClient.tsx), bản thân icon ở đây không tự vẽ chiều tăng/giảm.
+export function IconSortName({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <text x="3" y="10.5" fontSize="9" fontWeight={700} stroke="none" fill="currentColor">
+        A
+      </text>
+      <text x="3" y="21" fontSize="9" fontWeight={700} stroke="none" fill="currentColor">
+        Z
+      </text>
+      <path d="M18 4v14" />
+      <path d="m14 14 4 4 4-4" />
+    </svg>
+  );
+}
+
+// "Tổng sợi/port" — dấu # (hash), quen mắt cho "tổng số/đếm".
+export function IconSortTotal({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M5 9h14" />
+      <path d="M5 15h14" />
+      <path d="M10 3 8 21" />
+      <path d="m16 3-2 18" />
+    </svg>
+  );
+}
+
+// "% Đang dùng" — vòng tròn ĐẶC (đầy = đang dùng).
+export function IconSortPercentUsed({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <text x="12" y="15.5" fontSize="8.5" fontWeight={700} textAnchor="middle" fill="white" stroke="none">
+        %
+      </text>
+    </svg>
+  );
+}
+
+// "% Trống" — vòng tròn RỖNG (rỗng = trống), cố ý ĐỐI XỨNG với
+// IconSortPercentUsed ở trên để dễ liên tưởng đặc/rỗng ↔ đang dùng/trống.
+export function IconSortPercentEmpty({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <text x="12" y="15.5" fontSize="8.5" fontWeight={700} textAnchor="middle" fill="currentColor" stroke="none">
+        %
+      </text>
+    </svg>
+  );
+}
