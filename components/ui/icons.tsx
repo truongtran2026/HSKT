@@ -109,3 +109,19 @@ export function IconDownload({ className = DEFAULT_CLASS }: IconProps) {
     </svg>
   );
 }
+
+// Icon "xuất chi tiết NHIỀU rack cùng lúc" (yêu cầu người dùng 2026-08-09) —
+// dáng thư mục (đại diện cho nhiều rack/sheet gộp lại) + mũi tên xuống, để
+// KHÔNG bị nhầm với IconDownload (mũi tên đơn giản) đã dùng cho nút "Xuất
+// Excel" xuất 1 bảng đang xem (ExportExcelButton.tsx) — 2 nút nằm gần nhau ở
+// /odf-trunk nhưng làm 2 việc khác nhau (thống kê 1 bảng vs chi tiết nhiều
+// rack, mỗi rack 1 sheet).
+export function IconFolderDown({ className = DEFAULT_CLASS }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <path d="M12 10.5v6" />
+      <path d="m9.5 14 2.5 2.5 2.5-2.5" />
+    </svg>
+  );
+}

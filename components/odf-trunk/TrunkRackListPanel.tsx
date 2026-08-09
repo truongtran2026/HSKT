@@ -9,6 +9,7 @@ import { fetchDevices } from "@/lib/devices";
 import { findUnlinkedMirrorPairs, findUnlinkedDeviceDevicePairs } from "@/lib/unlinkedMirrorPairs";
 import { computeMirrorLinkStatuses, mirrorLinkStatusLabel } from "@/lib/mirrorLinkStatus";
 import { exportMultiSheetExcel, type ExcelColumn } from "@/lib/exportExcel";
+import { IconFolderDown } from "@/components/ui/icons";
 import RackListTable, { type RackListItem } from "@/components/odf-trunk/RackListTable";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
@@ -135,14 +136,25 @@ export default function TrunkRackListPanel({ racks }: { racks: RackListItem[] })
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <GroupedMultiSelect items={items} selected={selectedRackIds} onChange={setSelectedRackIds} buttonLabel="Tuyến cáp / rack" />
+        {/* Icon (không hiện chữ, yêu cầu người dùng 2026-08-09) — dùng
+            IconFolderDown để phân biệt với icon IconDownload của nút "Xuất
+            Excel" thống kê ở RackListTable.tsx bên dưới (2 nút gần nhau,
+            khác hẳn hình dáng để không nhầm chức năng). Badge số ở góc = số
+            rack đang chọn ở picker phía trên, cùng số hiện trong tooltip. */}
         <button
           type="button"
-          className="btn-secondary"
+          className="btn-secondary relative px-2 py-1.5"
           onClick={exportDetail}
           disabled={exporting || effectiveRacks.length === 0}
-          title="Xuất chi tiết từng port/sợi/tên luồng của các rack đang chọn ở trên — mỗi rack 1 sheet riêng"
+          title={exporting ? "Đang xuất..." : `Xuất chi tiết từng port/sợi/tên luồng của ${effectiveRacks.length} rack đang chọn ở trên — mỗi rack 1 sheet riêng`}
+          aria-label="Xuất chi tiết nhiều rack"
         >
-          {exporting ? "Đang xuất..." : `Xuất chi tiết (${effectiveRacks.length} rack)`}
+          <IconFolderDown />
+          {!exporting && (
+            <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-600 px-1 text-[10px] font-medium text-white">
+              {effectiveRacks.length}
+            </span>
+          )}
         </button>
       </div>
       {exportError && <p className="mb-3 text-sm text-red-600">Lỗi xuất Excel: {exportError}</p>}
