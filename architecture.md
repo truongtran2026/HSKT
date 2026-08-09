@@ -4926,3 +4926,58 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     xuất-nhiều-rack, chỉ chừa 1 chỗ chèn; nơi khác không truyền prop này thì
     layout không đổi. `TrunkRackListPanel.tsx` build sẵn JSX nút rồi truyền
     qua `<RackListTable racks={effectiveRacks} toolbarExtra={exportDetailButton} />`.
+
+- **Mục 87 (2026-08-09) — QUY ĐỊNH CHUNG: mọi dropdown "chọn nhiều mục để
+  lọc hiển thị" PHẢI dùng `components/ui/GroupedMultiSelect.tsx`, không tự
+  viết lại.** Người dùng phát hiện khung "Chọn tuyến hiển thị" ở Dashboard bị
+  đúng 2 lỗi ĐÃ GẶP VÀ ĐÃ FIX trước đó ở `/odf-trunk` (Mục 83): (1) bấm ra
+  ngoài không tự đóng — phải có nút "Đóng" riêng; (2) dropdown `z-10` bị
+  header sticky của bảng bên dưới (cũng `z-10`, xem `DataTh.tsx`) đè lên khi
+  cuộn. Nguyên nhân gốc: Dashboard tự viết 1 bản picker RIÊNG (không dùng
+  `GroupedMultiSelect.tsx` đã có sẵn 2 chỗ khác), nên không thừa hưởng 2 lỗi
+  đã fix. Lệnh rút ra (người dùng yêu cầu ghi thẳng vào đây để không lặp lại
+  lần 3): **KHÔNG được tự viết dropdown chọn-nhiều-mục kiểu này ở bất kỳ bảng
+  nào khác trong app — luôn import và dùng `GroupedMultiSelect.tsx`**, vốn đã
+  đảm bảo: bấm ra ngoài tự đóng, dropdown `z-20` (cao hơn `z-10` của
+  `DataTh.tsx` nên không bao giờ bị header bảng đè), "Chọn tất cả"/"Bỏ chọn"
+  chỉ tác động đúng phần đang khớp ô tìm (không đụng lựa chọn của phần không
+  hiện ra).
+  - Thêm **chế độ PHẲNG** vào `GroupedMultiSelect.tsx`: trước đây bắt buộc
+    phải có `group` (dùng cho rack-trong-tuyến-cáp ở `/odf-trunk`,
+    thiết-bị-trong-lĩnh-vực ở `ImportExportClient.tsx`) — Dashboard không có
+    cấp nhóm nào dưới tuyến cáp, truyền `group: ""` cho mọi item thì component
+    tự nhận biết (`new Set(items.map(i=>i.group)).size <= 1`, tính trên TOÀN
+    BỘ `items` gốc chứ không phải danh sách đã lọc theo ô tìm — để không lỡ
+    đổi hành vi của 2 chỗ đang dùng nhóm thật) và ẩn hẳn phần tiêu đề
+    nhóm/checkbox-cả-nhóm, chỉ còn danh sách phẳng — 2 chỗ cũ không đổi gì.
+  - **Dashboard viết lại toàn bộ theo yêu cầu người dùng**: bỏ 4 tab Bảng/
+    Thẻ/Cột/Tròn (mỗi tab trước đây có bộ lọc tuyến RIÊNG, lưu localStorage
+    riêng từng tab) — giờ CHỈ 1 giao diện duy nhất, từ trên xuống: (1) khung
+    "Chọn tuyến hiển thị" (`GroupedMultiSelect`, lọc DÙNG CHUNG, 1 key
+    localStorage `dashboard-route-filter-v2`) + dropdown sắp xếp; (2) 1 thẻ
+    "Tổng số port" duy nhất (bỏ 3 thẻ Đang dùng/Dự phòng/Trống — đã có đủ
+    trong biểu đồ Tròn), giá trị tính trên ĐÚNG tuyến đang lọc (không còn
+    `overall` cố định toàn trạm truyền từ server — bỏ hẳn `OverallStat`/
+    `getDashboardData()`'s `overall` ở `app/dashboard/page.tsx`, vì chỉ cần
+    `sumRoutes()` trên danh sách đã lọc phía client là đủ); (3) 2 biểu đồ
+    Tròn (trái) + Cột (phải) cùng hàng khi đủ bề ngang (`grid-cols-1
+    lg:grid-cols-2`), dưới `lg` tự xếp chồng dọc ĐÚNG thứ tự trong DOM (Tròn
+    → Cột → Bảng, đúng yêu cầu di động); (4) Bảng — vẫn giữ nguyên bộ lọc
+    riêng theo từng cột (đưa state `filters` vào HẲN bên trong `TableView`,
+    không còn lift lên cha dùng chung cho 4 view như trước) + kéo-thả/ẩn-hiện/
+    export cột như cũ. Dropdown sắp xếp ("Sắp theo: Tên tuyến/% Đang dùng/
+    Tổng port") giờ áp dụng CHUNG cho cả biểu đồ Cột và Bảng (1 biến `sorted`
+    duy nhất truyền cho cả 2, xem yêu cầu "thêm sắp xếp cho biểu đồ Cột tương
+    tự như Bảng") — Tròn không cần vì chỉ là 1 số tổng, không có thứ tự.
+    Bỏ hẳn `StatFilterBar` (thanh lọc nhanh dùng chung cho Thẻ/Cột/Tròn cũ) —
+    đây chính là nguồn gây lẫn lộn "chọn tuyến hiển thị" + "lọc nhanh" là 2 bộ
+    lọc riêng biệt khiến "Chọn tất cả" ở khung chọn tuyến có thể vô tình bỏ
+    qua bộ lọc nhanh đang gõ dở (đúng hiện tượng người dùng mô tả "vừa lọc
+    vừa không lọc") — xoá bộ lọc thừa này khiến lớp lẫn lộn đó biến mất hẳn,
+    không cần vá riêng logic "Chọn tất cả".
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test chuột
+    thật — cần người dùng tự thử: mở `/dashboard`, bấm "Chọn tuyến hiển thị",
+    thử bấm ra ngoài (phải tự đóng), gõ tìm rồi bấm "Bỏ chọn"/"Chọn tất cả"
+    (chỉ ảnh hưởng đúng phần đang lọc), cuộn bảng xuống rồi mở lại dropdown
+    xem có còn bị header bảng đè không; thu nhỏ cửa sổ trình duyệt xem 2 biểu
+    đồ có xếp chồng đúng thứ tự Tròn→Cột trên di động không.

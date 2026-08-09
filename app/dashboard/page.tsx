@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { fetchAllTrunkPorts } from "@/lib/trunkPorts";
 import { derivePortStatus } from "@/lib/portStatus";
-import DashboardClient, { type RouteStat, type OverallStat } from "@/components/dashboard/DashboardClient";
+import DashboardClient, { type RouteStat } from "@/components/dashboard/DashboardClient";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -16,11 +16,10 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 const UNNAMED_ROUTE = "(chưa đặt tên tuyến)";
 
-async function getDashboardData(client: SupabaseClient): Promise<{ routes: RouteStat[]; overall: OverallStat }> {
+async function getDashboardData(client: SupabaseClient): Promise<{ routes: RouteStat[] }> {
   const ports = await fetchAllTrunkPorts(client);
 
   const map = new Map<string, RouteStat>();
-  const overall: OverallStat = { total: 0, inUse: 0, standby: 0, empty: 0 };
 
   for (const p of ports) {
     const key = p.cableRouteName ?? UNNAMED_ROUTE;
@@ -29,25 +28,17 @@ async function getDashboardData(client: SupabaseClient): Promise<{ routes: Route
 
     const ds = derivePortStatus(p.circuit);
     stat.total++;
-    overall.total++;
-    if (ds === "empty") {
-      stat.empty++;
-      overall.empty++;
-    } else if (ds === "standby") {
-      stat.standby++;
-      overall.standby++;
-    } else {
-      stat.inUse++;
-      overall.inUse++;
-    }
+    if (ds === "empty") stat.empty++;
+    else if (ds === "standby") stat.standby++;
+    else stat.inUse++;
   }
 
-  return { routes: [...map.values()], overall };
+  return { routes: [...map.values()] };
 }
 
 export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
-  const { routes, overall } = await getDashboardData(supabase);
+  const { routes } = await getDashboardData(supabase);
   return (
     <div>
       <h1 className="text-2xl font-bold text-primary-800">Dashboard</h1>
@@ -55,7 +46,7 @@ export default async function DashboardPage() {
         Thống kê % sợi đang dùng / dự phòng / trống theo từng tuyến cáp — ODF trung kế, trạm ADN1.
       </p>
       <div className="mt-6">
-        <DashboardClient routes={routes} overall={overall} />
+        <DashboardClient routes={routes} />
       </div>
     </div>
   );

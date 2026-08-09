@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { normalizeVN } from "@/lib/text";
 import { matchesFilter } from "@/lib/tableFilter";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { useColumnOrder } from "@/lib/useColumnOrder";
-import FilterInput from "@/components/ui/FilterInput";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import {
   BarChart,
   Bar,
@@ -32,33 +31,21 @@ export interface RouteStat {
   empty: number;
 }
 
-export interface OverallStat {
-  total: number;
-  inUse: number;
-  standby: number;
-  empty: number;
-}
-
-type ViewMode = "table" | "card" | "column" | "pie";
 type SortBy = "name" | "percentInUse" | "total";
 
 const COLORS = { inUse: "#10b981", standby: "#f59e0b", empty: "#94a3b8" };
-const VIEW_STORAGE_KEY = "dashboard-view-mode";
-const ROUTE_FILTER_KEY_PREFIX = "dashboard-route-filter-";
+const ROUTE_FILTER_KEY = "dashboard-route-filter-v2";
 
-function loadViewMode(): ViewMode {
-  if (typeof window === "undefined") return "table";
-  const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
-  return saved === "table" || saved === "card" || saved === "column" || saved === "pie" ? saved : "table";
-}
-
-// null = chưa lọc gì (mặc định hiện tất cả tuyến). Mảng (kể cả rỗng) = danh
-// sách tuyến người dùng đã chọn riêng cho kiểu biểu đồ này — mỗi kiểu (Bảng/
-// Thẻ/Cột/Tròn) lưu 1 bộ lọc ĐỘC LẬP theo đúng yêu cầu (vd Bảng chỉ hiện
-// tuyến A,B trong khi Thẻ hiện tuyến B,C,D).
-function loadRouteFilter(view: ViewMode): string[] | null {
+// Đổi từ 4 kiểu xem tách rời qua tab (Bảng/Thẻ/Cột/Tròn, mỗi kiểu 1 bộ lọc
+// tuyến riêng) sang MỘT giao diện duy nhất hiện Tròn + Cột + Bảng cùng lúc
+// từ trên xuống (yêu cầu người dùng 2026-08-09: "không để từng thẻ và bấm
+// vào mới hiển thị nữa"). Vì chỉ còn 1 giao diện nên chỉ cần 1 bộ lọc tuyến
+// DÙNG CHUNG (không còn khái niệm "mỗi kiểu lưu riêng" như trước) — đổi hẳn
+// key localStorage (không phải thêm hậu tố) để không đọc nhầm dữ liệu cũ
+// theo từng kiểu xem đã bỏ.
+function loadRouteFilter(): string[] | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(ROUTE_FILTER_KEY_PREFIX + view);
+  const raw = window.localStorage.getItem(ROUTE_FILTER_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -66,11 +53,6 @@ function loadRouteFilter(view: ViewMode): string[] | null {
   } catch {
     return null;
   }
-}
-
-function saveRouteFilter(view: ViewMode, list: string[] | null) {
-  if (list === null) window.localStorage.removeItem(ROUTE_FILTER_KEY_PREFIX + view);
-  else window.localStorage.setItem(ROUTE_FILTER_KEY_PREFIX + view, JSON.stringify(list));
 }
 
 function pct(n: number, total: number): number {
@@ -89,7 +71,7 @@ function matchesStatFilters(r: RouteStat, filters: Record<StatFilterKey, string>
   );
 }
 
-function sumRoutes(routes: RouteStat[]): OverallStat {
+function sumRoutes(routes: RouteStat[]): { total: number; inUse: number; standby: number; empty: number } {
   const sum = { total: 0, inUse: 0, standby: 0, empty: 0 };
   for (const r of routes) {
     sum.total += r.total;
@@ -100,230 +82,97 @@ function sumRoutes(routes: RouteStat[]): OverallStat {
   return sum;
 }
 
-export default function DashboardClient({ routes, overall }: { routes: RouteStat[]; overall: OverallStat }) {
-  const [view, setView] = useState<ViewMode>("table");
+export default function DashboardClient({ routes }: { routes: RouteStat[] }) {
   const [sortBy, setSortBy] = useState<SortBy>("name");
-  const [routeFilter, setRouteFilter] = useState<string[] | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState(""); // chỉ để tìm nhanh trong danh sách tick, không ảnh hưởng lựa chọn
-  // Bộ lọc theo số liệu (Tuyến cáp/Tổng port/Đang dùng/Dự phòng/Trống) — DÙNG
-  // CHUNG cho cả 4 kiểu hiển thị (Bảng/Thẻ/Cột/Tròn), khác với "Chọn tuyến
-  // hiển thị" (routeFilter) là bộ lọc RIÊNG từng kiểu và được lưu lại. Bộ lọc
-  // này chỉ là tìm nhanh tạm thời, không lưu, giữ nguyên khi đổi qua lại giữa
-  // các kiểu xem để không mất công gõ lại.
-  const [statFilters, setStatFilters] = useState<Record<StatFilterKey, string>>({
-    route: "",
-    total: "",
-    inUse: "",
-    standby: "",
-    empty: "",
-  });
+  // routeFilter = null nghĩa là "chưa lọc, hiện tất cả" (mặc định) — mảng
+  // (kể cả rỗng) là danh sách tuyến người dùng đã chủ động chọn, DÙNG CHUNG
+  // cho cả biểu đồ Tròn/Cột/Bảng (yêu cầu người dùng 2026-08-09).
+  const [routeFilter, setRouteFilterState] = useState<string[] | null>(null);
 
-  function setStatFilter(key: StatFilterKey, value: string) {
-    setStatFilters((prev) => ({ ...prev, [key]: value }));
-  }
-
-  // Đọc cấu hình đã lưu SAU khi mount (tránh lệch giữa SSR và client).
+  // Đọc bộ lọc đã lưu SAU khi mount (tránh lệch giữa SSR và client).
   useEffect(() => {
-    setView(loadViewMode());
+    setRouteFilterState(loadRouteFilter());
   }, []);
 
-  // Mỗi lần đổi kiểu biểu đồ, nạp lại bộ lọc tuyến RIÊNG của kiểu đó.
-  useEffect(() => {
-    setRouteFilter(loadRouteFilter(view));
-    setPickerOpen(false);
-    setPickerQuery("");
-  }, [view]);
-
-  function changeView(v: ViewMode) {
-    setView(v);
-    window.localStorage.setItem(VIEW_STORAGE_KEY, v);
+  function setRouteFilter(next: string[] | null) {
+    setRouteFilterState(next);
+    if (typeof window === "undefined") return;
+    if (next === null) window.localStorage.removeItem(ROUTE_FILTER_KEY);
+    else window.localStorage.setItem(ROUTE_FILTER_KEY, JSON.stringify(next));
   }
 
-  const allRouteNames = useMemo(() => routes.map((r) => r.cableRouteName), [routes]);
+  // Danh sách cho GroupedMultiSelect (yêu cầu người dùng 2026-08-09: sửa lỗi
+  // "chọn tuyến hiển thị" y hệt lỗi ĐàI ĐÃ FIX ở /odf-trunk — bấm ra ngoài
+  // phải tự đóng, "Chọn tất cả" sau khi gõ tìm chỉ chọn đúng phần đang lọc,
+  // dropdown phải nổi TRÊN tiêu đề bảng sticky — dùng THẲNG
+  // components/ui/GroupedMultiSelect.tsx đã fix sẵn 3 lỗi này thay vì tự viết
+  // lại 1 bản riêng dễ lặp lại lỗi cũ; xem quy định chung ở architecture.md).
+  // `group: ""` cho mọi tuyến — component tự chuyển sang chế độ phẳng (không
+  // có cấp nhóm nào bên dưới tuyến cáp ở màn hình này).
+  const routeItems = useMemo(
+    () =>
+      [...routes]
+        .sort((a, b) => a.cableRouteName.localeCompare(b.cableRouteName))
+        .map((r) => ({ value: r.cableRouteName, label: r.cableRouteName, group: "" })),
+    [routes]
+  );
 
-  function toggleRoute(name: string) {
-    setRouteFilter((prev) => {
-      const base = prev ?? allRouteNames;
-      const next = base.includes(name) ? base.filter((n) => n !== name) : [...base, name];
-      saveRouteFilter(view, next);
-      return next;
-    });
-  }
+  // Danh sách tuyến thực sự đưa vào Tròn/Cột/Bảng = lọc theo routeFilter —
+  // ĐÂY LÀ dữ liệu áp cho mọi phần bên dưới, không còn giữ "overall" cố định
+  // toàn trạm nữa (yêu cầu người dùng: giá trị trên biểu đồ/thẻ phải theo
+  // đúng phần đang lọc, không phải ALL dữ liệu).
+  const visible = useMemo(() => {
+    if (routeFilter === null) return routes;
+    const set = new Set(routeFilter);
+    return routes.filter((r) => set.has(r.cableRouteName));
+  }, [routes, routeFilter]);
 
+  // Sắp xếp DÙNG CHUNG cho cả biểu đồ Cột và Bảng (yêu cầu người dùng
+  // 2026-08-09: "thêm sắp xếp cho biểu đồ Cột tương tự như Bảng") — 1
+  // dropdown, áp cho cả 2 nơi, không phải 2 nguồn sắp xếp riêng dễ lệch nhau.
   const sorted = useMemo(() => {
-    const list = [...routes];
+    const list = [...visible];
     if (sortBy === "name") list.sort((a, b) => a.cableRouteName.localeCompare(b.cableRouteName));
     if (sortBy === "percentInUse") list.sort((a, b) => pct(b.inUse, b.total) - pct(a.inUse, a.total));
     if (sortBy === "total") list.sort((a, b) => b.total - a.total);
     return list;
-  }, [routes, sortBy]);
+  }, [visible, sortBy]);
 
-  // Danh sách hiện trong khung tick — dùng để TÌM NHANH cho dễ bấm, và cũng
-  // là phạm vi mà "Chọn tất cả"/"Bỏ chọn tất cả" tác động khi đang gõ tìm
-  // (xem 2 hàm bên dưới) — KHÔNG tự ý đụng routeFilter khi chỉ gõ tìm.
-  const pickerVisible = useMemo(() => {
-    const q = normalizeVN(pickerQuery.trim());
-    if (!q) return sorted;
-    return sorted.filter((r) => normalizeVN(r.cableRouteName).includes(q));
-  }, [sorted, pickerQuery]);
-
-  // "Chọn tất cả"/"Bỏ chọn tất cả": nếu KHÔNG đang tìm trong khung tick ->
-  // áp dụng cho TOÀN BỘ tuyến như trước. Nếu ĐANG tìm (đã gõ ô tìm) -> chỉ
-  // tác động tới các tuyến đang hiện ra khớp tìm kiếm, giữ nguyên lựa chọn
-  // của các tuyến khác không hiện ra — đúng yêu cầu người dùng.
-  function selectAllRoutes() {
-    if (pickerQuery.trim() === "") {
-      setRouteFilter(null);
-      saveRouteFilter(view, null);
-      return;
-    }
-    setRouteFilter((prev) => {
-      const base = prev ?? allRouteNames;
-      const visibleNames = pickerVisible.map((r) => r.cableRouteName);
-      const next = Array.from(new Set([...base, ...visibleNames]));
-      saveRouteFilter(view, next);
-      return next;
-    });
-  }
-
-  function selectNoRoutes() {
-    if (pickerQuery.trim() === "") {
-      setRouteFilter([]);
-      saveRouteFilter(view, []);
-      return;
-    }
-    setRouteFilter((prev) => {
-      const base = prev ?? allRouteNames;
-      const visibleNames = new Set(pickerVisible.map((r) => r.cableRouteName));
-      const next = base.filter((n) => !visibleNames.has(n));
-      saveRouteFilter(view, next);
-      return next;
-    });
-  }
-
-  // Danh sách tuyến thực sự hiển thị = đã sắp xếp + lọc theo cấu hình riêng
-  // của kiểu biểu đồ đang chọn.
-  const visible = useMemo(() => {
-    if (routeFilter === null) return sorted;
-    const set = new Set(routeFilter);
-    return sorted.filter((r) => set.has(r.cableRouteName));
-  }, [sorted, routeFilter]);
-
-  const selectedCount = routeFilter === null ? routes.length : routeFilter.length;
-
-  // Áp thêm bộ lọc số liệu (statFilters) lên trên danh sách đã chọn tuyến —
-  // đây là dữ liệu THẬT SỰ đưa vào cả 4 kiểu hiển thị.
-  const filteredVisible = useMemo(() => visible.filter((r) => matchesStatFilters(r, statFilters)), [visible, statFilters]);
-
-  // Biểu đồ Tròn hiện tổng theo ĐÚNG các tuyến đang được chọn + đang lọc
-  // (không cố định "overall" nữa) — để bộ lọc cũng áp dụng được cho kiểu Tròn.
-  const pieSource = view === "pie" ? sumRoutes(filteredVisible) : overall;
+  const filteredStat = useMemo(() => sumRoutes(visible), [visible]);
   const pieData = [
-    { name: "Đang dùng", value: pieSource.inUse, color: COLORS.inUse },
-    { name: "Dự phòng", value: pieSource.standby, color: COLORS.standby },
-    { name: "Trống", value: pieSource.empty, color: COLORS.empty },
+    { name: "Đang dùng", value: filteredStat.inUse, color: COLORS.inUse },
+    { name: "Dự phòng", value: filteredStat.standby, color: COLORS.standby },
+    { name: "Trống", value: filteredStat.empty, color: COLORS.empty },
   ];
 
   return (
     <div>
-      {/* Tổng quan toàn trạm — luôn tính trên TOÀN BỘ dữ liệu, không bị ảnh
-          hưởng bởi bộ lọc tuyến riêng của từng kiểu biểu đồ bên dưới. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-6">
-        <StatTile label="Tổng số port" value={String(overall.total)} color="text-slate-700" />
-        <StatTile label="Đang dùng" value={`${overall.inUse} (${pct(overall.inUse, overall.total)}%)`} color="text-emerald-600" />
-        <StatTile label="Dự phòng" value={`${overall.standby} (${pct(overall.standby, overall.total)}%)`} color="text-amber-600" />
-        <StatTile label="Trống" value={`${overall.empty} (${pct(overall.empty, overall.total)}%)`} color="text-slate-500" />
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <GroupedMultiSelect items={routeItems} selected={routeFilter} onChange={setRouteFilter} buttonLabel="Chọn tuyến hiển thị" />
+        <select className="input w-auto" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
+          <option value="name">Sắp theo: Tên tuyến</option>
+          <option value="percentInUse">Sắp theo: % Đang dùng (giảm dần)</option>
+          <option value="total">Sắp theo: Tổng port (giảm dần)</option>
+        </select>
+        <p className="text-xs text-slate-400">Áp dụng cho cả biểu đồ Tròn/Cột và Bảng bên dưới.</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <div className="flex gap-1">
-          {(
-            [
-              ["table", "Bảng"],
-              ["card", "Thẻ"],
-              ["column", "Cột"],
-              ["pie", "Tròn"],
-            ] as [ViewMode, string][]
-          ).map(([m, label]) => (
-            <button
-              key={m}
-              onClick={() => changeView(m)}
-              className={
-                "rounded-md px-3 py-1.5 text-sm border " +
-                (view === m
-                  ? "bg-primary-600 text-white border-primary-600"
-                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50")
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {(view === "table" || view === "card") && (
-          <select className="input w-auto" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortBy)}>
-            <option value="name">Sắp theo: Tên tuyến</option>
-            <option value="percentInUse">Sắp theo: % Đang dùng (giảm dần)</option>
-            <option value="total">Sắp theo: Tổng port (giảm dần)</option>
-          </select>
-        )}
-
-        <div className="relative">
-          <button className="btn-secondary" onClick={() => setPickerOpen((v) => !v)}>
-            Chọn tuyến hiển thị ({selectedCount}/{routes.length})
-          </button>
-          {pickerOpen && (
-            <div className="absolute z-10 mt-1 w-80 rounded-lg border border-slate-200 bg-white shadow-lg">
-              {/* Header tách riêng khỏi vùng cuộn bên dưới — luôn thấy được nút
-                  "Đóng"/"Chọn tất cả" dù đã cuộn xuống cuối danh sách tuyến. */}
-              <div className="flex justify-between border-b border-slate-100 px-3 py-2 text-xs">
-                <button className="text-primary-600 hover:underline" onClick={selectAllRoutes}>
-                  Chọn tất cả
-                </button>
-                <button className="text-primary-600 hover:underline" onClick={selectNoRoutes}>
-                  Bỏ chọn tất cả
-                </button>
-                <button className="text-slate-500 hover:underline" onClick={() => setPickerOpen(false)}>
-                  Đóng
-                </button>
-              </div>
-              <div className="border-b border-slate-100 p-2">
-                <FilterInput value={pickerQuery} onChange={setPickerQuery} />
-              </div>
-              <div className="max-h-64 overflow-y-auto p-3">
-                {pickerVisible.map((r) => {
-                  const checked = routeFilter === null || routeFilter.includes(r.cableRouteName);
-                  return (
-                    <label key={r.cableRouteName} className="flex items-center gap-2 py-1 text-sm text-slate-700">
-                      <input type="checkbox" checked={checked} onChange={() => toggleRoute(r.cableRouteName)} />
-                      <span className="truncate" title={r.cableRouteName}>
-                        {r.cableRouteName}
-                      </span>
-                    </label>
-                  );
-                })}
-                {pickerVisible.length === 0 && <p className="py-2 text-center text-xs text-slate-400">Không khớp tuyến nào.</p>}
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Chỉ còn 1 thẻ (yêu cầu người dùng 2026-08-09: bỏ 3 thẻ Đang dùng/Dự
+          phòng/Trống — đã có đủ trong biểu đồ Tròn) — giá trị theo ĐÚNG tuyến
+          đang lọc ở trên, không còn fix cứng toàn trạm. */}
+      <div className="mb-6 max-w-xs">
+        <StatTile label="Tổng số port (theo tuyến đang chọn)" value={String(filteredStat.total)} color="text-slate-700" />
       </div>
-      <p className="text-xs text-slate-400 mb-3">
-        Bộ lọc tuyến được lưu riêng cho từng kiểu biểu đồ (Bảng/Thẻ/Cột/Tròn có thể hiện các tuyến khác nhau).
-      </p>
 
-      {/* Bảng có dòng lọc riêng ngay dưới tiêu đề cột (quen thuộc kiểu bảng
-          dữ liệu); Thẻ/Cột/Tròn không có cột nên dùng chung 1 thanh lọc gọn
-          phía trên — cùng chia sẻ statFilters nên gõ 1 lần dùng được cả 4 kiểu. */}
-      {view !== "table" && (
-        <StatFilterBar filters={statFilters} onChange={setStatFilter} className="mb-3" />
-      )}
+      {/* Tròn bên trái, Cột bên phải khi đủ bề ngang (desktop); dưới ngưỡng
+          `lg` thì xếp chồng dọc theo ĐÚNG thứ tự trong DOM: Tròn -> Cột ->
+          Bảng (yêu cầu người dùng 2026-08-09). */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <PieView data={pieData} />
+        <ColumnView routes={sorted} />
+      </div>
 
-      {view === "table" && <TableView routes={visible} filters={statFilters} onFilterChange={setStatFilter} />}
-      {view === "card" && <CardView routes={filteredVisible} />}
-      {view === "column" && <ColumnView routes={filteredVisible} />}
-      {view === "pie" && <PieView data={pieData} />}
+      <TableView routes={sorted} />
     </div>
   );
 }
@@ -348,39 +197,13 @@ function StackedBar({ r }: { r: RouteStat }) {
   );
 }
 
-function StatFilterBar({
-  filters,
-  onChange,
-  className = "",
-}: {
-  filters: Record<StatFilterKey, string>;
-  onChange: (key: StatFilterKey, value: string) => void;
-  className?: string;
-}) {
-  const fields: [StatFilterKey, string][] = [
-    ["route", "Tuyến cáp"],
-    ["total", "Tổng port"],
-    ["inUse", "Đang dùng"],
-    ["standby", "Dự phòng"],
-    ["empty", "Trống"],
-  ];
-  return (
-    <div className={`flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-3 ${className}`}>
-      {fields.map(([key, label]) => (
-        <label key={key} className="text-xs text-slate-500">
-          <span className="block mb-1">{label}</span>
-          <FilterInput value={filters[key]} onChange={(v) => onChange(key, v)} />
-        </label>
-      ))}
-    </div>
-  );
-}
-
 // Cột "Tuyến cáp" luôn hiện — 4 cột số liệu ẩn/hiện được (quy định chung mọi
-// bảng, xem architecture.md). Thứ tự sắp xếp bảng này dùng CHUNG với card/
-// column/pie qua dropdown "sortBy" ở khung cha (không thêm sắp xếp theo cột
-// riêng ở đây để tránh 2 nguồn sắp xếp xung đột nhau) — header ở đây chỉ có
-// lọc + kéo dãn qua DataTh (sortKey để trống).
+// bảng, xem architecture.md). Thứ tự sắp xếp DÒNG dùng chung dropdown ở
+// khung cha (không thêm sắp xếp theo cột riêng ở đây để tránh 2 nguồn sắp
+// xếp xung đột nhau) — header ở đây chỉ có lọc + kéo dãn qua DataTh (sortKey
+// để trống). Bộ lọc theo từng cột (StatFilterKey) là RIÊNG của Bảng — Cột/
+// Tròn không cần vì đã lọc tuyến ở "Chọn tuyến hiển thị" chung phía trên
+// (yêu cầu người dùng 2026-08-09).
 type VisibleCol = "total" | "inUse" | "standby" | "empty" | "ratio";
 const DEFAULT_VISIBLE: Record<VisibleCol, boolean> = { total: true, inUse: true, standby: true, empty: true, ratio: true };
 const COLUMN_ITEMS: { key: VisibleCol; label: string }[] = [
@@ -402,15 +225,17 @@ const DEFAULT_ALL_ORDER: AllCol[] = ["route", ...COLUMN_ITEMS.map((c) => c.key)]
 const STRUCTURAL_COLUMNS = new Set<AllCol>(["route"]);
 const OPTIONAL_COL_SET = new Set<AllCol>(COLUMN_ITEMS.map((c) => c.key));
 
-function TableView({
-  routes,
-  filters,
-  onFilterChange,
-}: {
-  routes: RouteStat[];
-  filters: Record<StatFilterKey, string>;
-  onFilterChange: (key: StatFilterKey, value: string) => void;
-}) {
+function TableView({ routes }: { routes: RouteStat[] }) {
+  const [filters, setFilters] = useState<Record<StatFilterKey, string>>({
+    route: "",
+    total: "",
+    inUse: "",
+    standby: "",
+    empty: "",
+  });
+  function setFilter(key: StatFilterKey, value: string) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
   const filtered = useMemo(() => routes.filter((r) => matchesStatFilters(r, filters)), [routes, filters]);
   const { widths: colWidths, resize: resizeCol } = useColumnWidths<ResizableCol>("dashboard-table-col-widths", DEFAULT_COL_WIDTHS);
   const { visible, toggle: toggleColumn } = useColumnVisibility<VisibleCol>("dashboard-table-col-visibility", DEFAULT_VISIBLE);
@@ -449,13 +274,13 @@ function TableView({
             width={colWidths.route}
             onResize={(w) => resizeCol("route", w)}
             filterValue={filters.route}
-            onFilterChange={(v) => onFilterChange("route", v)}
+            onFilterChange={(v) => setFilter("route", v)}
             {...reorderProps}
           />
         );
       case "total":
         return (
-          <DataTh key={col} label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => onFilterChange("total", v)} {...reorderProps} />
+          <DataTh key={col} label="Tổng port" align="right" filterValue={filters.total} onFilterChange={(v) => setFilter("total", v)} {...reorderProps} />
         );
       case "inUse":
         return (
@@ -464,7 +289,7 @@ function TableView({
             label="Đang dùng"
             align="right"
             filterValue={filters.inUse}
-            onFilterChange={(v) => onFilterChange("inUse", v)}
+            onFilterChange={(v) => setFilter("inUse", v)}
             {...reorderProps}
           />
         );
@@ -475,13 +300,13 @@ function TableView({
             label="Dự phòng"
             align="right"
             filterValue={filters.standby}
-            onFilterChange={(v) => onFilterChange("standby", v)}
+            onFilterChange={(v) => setFilter("standby", v)}
             {...reorderProps}
           />
         );
       case "empty":
         return (
-          <DataTh key={col} label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => onFilterChange("empty", v)} {...reorderProps} />
+          <DataTh key={col} label="Trống" align="right" filterValue={filters.empty} onFilterChange={(v) => setFilter("empty", v)} {...reorderProps} />
         );
       case "ratio":
         // Không sort/lọc (chỉ hiện thanh biểu đồ) — vẫn qua DataTh để kéo-thả
@@ -581,35 +406,11 @@ function TableView({
   );
 }
 
-function CardView({ routes }: { routes: RouteStat[] }) {
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {routes.map((r) => (
-        <div key={r.cableRouteName} className="rounded-lg border border-slate-200 bg-white p-4">
-          <div className="font-medium text-slate-700 truncate" title={r.cableRouteName}>
-            {r.cableRouteName}
-          </div>
-          <div className="text-xs text-slate-400 mt-0.5">{r.total} port</div>
-          <div className="mt-3">
-            <StackedBar r={r} />
-          </div>
-          <div className="mt-2 flex justify-between text-xs">
-            <span className="text-emerald-600">Dùng {pct(r.inUse, r.total)}%</span>
-            <span className="text-amber-600">DP {pct(r.standby, r.total)}%</span>
-            <span className="text-slate-500">Trống {pct(r.empty, r.total)}%</span>
-          </div>
-        </div>
-      ))}
-      {routes.length === 0 && <p className="text-center text-slate-400 col-span-full py-6">Không có tuyến nào khớp (kiểm tra lại lựa chọn tuyến/bộ lọc phía trên).</p>}
-    </div>
-  );
-}
-
 function ColumnView({ routes }: { routes: RouteStat[] }) {
   if (routes.length === 0) {
     return (
       <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-slate-400">
-        Không có tuyến nào khớp (kiểm tra lại lựa chọn tuyến/bộ lọc phía trên).
+        Không có tuyến nào khớp (kiểm tra lại lựa chọn tuyến phía trên).
       </div>
     );
   }

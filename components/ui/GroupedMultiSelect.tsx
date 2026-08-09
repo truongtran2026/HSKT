@@ -63,6 +63,14 @@ export default function GroupedMultiSelect({
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [visible]);
 
+  // Chế độ PHẲNG (yêu cầu người dùng 2026-08-09, dùng cho "Chọn tuyến hiển
+  // thị" ở Dashboard — không có cấp nhóm nào bên dưới tuyến cáp, khác
+  // /odf-trunk có rack bên trong tuyến). Xét trên TOÀN BỘ `items` gốc (không
+  // phải `visible` sau khi gõ tìm) để không đổi hành vi 2 nơi ĐANG dùng nhóm
+  // thật (ImportExportClient/TrunkRackListPanel luôn có nhiều nhóm) dù lỡ gõ
+  // tìm ra kết quả chỉ khớp 1 nhóm.
+  const isFlat = useMemo(() => new Set(items.map((i) => i.group)).size <= 1, [items]);
+
   function toggleItem(value: string) {
     const base = selected ?? allValues;
     onChange(base.includes(value) ? base.filter((v) => v !== value) : [...base, value]);
@@ -131,48 +139,60 @@ export default function GroupedMultiSelect({
             <FilterInput value={query} onChange={setQuery} />
           </div>
           <div className="max-h-72 overflow-y-auto p-3">
-            {grouped.map(([group, groupItems]) => {
-              const base = selected ?? allValues;
-              const groupChecked = groupItems.map((i) => i.value).filter((v) => base.includes(v)).length;
-              const groupAllChecked = groupChecked === groupItems.length;
-              const groupSomeChecked = groupChecked > 0 && !groupAllChecked;
-              return (
-                <div key={group} className="mb-2">
-                  {/* Checkbox cấp NHÓM (yêu cầu người dùng 2026-08-08) — bấm
-                      1 lần chọn/bỏ CẢ tuyến cáp thay vì tick từng rack. Chỉ
-                      hiện khi nhóm có >1 mục — nhóm 1 mục thì checkbox riêng
-                      của mục đó bên dưới đã đủ, thêm 1 checkbox nữa chỉ rối. */}
-                  {groupItems.length > 1 ? (
-                    <label className="mt-2 mb-1 flex cursor-pointer items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-primary-700">
-                      <input
-                        type="checkbox"
-                        checked={groupAllChecked}
-                        ref={(el) => {
-                          if (el) el.indeterminate = groupSomeChecked;
-                        }}
-                        onChange={() => toggleGroup(groupItems)}
-                      />
-                      <span className="truncate" title={`${group} — cả tuyến (${groupItems.length} rack)`}>
-                        {group}
+            {isFlat
+              ? visible.map((item) => {
+                  const checked = selected === null || selected.includes(item.value);
+                  return (
+                    <label key={item.value} className="flex items-center gap-2 py-1 text-sm text-slate-700">
+                      <input type="checkbox" checked={checked} onChange={() => toggleItem(item.value)} />
+                      <span className="truncate" title={item.label}>
+                        {item.label}
                       </span>
                     </label>
-                  ) : (
-                    <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{group}</div>
-                  )}
-                  {groupItems.map((item) => {
-                    const checked = selected === null || selected.includes(item.value);
-                    return (
-                      <label key={item.value} className="flex items-center gap-2 py-1 pl-5 text-sm text-slate-700">
-                        <input type="checkbox" checked={checked} onChange={() => toggleItem(item.value)} />
-                        <span className="truncate" title={item.label}>
-                          {item.label}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              );
-            })}
+                  );
+                })
+              : grouped.map(([group, groupItems]) => {
+                  const base = selected ?? allValues;
+                  const groupChecked = groupItems.map((i) => i.value).filter((v) => base.includes(v)).length;
+                  const groupAllChecked = groupChecked === groupItems.length;
+                  const groupSomeChecked = groupChecked > 0 && !groupAllChecked;
+                  return (
+                    <div key={group} className="mb-2">
+                      {/* Checkbox cấp NHÓM (yêu cầu người dùng 2026-08-08) — bấm
+                          1 lần chọn/bỏ CẢ tuyến cáp thay vì tick từng rack. Chỉ
+                          hiện khi nhóm có >1 mục — nhóm 1 mục thì checkbox riêng
+                          của mục đó bên dưới đã đủ, thêm 1 checkbox nữa chỉ rối. */}
+                      {groupItems.length > 1 ? (
+                        <label className="mt-2 mb-1 flex cursor-pointer items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-primary-700">
+                          <input
+                            type="checkbox"
+                            checked={groupAllChecked}
+                            ref={(el) => {
+                              if (el) el.indeterminate = groupSomeChecked;
+                            }}
+                            onChange={() => toggleGroup(groupItems)}
+                          />
+                          <span className="truncate" title={`${group} — cả tuyến (${groupItems.length} rack)`}>
+                            {group}
+                          </span>
+                        </label>
+                      ) : (
+                        <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{group}</div>
+                      )}
+                      {groupItems.map((item) => {
+                        const checked = selected === null || selected.includes(item.value);
+                        return (
+                          <label key={item.value} className="flex items-center gap-2 py-1 pl-5 text-sm text-slate-700">
+                            <input type="checkbox" checked={checked} onChange={() => toggleItem(item.value)} />
+                            <span className="truncate" title={item.label}>
+                              {item.label}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
             {visible.length === 0 && <p className="py-2 text-sm text-slate-400">Không có kết quả.</p>}
           </div>
         </div>
