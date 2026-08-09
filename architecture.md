@@ -4917,3 +4917,12 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     góc trên-phải nút (giống badge số cột ẩn ở `ColumnPicker.tsx`, nhưng màu
     `bg-primary-600` để phân biệt màu `bg-amber-500` của badge đó) thay vì
     nằm trong chữ trên nút; tooltip (`title`) vẫn giữ đủ câu mô tả cũ.
+  - **Cập nhật 2026-08-09 (tiếp)**: dời nút này xuống đứng CẠNH nút "Xuất
+    Excel" (`IconDownload`) trong toolbar của bảng, thay vì tách riêng ở hàng
+    trên cùng `GroupedMultiSelect`. `RackListTable.tsx` thêm prop
+    `toolbarExtra?: ReactNode` (render ngay trước `ExportExcelButton`, trong
+    cùng `div.ml-auto.flex.gap-2`) — component này dùng chung ở cả
+    `/odf-device` (qua `DevicePositionMapClient.tsx`) nên KHÔNG tự chứa logic
+    xuất-nhiều-rack, chỉ chừa 1 chỗ chèn; nơi khác không truyền prop này thì
+    layout không đổi. `TrunkRackListPanel.tsx` build sẵn JSX nút rồi truyền
+    qua `<RackListTable racks={effectiveRacks} toolbarExtra={exportDetailButton} />`.
