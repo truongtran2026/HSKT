@@ -104,15 +104,18 @@ export default function Sidebar({
 
   const body = (
     <>
-      {/* Tiêu đề nằm RIÊNG 1 hàng (yêu cầu người dùng 2026-08-08: trước đây
-          tiêu đề + 2 icon cùng 1 hàng làm "Hồ sơ kỹ thuật" bị đẩy xuống dòng
-          giữa chừng, xấu) — icon tìm kiếm/ghim xuống hàng dưới, canh phải,
-          thu nhỏ tối đa (bỏ border/chữ, chỉ còn icon trần) để không còn gì
-          tranh chỗ ngang với tiêu đề nữa, chắc chắn đủ rộng dù sau này thêm
-          icon khác. */}
-      <div className="px-5 py-4 border-b border-primary-600">
-        <span className="block text-xl font-bold tracking-wide">Hồ sơ kỹ thuật</span>
-        <div className="mt-2 flex items-center justify-end gap-1">
+      {/* Tiêu đề + icon CÙNG 1 hàng, canh giữa theo chiều dọc (yêu cầu người
+          dùng 2026-08-09: "chữ tiêu đề với icon bị chênh nhau, xếp sao cho
+          bằng nhau đi" — hàng 2 tầng trước đó (tiêu đề riêng 1 hàng, icon
+          hàng dưới canh phải) khiến 2 khối nhìn lệch/rời nhau). Để không tái
+          lặp lỗi CŨ HƠN (tiêu đề "Hồ sơ kỹ thuật" bị ngắt dòng giữa chừng khi
+          đứng cùng hàng icon, xem bản sửa 2026-08-08): giảm cỡ chữ xl->lg, bỏ
+          tracking-wide (bớt giãn chữ), giảm padding ngang 5->4 — đủ chỗ cho
+          cả tiêu đề (`whitespace-nowrap`, không bao giờ tự ngắt dòng) VÀ 2
+          icon trên cùng 1 hàng ở bề rộng sidebar 256px (w-64). */}
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-primary-600">
+        <span className="whitespace-nowrap text-lg font-bold">Hồ sơ kỹ thuật</span>
+        <div className="flex shrink-0 items-center gap-0.5">
           {/* Nút tìm kiếm luôn hiện (yêu cầu người dùng: không được để tính
               năng Command Palette chỉ truy cập qua phím tắt Cmd/Ctrl+K, vd
               trên máy không có bàn phím vật lý/mobile) — bắn CustomEvent cho
