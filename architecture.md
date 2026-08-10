@@ -5053,3 +5053,47 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     hiện đúng phần đó không (gạch ngang chữ chú thích khi ẩn); bấm 4 icon sắp
     xếp trong khung biểu đồ Cột xem đổi đúng thứ tự cột theo từng tiêu chí và
     đảo chiều khi bấm lại icon đang chọn.
+
+- **Mục 89 (2026-08-09/10) — Sidebar: tiêu đề+icon về 1 hàng; Hồ sơ đấu nối:
+  mặc định vẫn hiện luồng vừa cập nhật dù chưa lọc; bỏ 2 link thừa ở "Hồ sơ
+  ODF Thiết bị".**
+  - **`components/Sidebar.tsx`** (2026-08-09, chưa kịp ghi khi commit —
+    ghi bù đợt này): tiêu đề "Hồ sơ kỹ thuật" + 2 icon (tìm kiếm/ghim) trước
+    đó tách 2 tầng (tiêu đề riêng 1 hàng, icon hàng dưới canh phải — sửa ở
+    đợt trước để tránh tiêu đề bị ngắt dòng giữa chừng) khiến 2 khối nhìn
+    lệch/rời nhau ("chênh nhau"). Gộp lại 1 hàng, `flex items-center
+    justify-between` (canh giữa theo chiều dọc) — để không tái lặp lỗi ngắt
+    dòng cũ: giảm cỡ chữ tiêu đề `text-xl` → `text-lg`, bỏ `tracking-wide`,
+    giảm padding ngang `px-5` → `px-4` (chỉ ở hàng tiêu đề này) — đủ chỗ cho
+    cả tiêu đề (`whitespace-nowrap`, không tự ngắt dòng) và 2 icon trên cùng
+    1 hàng ở bề rộng sidebar cố định 256px (`w-64`).
+  - **`components/odf-device/DeviceCircuitList.tsx` (trang "Hồ sơ đấu nối")
+    — mặc định vẫn hiện luồng vừa cập nhật hôm qua/hôm nay dù CHƯA chọn lĩnh
+    vực/thiết bị** (yêu cầu người dùng 2026-08-10: "sẽ rất bất tiện nếu
+    trong ngày hôm đó có cập nhật luồng mà lại không hiển thị, mỗi lần phải
+    tìm thiết bị rồi gõ tọa độ mới ra"). Trước đây (Mục 80) trang này mặc
+    định TRỐNG HẲN tới khi chọn lĩnh vực/thiết bị hoặc bấm "Xem tất cả" (để
+    khỏi render 2000+ dòng ngay lúc mở tab) — giờ khi CHƯA chọn gì, tự thu
+    hẹp về đúng tập luồng có `updated_at` rơi vào hôm qua hoặc hôm nay (thêm
+    `isUpdatedYesterday()` ở `lib/format.ts`, cùng cách so ngày với
+    `isUpdatedToday()` đã có) — vẫn RẺ vì thường chỉ vài dòng đổi trong 2
+    ngày, không phải render lại toàn bộ. Cách làm: nhánh `else if (!viewAll)`
+    mới trong `filtered` (lọc theo `updatedRecentIds`, ĐẶT TRƯỚC các bước
+    lọc/sắp xếp khác nên vẫn tương thích với mọi bộ lọc cột/checkbox "Chỉ
+    hiện luồng sửa hôm nay" đã có); `EmptyUntilFiltered`'s `active` đổi thành
+    `scopeChosen || updatedRecentIds.size > 0` (chỉ thật sự trống khi vừa
+    chưa lọc VỪA không có gì đổi gần đây); thêm banner vàng nhỏ phía trên
+    bảng khi đang ở chế độ ngầm định này, nói rõ "đang hiện N luồng vừa cập
+    nhật hôm qua/hôm nay" + link "Xem tất cả" để không hiểu lầm là mất dữ
+    liệu khi tìm 1 luồng cũ hơn không thấy.
+  - **`app/odf-device/page.tsx`** — bỏ 2 link "→ Thêm / sửa / xóa luồng
+    thiết bị" và "→ Thư viện vị trí gợi ý" dưới tiêu đề trang (yêu cầu người
+    dùng: cả 2 trang đích đã có sẵn trong Sidebar — "Hồ sơ đấu nối" và "Thư
+    viện vị trí thiết bị" — giữ lại chỉ trùng lặp, không cần thiết). Bỏ luôn
+    import `Link` (không còn dùng ở file này).
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test bằng
+    mắt/chuột thật — cần người dùng tự thử: mở Sidebar xem tiêu đề+icon có
+    thẳng hàng, tiêu đề không bị ngắt dòng; mở "/odf-device/sua-luong" lúc
+    CHƯA chọn lĩnh vực/thiết bị gì, xác nhận vẫn thấy đúng các luồng vừa sửa
+    hôm qua/hôm nay (nếu có sửa gì trong 2 ngày đó) kèm banner giải thích;
+    vào "/odf-device" xác nhận không còn 2 link thừa dưới tiêu đề.

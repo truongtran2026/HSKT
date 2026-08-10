@@ -18,3 +18,15 @@ export function isUpdatedToday(iso: string): boolean {
   const now = new Date();
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
+
+// Cùng cách so sánh trên nhưng cho "hôm qua" (ngày liền trước) — dùng để mặc
+// định vẫn hiện các luồng vừa cập nhật hôm qua/hôm nay ở "Hồ sơ đấu nối" dù
+// CHƯA chọn lĩnh vực/thiết bị nào (yêu cầu người dùng 2026-08-10: tránh phải
+// tìm thiết bị + gõ tọa độ mới thấy lại luồng vừa cập nhật gần đây — xem
+// DeviceCircuitList.tsx).
+export function isUpdatedYesterday(iso: string): boolean {
+  const d = new Date(iso);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate();
+}

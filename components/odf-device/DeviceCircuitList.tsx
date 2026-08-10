@@ -10,7 +10,7 @@ import { matchesFilter } from "@/lib/tableFilter";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { isPlaceholderCircuitName, normalizeDeviceNameKey, normalizeDevicePositionKey } from "@/lib/deviceNotes";
 import { deviceCategoryLabel, getAdn1StationId, UNCATEGORIZED_LABEL } from "@/lib/devices";
-import { formatLastUpdated, isUpdatedToday } from "@/lib/format";
+import { formatLastUpdated, isUpdatedToday, isUpdatedYesterday } from "@/lib/format";
 import {
   parseTransitText,
   isManagedStationCode,
@@ -386,6 +386,18 @@ export default function DeviceCircuitList({
   // đêm là tự "hết hạn" vì isUpdatedToday() so theo ngày thật lúc đó.
   const [onlyUpdatedToday, setOnlyUpdatedToday] = useState(false);
   const updatedTodayIds = useMemo(() => new Set(circuits.filter((c) => isUpdatedToday(c.updatedAt)).map((c) => c.id)), [circuits]);
+  // Hôm qua + hôm nay gộp lại (yêu cầu người dùng 2026-08-10) — dùng làm
+  // PHẠM VI MẶC ĐỊNH khi CHƯA chọn lĩnh vực/thiết bị nào (xem `filtered` bên
+  // dưới): "sẽ rất bất tiện nếu trong ngày hôm đó có cập nhật luồng mà lại
+  // không hiển thị, mỗi lần phải tìm thiết bị rồi gõ tọa độ mới ra" — thay vì
+  // bảng trống hẳn tới khi chọn lọc (Mục 80), vẫn tự hiện các luồng vừa đổi
+  // gần đây mà KHÔNG phải tải/render hết 2000+ dòng (chỉ vài dòng thường có
+  // trong 2 ngày).
+  const updatedRecentIds = useMemo(() => {
+    const set = new Set(updatedTodayIds);
+    for (const c of circuits) if (isUpdatedYesterday(c.updatedAt)) set.add(c.id);
+    return set;
+  }, [circuits, updatedTodayIds]);
   // Slide-over "xem nhanh port trung kế" (yêu cầu người dùng 2026-07-29,
   // "Giai đoạn 2") — renderCircuitFormFields() gọi từ CẢ form Sửa lẫn form
   // Thêm mới, nên đặt state dùng chung ở đây thay vì lặp lại 2 nơi. Lưu
@@ -908,6 +920,13 @@ export default function DeviceCircuitList({
     } else if (categoryFilter !== null) {
       const set = new Set(categoryFilter);
       list = list.filter((c) => set.has(categoryByDeviceName.get(c.deviceName ?? "(chưa xác định)") ?? UNCATEGORIZED_LABEL));
+    } else if (!viewAll) {
+      // CHƯA chọn lĩnh vực/thiết bị nào VÀ chưa bấm "Xem tất cả" — thay vì để
+      // trống hẳn (Mục 80), mặc định vẫn hiện các luồng vừa cập nhật hôm qua/
+      // hôm nay (yêu cầu người dùng 2026-08-10) — rẻ vì chỉ vài dòng thường
+      // đổi trong 2 ngày, không phải render lại toàn bộ 2000+ dòng. Chọn lĩnh
+      // vực/thiết bị hoặc bấm "Xem tất cả" ở trên để thấy đầy đủ như cũ.
+      list = list.filter((c) => updatedRecentIds.has(c.id));
     }
 
     list = list.filter((c) => FILTER_KEYS.every((k) => matchesFilter(cellText(c, k, mirrorLinkStatuses), filters[k])));
@@ -930,7 +949,20 @@ export default function DeviceCircuitList({
     const todayArr = sortedArr.filter((c) => updatedTodayIds.has(c.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const restArr = sortedArr.filter((c) => !updatedTodayIds.has(c.id));
     return [...todayArr, ...restArr];
-  }, [circuits, categoryFilter, categoryByDeviceName, deviceNames, filters, sortKey, sortDir, onlyUpdatedToday, updatedTodayIds, mirrorLinkStatuses]);
+  }, [
+    circuits,
+    categoryFilter,
+    categoryByDeviceName,
+    deviceNames,
+    viewAll,
+    updatedRecentIds,
+    filters,
+    sortKey,
+    sortDir,
+    onlyUpdatedToday,
+    updatedTodayIds,
+    mirrorLinkStatuses,
+  ]);
 
   // Chỉ ẩn cột "Thiết bị" khi đã lọc còn ĐÚNG 1 thiết bị cụ thể (dòng nào
   // cũng giống nhau) — còn lại (tất cả, hoặc chọn nhiều thiết bị cùng lúc)
@@ -2615,10 +2647,23 @@ export default function DeviceCircuitList({
           Giới hạn chiều cao để khung THẬT SỰ tự cuộn, khi đó tiêu đề bảng mới
           dính lại đúng như mong đợi. */}
       <EmptyUntilFiltered
-        active={scopeChosen}
+        active={scopeChosen || updatedRecentIds.size > 0}
         onShowAll={() => setViewAll(true)}
         prompt="Chọn lĩnh vực hoặc thiết bị ở trên để xem, hoặc"
       >
+      {/* Chưa chọn lĩnh vực/thiết bị nào NHƯNG có luồng vừa đổi hôm qua/hôm
+          nay -> `active` ở trên vẫn true (hiện bảng), cần nói rõ đây KHÔNG
+          phải toàn bộ dữ liệu để không hiểu lầm "mất luồng" khi tìm 1 luồng
+          cũ hơn không thấy (yêu cầu người dùng 2026-08-10). */}
+      {!scopeChosen && updatedRecentIds.size > 0 && (
+        <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Chưa chọn lĩnh vực/thiết bị — đang hiện {updatedRecentIds.size} luồng vừa cập nhật hôm qua/hôm nay. Chọn lĩnh vực/thiết bị ở trên hoặc bấm{" "}
+          <button type="button" className="underline hover:no-underline" onClick={() => setViewAll(true)}>
+            Xem tất cả
+          </button>{" "}
+          để xem đầy đủ {circuits.length} luồng.
+        </p>
+      )}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>

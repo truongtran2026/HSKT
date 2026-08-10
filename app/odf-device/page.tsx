@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import type { Metadata } from "next";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceRackPortStatusCounts } from "@/lib/deviceRackPorts";
@@ -95,15 +94,6 @@ export default async function OdfDevicePage() {
         1 rack để xem port nào đang có luồng thật, hoặc tăng số port khi tháo gỡ ODF/DDF cũ, thay ODF/DDF mới có số
         port khác.
       </p>
-      <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-        <Link href="/odf-device/sua-luong" className="text-primary-600 hover:underline">
-          → Thêm / sửa / xóa luồng thiết bị
-        </Link>
-        <Link href="/odf-device/vi-tri-thiet-bi" className="text-primary-600 hover:underline">
-          → Thư viện vị trí gợi ý (device → ODF/DDF)
-        </Link>
-      </p>
-
       {/* Thêm rack mới (yêu cầu người dùng 2026-07-28: "Chưa có phần thêm/
           sửa/xóa Rack") — CHỈ domain='device', đặt ở đây (trang danh sách)
           vì rack mới chưa có trang chi tiết để "sửa" từ đó. Sửa số port
