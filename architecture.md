@@ -5097,3 +5097,49 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     CHƯA chọn lĩnh vực/thiết bị gì, xác nhận vẫn thấy đúng các luồng vừa sửa
     hôm qua/hôm nay (nếu có sửa gì trong 2 ngày đó) kèm banner giải thích;
     vào "/odf-device" xác nhận không còn 2 link thừa dưới tiêu đề.
+
+- **Mục 90 (2026-08-10) — QUY ĐỊNH CHUNG: mọi bảng có icon "Làm mới dữ liệu"
+  (`RefreshButton.tsx`), KHÔNG polling định kỳ.** Người dùng phát hiện: dữ
+  liệu mỗi trang chỉ tải 1 LẦN lúc vào trang (Server Component, `force-
+  dynamic` nhưng chỉ chạy lại khi có điều hướng/tải trang mới) — nếu mở 2 tab
+  trình duyệt, sửa dữ liệu (vd thêm thiết bị mới, thêm dòng thư viện vị trí
+  thiết bị) ở tab B thì tab A KHÔNG tự biết, phải bấm F5 tải lại NGUYÊN trang
+  mới thấy — mất luôn form đang gõ dở/dòng đang Sửa ở tab A nếu có. Yêu cầu:
+  có cách làm mới KHÔNG cần tải lại cả trang, KHÔNG polling định kỳ (chỉ chạy
+  khi người dùng chủ động bấm), và quan trọng nhất — khi đang mở form "Thêm
+  luồng mới"/"Sửa" thì làm mới cũng phải cập nhật được dữ liệu tham chiếu
+  dùng để gợi ý trong form đó (danh sách thiết bị, thư viện vị trí, port
+  trung kế...) mà KHÔNG xóa mất các ô đang gõ dở.
+  - **Cơ chế**: `router.refresh()` (Next.js App Router, `next/navigation`) —
+    chạy lại (các) Server Component của route hiện tại, lấy props MỚI cho
+    toàn bộ cây, nhưng KHÔNG remount Client Component nào ở vị trí không đổi
+    trong cây → state nội bộ (`useState` — form đang gõ dở, dòng đang Sửa,
+    tick đã chọn, bộ lọc cột, sắp xếp...) giữ nguyên 100%, chỉ CÁC PROP (
+    `circuits`/`devices`/`devicePositionMap`/`trunkPorts`/`racks`...) được
+    thay bằng bản mới nhất từ CSDL. Đây CHÍNH LÀ cơ chế mọi form Thêm/Sửa/Xóa
+    trong app đã dùng từ trước SAU KHI lưu thành công (xem `DeviceCircuitList
+    .tsx`, `PortTable.tsx`...) — đã chứng minh KHÔNG làm mất state khác (bộ
+    lọc/tick/sắp xếp không hề bị reset sau mỗi lần lưu) qua suốt quá trình
+    dùng thật — giờ chỉ thêm 1 nút bấm TAY để gọi lại đúng cơ chế đó bất kỳ
+    lúc nào, kể cả khi đang mở form Thêm/Sửa (form đó nằm CHUNG 1 component
+    với bảng, dùng CHUNG props `devices`/`devicePositionMap`/`trunkPorts` nên
+    tự động ăn theo, không cần thêm gì riêng cho form).
+  - **`components/ui/RefreshButton.tsx`** (mới) — nút icon dùng chung, gói
+    `useRouter().refresh()` trong `useTransition()` để có `isPending` (xoay
+    icon `animate-spin` + disable nút khi đang tải, đỡ bấm lặp).
+  - **`components/ui/icons.tsx`** — thêm `IconRefresh` (2 mũi tên cong vòng
+    tròn, quy ước phổ biến cho "refresh").
+  - Áp dụng cho ĐỦ CẢ 9 bảng dữ liệu (đúng tinh thần "quy định chung" xuyên
+    suốt các đợt trước — Mục 80/82/85): `PortTable.tsx`, `DeviceCircuitList
+    .tsx`, `RackListTable.tsx` (dùng chung ở `/odf-trunk` VÀ `/odf-device`),
+    `DeviceCategoryClient.tsx`, `SearchClient.tsx`, `DeviceSearchClient.tsx`,
+    `DevicePositionMapClient.tsx`, `DeviceRackPortView.tsx`,
+    `DashboardClient.tsx` — đặt ngay trong toolbar mỗi bảng, cạnh nút "Xuất
+    Excel"/icon Gear đã có.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test bằng tay
+    thật (cần 2 tab trình duyệt) — cần người dùng tự thử: mở 2 tab
+    "/odf-device/sua-luong", mở form "Thêm luồng mới" ở tab A (gõ dở vài ô,
+    ĐỪNG lưu), thêm 1 thiết bị mới ở tab B (`/devices`), quay lại tab A bấm
+    icon Làm mới — xác nhận ô "Thiết bị (tiếp theo)" gợi ý được tên thiết bị
+    mới đó, ĐỒNG THỜI các ô đã gõ dở ở form Thêm vẫn còn nguyên (không bị xóa
+    trắng).

@@ -9,6 +9,7 @@ import { useSort, type SortDir } from "@/lib/useSort";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 import GroupedMultiSelect from "@/components/ui/GroupedMultiSelect";
 import { IconSortName, IconSortTotal, IconSortPercentUsed, IconSortPercentEmpty } from "@/components/ui/icons";
 import {
@@ -449,6 +450,7 @@ function TableView({ routes }: { routes: RouteStat[] }) {
   return (
     <div>
       <div className="mb-2 flex justify-end gap-2">
+        <RefreshButton />
         <ExportExcelButton columns={exportColumns} rows={sorted} sheetName="Thống kê theo tuyến" fileNamePrefix="Thong_ke_theo_tuyen" />
         <ColumnPicker
           items={COLUMN_ITEMS}

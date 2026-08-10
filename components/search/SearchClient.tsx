@@ -12,6 +12,7 @@ import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { derivePortStatus, type DerivedPortStatus } from "@/lib/portStatus";
 import type { TrunkPortRow } from "@/lib/trunkPorts";
@@ -350,6 +351,7 @@ export default function SearchClient({ rows }: { rows: SearchRow[] }) {
           </button>
         )}
         <div className="ml-auto flex gap-2">
+          <RefreshButton />
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm ODF trung kế" fileNamePrefix="Tim_kiem_ODF_trung_ke" />
           <ColumnPicker
             items={COLUMN_ITEMS}

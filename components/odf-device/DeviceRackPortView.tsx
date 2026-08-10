@@ -7,6 +7,7 @@ import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
+import RefreshButton from "@/components/ui/RefreshButton";
 
 // Trang XEM (không sửa tại chỗ, yêu cầu người dùng 2026-07-28) cho rack
 // ODF/DDF thiết bị (domain='device'). Bảng đổi từ "Port / Thiết bị này (own)
@@ -147,7 +148,8 @@ export default function DeviceRackPortView({
 
   return (
     <div>
-      <div className="mb-2 flex justify-end">
+      <div className="mb-2 flex justify-end gap-2">
+        <RefreshButton />
         <ColumnPicker
           items={COLUMN_ITEMS}
           order={colOrder.filter((col): col is VisibleCol => OPTIONAL_COL_SET.has(col))}

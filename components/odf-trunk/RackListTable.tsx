@@ -12,6 +12,7 @@ import { useColumnOrder } from "@/lib/useColumnOrder";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 
 export interface RackListItem {
   id: string;
@@ -281,6 +282,7 @@ export default function RackListTable({
         )}
         <div className="ml-auto flex gap-2">
           {toolbarExtra}
+          <RefreshButton />
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Rack" fileNamePrefix="Danh_sach_rack" />
           <ColumnPicker
             items={COLUMN_ITEMS}

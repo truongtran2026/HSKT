@@ -13,6 +13,7 @@ import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
 
@@ -300,6 +301,7 @@ export default function DeviceSearchClient({ rows }: { rows: DeviceCircuitRow[] 
           </button>
         )}
         <div className="ml-auto flex gap-2">
+          <RefreshButton />
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Tìm kiếm Hồ sơ đấu nối" fileNamePrefix="Tim_kiem_Ho_so_dau_noi" />
           <ColumnPicker
             items={COLUMN_ITEMS}

@@ -33,6 +33,7 @@ import ColumnPicker from "@/components/ui/ColumnPicker";
 import CircuitReportPanel from "@/components/ui/CircuitReportPanel";
 import ReportHistoryDrawer from "@/components/ui/ReportHistoryDrawer";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import {
   unlinkCircuitMirror,
@@ -1507,6 +1508,7 @@ export default function PortTable({
           <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
             Lịch sử tra cứu
           </button>
+          <RefreshButton />
           <ExportExcelButton
             columns={exportColumns}
             rows={exportRows}

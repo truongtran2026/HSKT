@@ -18,6 +18,7 @@ import { translatePgError } from "@/lib/translatePgError";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
+import RefreshButton from "@/components/ui/RefreshButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
@@ -812,6 +813,7 @@ export default function DevicePositionMapClient({
           </button>
         )}
         <div className="ml-auto flex gap-2">
+          <RefreshButton />
           <ExportExcelButton columns={exportColumns} rows={filtered} sheetName="Vị trí thiết bị" fileNamePrefix="Thu_vien_vi_tri_thiet_bi" />
           <ColumnPicker
             items={COLUMN_ITEMS}
