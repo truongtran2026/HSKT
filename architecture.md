@@ -5143,3 +5143,60 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     icon Làm mới — xác nhận ô "Thiết bị (tiếp theo)" gợi ý được tên thiết bị
     mới đó, ĐỒNG THỜI các ô đã gõ dở ở form Thêm vẫn còn nguyên (không bị xóa
     trắng).
+
+- **Mục 91 (2026-08-10) — "Thư viện vị trí thiết bị": chặn lưu vị trí ODF/DDF
+  không có thật, chặn xung đột 1-Trib-nhiều-ODF, highlight tên thiết bị chưa
+  khớp Danh mục.** Người dùng phát hiện (sau ca thêm rack "ODF 11/3" thiếu ở
+  Mục trước): trang `/odf-device/vi-tri-thiet-bi` cho lưu Vị trí ODF/DDF
+  KHÔNG có thật (rack chưa tồn tại trong CSDL) — khác nguyên tắc "cho lưu
+  text-only trước, chuẩn hóa sau" (CLAUDE.md #3) áp dụng cho Ô "Vị trí ODF
+  (tiếp theo)" bên `DeviceCircuitList.tsx`: đó là dữ liệu VẬN HÀNH thật (luôn
+  cho lưu, không được chặn), còn THƯ VIỆN này chỉ là GỢI Ý tự điền — gợi ý
+  trỏ tới rack không tồn tại không có giá trị gì, nên CHẶN HẲN thay vì cho
+  lưu rồi chuẩn hóa sau. Cả 3 việc đều sửa trong `validateLibraryDraft()`
+  (`components/odf-device/DevicePositionMapClient.tsx`, dùng CHUNG cho cả
+  "Thêm dòng mới" lẫn Sửa inline — không cần sửa 2 nơi):
+  1. **Vị trí ODF/DDF phải khớp rack CÓ THẬT** — khi text "có vẻ là tọa độ
+     thật" (`looksLikeRealPositionText()`, loại trừ "Kết nối trực tiếp"),
+     bắt buộc `matchTrunkPosition(odfPosition, trunkPorts).matched === true`
+     (áp dụng CHUNG cho cả rack `domain='device'` lẫn `domain='trunk'`, đúng
+     cách `matchTrunkPosition` đã đối xử 2 domain như nhau ở mọi nơi khác
+     trong app) VÀ số port phải tồn tại trong rack đó (`invalidPortNumbers`
+     rỗng) — không khớp thì báo lỗi rõ, hướng dẫn vào `/odf-device` (hoặc
+     `/odf-trunk` nếu là tuyến cáp) thêm rack đó trước (mã rack/loại ODF/số
+     port) rồi mới quay lại nhập.
+  2. **Thêm chiều ràng buộc MỚI: cùng thiết bị + cùng Trib chỉ được ứng với
+     ĐÚNG 1 Vị trí ODF/DDF** (yêu cầu người dùng: "Cùng tên thiết bị, cùng vị
+     trí thiết bị thì chỉ có một vị trí ODF/DDF thôi" — dùng tên thiết bị
+     ĐÃ CHUẨN HÓA qua `normalizeDeviceNameKey()`, tự bỏ qua khác biệt kiểu "X"
+     vs "ADN1.X" theo đúng ý người dùng "tạm coi là 1 thiết bị"). Bổ sung
+     BÊN CẠNH rule ngược chiều đã có từ Mục "2026-08-03" (cùng thiết bị,
+     KHÁC Trib thì không được CHUNG 1 Vị trí ODF/DDF thật) — 2 rule đối xứng,
+     đều chặn ở `validateLibraryDraft()`. Khác 1 điểm: rule MỚI này KHÔNG
+     loại trừ "Kết nối trực tiếp" (rule cũ loại trừ vì nhiều Trib hợp lệ dùng
+     chung giá trị không-phải-tọa-độ đó; rule mới thì 1 Trib vật lý không
+     thể vừa "nối trực tiếp" vừa "ra ODF X" cùng lúc, nên so sánh text KHÔNG
+     GATE qua `looksLikeRealPositionText`).
+  3. **Highlight NGAY TẠI DÒNG khi tên thiết bị chưa khớp Danh mục thiết bị**
+     (yêu cầu người dùng — bổ sung, KHÔNG thay thế, khung tổng hợp "Chuẩn hóa
+     tên thiết bị chưa khớp" đã có sẵn từ trước — khung đó chỉ gộp nhóm, dòng
+     đang cuộn/lọc trong bảng chính không thấy ngay được): `<tr>` tô nền
+     `bg-amber-50` + badge nhỏ "chưa khớp Danh mục" cạnh tên thiết bị (có
+     `title` giải thích hướng xử lý: thêm thiết bị đó vào `/devices` nếu còn
+     tồn tại, hoặc xóa dòng thư viện nếu không còn dùng nữa) — so khớp qua
+     `existingDeviceKeys` (Set các `normalizeDeviceNameKey(devices[].name)`,
+     đã có sẵn trong file, tái dùng chứ không tính lại).
+  - **Phạm vi CHỈ áp dụng cho form Thêm/Sửa TAY ở trang này** — các đường ghi
+    khác vào `device_position_map` (vd `growDevicePositionMapByTrib()` gọi từ
+    `DeviceCircuitList.tsx` khi tự làm giàu thư viện lúc lưu luồng thiết bị)
+    KHÔNG đi qua `validateLibraryDraft()`, giữ nguyên hành vi khoan dung cũ —
+    đúng tinh thần "chỉ chặn ở nơi NGƯỜI DÙNG chủ động gõ tay vào thư viện",
+    không chặn luôn cả đường tự động phụ trợ (sẽ dễ làm KẸT việc lưu luồng
+    chính chỉ vì 1 bước phụ thất bại).
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test bằng tay
+    thật — cần người dùng tự thử: ở `/odf-device/vi-tri-thiet-bi`, thử Thêm 1
+    dòng với Vị trí ODF/DDF trỏ tới rack CHƯA tồn tại (phải bị chặn, báo lỗi
+    rõ); thử Thêm 1 dòng trùng thiết bị+Trib với 1 dòng đã có nhưng Vị trí
+    ODF/DDF khác đi (phải bị chặn); cuộn bảng chính xem các dòng có tên thiết
+    bị lạ (chưa có trong `/devices`) có tô vàng + badge "chưa khớp Danh mục"
+    hay không.

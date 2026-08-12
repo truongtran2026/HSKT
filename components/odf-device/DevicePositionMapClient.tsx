@@ -327,12 +327,29 @@ export default function DevicePositionMapClient({
   }, [visible]);
 
   // Validate CHUNG cho cả Thêm dòng mới lẫn Sửa inline (yêu cầu người dùng
-  // 2026-08-03): (1) tên thiết bị PHẢI khớp đúng 1 thiết bị thật đã chuẩn
-  // hóa (không cho gõ tự do — trước đây đây là nguồn gây lệch tên với
-  // /devices); (2) Vị trí thiết bị (Trib)/Vị trí ODF/DDF bắt buộc không
-  // rỗng (trước đây optional); (3) trong CÙNG 1 thiết bị, 2 Trib khác nhau
-  // không được cùng 1 Vị trí ODF/DDF THẬT — trừ "Kết nối trực tiếp" (dùng
-  // chung hợp lệ cho nhiều Trib, xem looksLikeRealPositionText loại trừ).
+  // 2026-08-03, mở rộng 2026-08-10):
+  // (1) tên thiết bị PHẢI khớp đúng 1 thiết bị thật đã chuẩn hóa (không cho
+  //     gõ tự do — trước đây đây là nguồn gây lệch tên với /devices);
+  // (2) Vị trí thiết bị (Trib)/Vị trí ODF/DDF bắt buộc không rỗng;
+  // (3) Vị trí ODF/DDF (khi CÓ VẺ là 1 tọa độ thật — nhắc tới "ODF"/"DDF",
+  //     xem looksLikeRealPositionText, loại trừ text kiểu "Kết nối trực
+  //     tiếp") PHẢI khớp đúng 1 rack CÓ THẬT trong CSDL (bảng `racks`, xem
+  //     `/odf-device`/`/odf-trunk`) và số port phải tồn tại trong rack đó
+  //     (yêu cầu người dùng 2026-08-10: "Vị trí ODF/DDF chưa tồn tại trong
+  //     CSDL của Hồ sơ ODF thiết bị nhưng vẫn thêm được vào bên thư viện...
+  //     là không đúng" — trước đây thư viện cho lưu tọa độ KHÔNG có thật,
+  //     khác nguyên tắc "cho lưu text-only trước" áp dụng cho ô luồng thiết
+  //     bị (DeviceCircuitList.tsx) vì Ô ĐÓ là dữ liệu vận hành thật còn
+  //     THƯ VIỆN này chỉ là gợi ý — gợi ý sai (trỏ tới rack không tồn tại)
+  //     không có giá trị, nên chặn hẳn thay vì cho lưu rồi chuẩn hóa sau);
+  // (4) trong CÙNG 1 thiết bị, 2 Trib khác nhau không được cùng 1 Vị trí
+  //     ODF/DDF THẬT — trừ "Kết nối trực tiếp" (dùng chung hợp lệ cho nhiều
+  //     Trib);
+  // (5) MỚI (yêu cầu người dùng 2026-08-10): NGƯỢC LẠI — cùng 1 thiết bị +
+  //     cùng 1 Trib thì CHỈ được ứng với ĐÚNG 1 Vị trí ODF/DDF (không loại
+  //     trừ "Kết nối trực tiếp" — 1 Trib vật lý không thể vừa "nối trực
+  //     tiếp" vừa "ra ODF X" cùng lúc, khác rule (4) vốn cho phép NHIỀU Trib
+  //     dùng chung 1 giá trị "Kết nối trực tiếp" không mang tính tọa độ).
   function validateLibraryDraft(d: Draft, excludeId: string | null): { canonicalDeviceName: string } | { error: string } {
     const deviceNameTrimmed = d.deviceName.trim();
     const devicePositionTrimmed = d.devicePosition.trim();
@@ -348,10 +365,42 @@ export default function DevicePositionMapClient({
       };
     }
 
+    const isRealPosition = looksLikeRealPositionText(odfPositionTrimmed);
+    if (isRealPosition) {
+      const rackMatch = matchTrunkPosition(odfPositionTrimmed, trunkPorts);
+      if (!rackMatch.matched) {
+        return {
+          error: `"${odfPositionTrimmed}" chưa khớp rack ODF/DDF nào có thật trong hệ thống — vào /odf-device (hoặc /odf-trunk nếu là tuyến cáp trung kế) thêm rack đó trước (mã rack, loại ODF, số port), rồi mới nhập ở đây.`,
+        };
+      }
+      if (rackMatch.invalidPortNumbers && rackMatch.invalidPortNumbers.length > 0) {
+        return {
+          error: `Port ${rackMatch.invalidPortNumbers.join(",")} không tồn tại trong rack "${rackMatch.rackCode}" — kiểm tra lại số port, hoặc sửa số port của rack đó nếu thiếu.`,
+        };
+      }
+    }
+
     const nameKey = normalizeDeviceNameKey(matched.name);
     const tribKey = normalizeDevicePositionKey(devicePositionTrimmed);
-    if (looksLikeRealPositionText(odfPositionTrimmed)) {
-      const odfKey = normalizeDevicePositionKey(odfPositionTrimmed);
+    const odfKey = normalizeDevicePositionKey(odfPositionTrimmed);
+
+    // Rule (5) MỚI — cùng thiết bị + cùng Trib phải cùng 1 Vị trí ODF/DDF.
+    const tribConflict = rows.find(
+      (r) =>
+        r.id !== excludeId &&
+        normalizeDeviceNameKey(r.deviceName) === nameKey &&
+        normalizeDevicePositionKey(r.devicePosition ?? "") === tribKey &&
+        normalizeDevicePositionKey(r.odfPosition ?? "") !== odfKey
+    );
+    if (tribConflict) {
+      return {
+        error: `"${matched.name}" ở Trib "${devicePositionTrimmed}" đã có vị trí ODF/DDF khác là "${tribConflict.odfPosition ?? ""}" (dòng khác) — 1 Trib chỉ được ứng với ĐÚNG 1 vị trí ODF/DDF. Sửa hoặc xóa dòng cũ trước nếu vị trí thật sự đã đổi.`,
+      };
+    }
+
+    // Rule (4) đã có — cùng thiết bị, 2 Trib khác nhau không dùng chung 1
+    // vị trí ODF/DDF THẬT (trừ "Kết nối trực tiếp").
+    if (isRealPosition) {
       const conflict = rows.find(
         (r) =>
           r.id !== excludeId &&
@@ -575,12 +624,26 @@ export default function DevicePositionMapClient({
 
   function renderViewCell(col: AllCol, r: DevicePositionMapRow) {
     switch (col) {
-      case "deviceName":
+      case "deviceName": {
+        // Highlight NGAY TẠI DÒNG khi tên chưa khớp thiết bị nào trong Danh
+        // mục thiết bị (yêu cầu người dùng 2026-08-10) — bổ sung cho khung
+        // tổng hợp "Chuẩn hóa tên thiết bị chưa khớp" phía trên (chỉ liệt kê
+        // gộp nhóm, không thấy ngay khi đang cuộn/lọc bảng chính).
+        const unmatched = !existingDeviceKeys.has(normalizeDeviceNameKey(r.deviceName));
         return (
           <td key={col} className="px-3 py-2 text-slate-700 break-words">
             {r.deviceName}
+            {unmatched && (
+              <span
+                className="ml-1.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                title='Tên thiết bị này chưa khớp thiết bị nào trong Danh mục thiết bị (/devices) — thêm thiết bị đó vào Danh mục nếu còn tồn tại, hoặc xóa dòng này nếu không còn dùng nữa.'
+              >
+                chưa khớp Danh mục
+              </span>
+            )}
           </td>
         );
+      }
       case "devicePosition":
         return (
           <td key={col} className="px-3 py-2 text-slate-600 break-words">
@@ -840,8 +903,12 @@ export default function DevicePositionMapClient({
           <tbody>
             {filtered.map((r) => {
               const editing = editId === r.id;
+              const unmatched = !existingDeviceKeys.has(normalizeDeviceNameKey(r.deviceName));
               return (
-                <tr key={r.id} className="border-t border-slate-100 hover:bg-primary-50/50">
+                <tr
+                  key={r.id}
+                  className={`border-t border-slate-100 ${unmatched && !editing ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-primary-50/50"}`}
+                >
                   {editing ? orderedAll.map((col) => renderEditCell(col)) : orderedAll.map((col) => renderViewCell(col, r))}
                 </tr>
               );
