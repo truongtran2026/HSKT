@@ -5366,3 +5366,36 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     thiết bị+Trib local ĐANG bị 1 luồng khác tên chiếm — xác nhận có hộp
     thoại hỏi rõ, chọn Đồng ý thấy luồng cũ bị xóa và mirror mới đúng được
     tạo; chọn Hủy thấy luồng vừa lưu vẫn còn nguyên, chỉ chưa liên kết.
+
+- **Mục 94 (2026-08-17) — Mirror thiết bị-thiết bị: copy luôn "Đối phương"
+  (`counterpart_text`) sang luồng mirror tự tạo (đang bị bỏ sót).** Người
+  dùng phát hiện ngay sau Mục 93: mirror trung kế/trung kế-trung kế
+  (`lib/mirrorTrunkCircuits.ts` — cả 4 hàm tạo mirror: `autoCreateTrunkMirrorForCircuit`,
+  `syncAllTrunkMirrorGaps`, `autoCreateTrunkTrunkMirrorForCircuit`,
+  `syncAllTrunkTrunkMirrorGaps`) đều đã copy `counterpart_text` từ luồng gốc
+  sang luồng mirror mới tạo TỪ TRƯỚC — CHỈ RIÊNG mirror thiết bị-thiết bị
+  (`lib/deviceDeviceSync.ts`) bỏ sót field này (`insert()` không có
+  `counterpart_text`), khiến 2 phía CÙNG 1 luồng vật lý (vd luồng thiết bị P2
+  <-> ADX) hiện "Đối phương" khác nhau — bên tạo mirror trống trơn dù bên gốc
+  đã ghi rõ (vd "2T9.OME11", "QTI.PE2 (10/1/2)", "HKG"...).
+  - `DeviceMirrorGap` (interface, `lib/deviceDeviceSync.ts`) thêm field
+    `sourceCounterpartText: string | null` — gán từ `c.counterpartText` ngay
+    khi `findMissingDeviceMirrors()` push vào `gaps`. Thêm `counterpart_text:
+    gap.sourceCounterpartText` vào CẢ 2 chỗ `insert()` tạo mirror mới
+    (`autoCreateMirrorForCircuit` — tạo ngay lúc lưu form; `syncAllDeviceMirrorGaps`
+    — quét hàng loạt ở `/data-quality`).
+  - KHÔNG đụng nhánh "cùng tên, tự liên kết mirror_of_id vào circuit ĐÃ CÓ
+    SẴN" (status `"linked"`, thêm ở Mục 93) — giữ đúng tiền lệ đã có ở cả 4
+    hàm mirror trung kế (case tương tự bên đó cũng chỉ set `mirror_of_id`,
+    không đụng `counterpart_text` của circuit đã tồn tại từ trước, tôn trọng
+    dữ liệu đã có sẵn, có thể người dùng đã tự sửa tay khác đi).
+  - **Backfill dữ liệu CŨ**: script tạm `scripts/tmp-backfill-mirror-counterpart.ts`
+    (chạy DRY RUN rồi `--commit`, đã xóa sau khi xong) — quét mọi luồng
+    THIẾT BỊ (không có `port_circuit_links` thật) có `mirror_of_id`, nếu luồng
+    GỐC có `counterpart_text` mà luồng MIRROR đang RỖNG thì điền đúng giá trị
+    gốc vào (không đè lên bất kỳ giá trị nào mirror đã có sẵn). Tìm thấy và
+    sửa đúng 9 cặp, gồm cả cặp "100GE ADN1.P2 (18/1/8) - QTI.PE2 (10/1/2)"
+    nhắc tới ở Mục 93.
+  - File sửa: `lib/deviceDeviceSync.ts`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Đã backfill xong 9
+    cặp cũ (log đầy đủ trong lịch sử chạy script, không lặp lại ở đây).

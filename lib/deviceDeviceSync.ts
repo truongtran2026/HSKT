@@ -28,6 +28,14 @@ export interface DeviceMirrorGap {
   sourceDeviceName: string | null;
   sourceOwnPosition: string | null;
   sourceTrib: string | null;
+  // "Đối phương" (yêu cầu người dùng 2026-08-17: mirror trung kế/trung kế-
+  // trung kế đã copy sẵn field này cho luồng mới tạo — lib/mirrorTrunkCircuits.ts
+  // các hàm autoCreateTrunkMirrorForCircuit/syncAllTrunkMirrorGaps/
+  // autoCreateTrunkTrunkMirrorForCircuit/syncAllTrunkTrunkMirrorGaps — riêng
+  // mirror thiết bị-thiết bị lại BỎ SÓT, gây lệch dữ liệu 2 phía của CÙNG 1
+  // luồng). Mang theo tới insert() ở autoCreateMirrorForCircuit/
+  // syncAllDeviceMirrorGaps.
+  sourceCounterpartText: string | null;
   rawNext: string;
   targetDeviceId: string;
   targetDeviceName: string;
@@ -124,6 +132,7 @@ export function findMissingDeviceMirrors(circuits: DeviceCircuitRow[], devices: 
       sourceDeviceName: c.deviceName,
       sourceOwnPosition: c.devicePositionOwn,
       sourceTrib: c.tribText,
+      sourceCounterpartText: c.counterpartText,
       rawNext: raw,
       targetDeviceId: target.id,
       targetDeviceName: target.name,
@@ -270,6 +279,7 @@ export async function autoCreateMirrorForCircuit(
   const { error: insErr } = await supabase.from("circuits").insert({
     name: gap.sourceCircuitName,
     interface_type: gap.sourceInterfaceType,
+    counterpart_text: gap.sourceCounterpartText,
     device_id: gap.targetDeviceId,
     trib_text: gap.targetTrib,
     device_position_own: gap.targetOwnPosition,
@@ -366,6 +376,7 @@ export async function syncAllDeviceMirrorGaps(client: SupabaseClient, scope?: Mi
     const { error: insErr } = await supabase.from("circuits").insert({
       name: gap.sourceCircuitName,
       interface_type: gap.sourceInterfaceType,
+      counterpart_text: gap.sourceCounterpartText,
       device_id: gap.targetDeviceId,
       trib_text: gap.targetTrib,
       device_position_own: gap.targetOwnPosition,
