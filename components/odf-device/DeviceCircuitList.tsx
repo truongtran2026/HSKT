@@ -708,6 +708,23 @@ export default function DeviceCircuitList({
             setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
           }
         }
+      } else if (result.status === "occupied") {
+        // Phát hiện 2026-08-17 (ca luồng trùng lặp "100GE ADN1.P2 (18/1/8)" bị
+        // nhập lại lần 2): Trib đích ĐÃ bị 1 luồng KHÁC (không cùng tên) chiếm
+        // — không tự xóa hộ (có thể luồng đó vẫn còn dùng thật), luôn hỏi rõ
+        // trước, giữ NGUYÊN luồng vừa lưu ở bên này dù người dùng chọn Hủy (đã
+        // lưu xong từ trước khi hàm này chạy, không mất gì đã nhập).
+        const ok = confirm(
+          `Trib "${result.targetTrib}" của thiết bị "${result.targetDeviceName}" đang có 1 luồng KHÁC (không cùng tên) chiếm: "${result.occupantCircuitName}".\n\nLuồng vừa lưu ("${sourceName}") đã lưu xong, nhưng CHƯA liên kết được với bên "${result.targetDeviceName}" vì Trib đó đã có chủ.\n\nXÓA luồng cũ đó bên "${result.targetDeviceName}" và TẠO LẠI đúng theo luồng vừa lưu?`
+        );
+        if (ok) {
+          try {
+            const retry = await replaceMismatchedDeviceMirror(supabase, result.occupantCircuitId, circuitId);
+            if (retry.status === "error") setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${translatePgError(retry.message)}`);
+          } catch (e) {
+            setError(`Đã xóa luồng cũ, nhưng tạo lại thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
+          }
+        }
       } else if (result.status === "error") {
         setError(`Luồng đã lưu, nhưng tự tạo mirror bên thiết bị đích thất bại: ${translatePgError(result.message)}`);
       }

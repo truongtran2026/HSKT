@@ -174,6 +174,7 @@ export async function autoCreateMirrorForCircuit(
   sourceCircuitId: string
 ): Promise<
   | { status: "created"; targetDeviceName: string; trib: string }
+  | { status: "linked"; targetDeviceName: string; trib: string }
   | { status: "no-gap" }
   | {
       status: "mismatch";
@@ -181,6 +182,13 @@ export async function autoCreateMirrorForCircuit(
       existingCircuitId: string;
       existingTrib: string | null;
       expectedTrib: string;
+    }
+  | {
+      status: "occupied";
+      targetDeviceName: string;
+      targetTrib: string;
+      occupantCircuitId: string;
+      occupantCircuitName: string;
     }
   | { status: "error"; message: string }
 > {
@@ -202,6 +210,50 @@ export async function autoCreateMirrorForCircuit(
         existingTrib: mismatch.existingTrib,
         expectedTrib: mismatch.expectedTrib,
       };
+    }
+
+    // Phát hiện 2026-08-17 (người dùng, ca "100GE ADN1.P2 (18/1/8)" bị nhập
+    // TRÙNG LẶP y hệt lần 2 — "100 ADN1.P2 (18/1/8)..."): `findMissingDeviceMirrors`
+    // không tạo gap CŨNG KHÔNG tạo mismatch cho ca này — nó chỉ âm thầm bỏ
+    // qua ở dòng `if (targetOwnTribs.has(targetTribKey)) continue` (Trib đích
+    // đã bị 1 luồng KHÁC chiếm mất, dù không cùng tên với mismatch nào) —
+    // "no-gap" trả về khiến người dùng KHÔNG biết luồng vừa lưu chưa liên kết
+    // được vì đâu. Soi lại TRỰC TIẾP ở đây (không đụng thuật toán dùng chung
+    // findMissingDeviceMirrors — hàm đó còn phục vụ quét hàng loạt ở
+    // syncAllDeviceMirrorGaps, không nên đổi hành vi của nó): nếu Ô "Vị trí
+    // ODF (tiếp theo)" trỏ đúng 1 thiết bị+Trib local đã có luồng KHÁC chiếm,
+    // báo rõ "occupied" (cùng tinh thần "occupied" của mirror TRUNG KẾ, xem
+    // lib/mirrorTrunkCircuits.ts) để UI hỏi xóa luồng chiếm chỗ đó rồi tạo lại
+    // — thay vì cùng tên thì tự gắn liên kết luôn (status "linked", không cần
+    // hỏi, đối xứng case B của mirror trung kế).
+    const raw = sourceCircuit.devicePositionNext;
+    if (raw) {
+      const split = splitOdfDeviceStructure(raw);
+      if (split.matched && split.deviceName && split.port) {
+        const targetKey = normalizeDeviceNameKey(split.deviceName);
+        const target = devices.find((d) => normalizeDeviceNameKey(d.name) === targetKey);
+        const isSelf = sourceCircuit.deviceName && normalizeDeviceNameKey(sourceCircuit.deviceName) === targetKey;
+        if (target && !isSelf) {
+          const targetTribKey = normalizeDevicePositionKey(split.port);
+          const occupant = circuits.find(
+            (c) => c.id !== sourceCircuitId && c.deviceId === target.id && c.tribText && normalizeDevicePositionKey(c.tribText) === targetTribKey
+          );
+          if (occupant && occupant.mirrorOfId !== sourceCircuitId && sourceCircuit.mirrorOfId !== occupant.id) {
+            if (occupant.name === sourceCircuit.name) {
+              const { error: linkErr } = await supabase.from("circuits").update({ mirror_of_id: sourceCircuitId }).eq("id", occupant.id);
+              if (linkErr) return { status: "error", message: linkErr.message };
+              return { status: "linked", targetDeviceName: target.name, trib: split.port };
+            }
+            return {
+              status: "occupied",
+              targetDeviceName: target.name,
+              targetTrib: split.port,
+              occupantCircuitId: occupant.id,
+              occupantCircuitName: occupant.name,
+            };
+          }
+        }
+      }
     }
     return { status: "no-gap" };
   }

@@ -5309,3 +5309,60 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     trùng 1 dòng khác, xác nhận bảng dưới hiện cả 2 nhóm; (e) Sửa/Xóa 1 dòng
     thư viện đang có luồng thật liên quan, xác nhận panel cảnh báo hiện đúng
     luồng, thử cả 3 lựa chọn.
+
+- **Mục 93 (2026-08-17) — Mirror thiết bị-thiết bị: báo rõ khi Trib đích đã bị
+  luồng KHÁC (không cùng tên) chiếm, hỏi xóa+tạo lại thay vì âm thầm bỏ qua.**
+  Phát hiện qua ca thật: luồng "100GE ADN1.P2 (18/1/8) - QTI.PE2 (10/1/2)"
+  (thiết bị P2) đã có mirror đúng bên "ADN1.PSS24X#1 RMT3 (S2-25)" (liên kết
+  qua `mirror_of_id`, tick xanh) — người dùng vô tình NHẬP TRÙNG lần 2 gần
+  giống hệt ("100 ADN1.P2 (18/1/8)...", thiếu "GE" ở interface) trỏ tới ĐÚNG
+  cùng Trib "S2-25" đó. Vì `findMissingDeviceMirrors()` (`lib/deviceDeviceSync.ts`)
+  chỉ sinh `gaps` (đích còn trống) hoặc `mismatches` (đích có luồng CÙNG TÊN
+  nhưng Trib lệch) — ca "đích đã có Trib đó nhưng do 1 luồng KHÁC TÊN chiếm"
+  bị bỏ qua hoàn toàn ở dòng `if (targetOwnTribs.has(targetTribKey)) continue`
+  (trước khi kịp xét tên) — `autoCreateMirrorForCircuit()` trả về "no-gap",
+  `autoMirrorAfterSave()` (`DeviceCircuitList.tsx`) không báo gì, luồng vừa
+  lưu (đã lưu thành công, dữ liệu không mất) đơn giản là mãi không liên kết
+  được, không rõ lý do — đúng câu hỏi người dùng đặt ra.
+
+  Yêu cầu người dùng: "từ đây trở về sau ... đưa ra thông báo cụ thể ... phải
+  xóa luồng ở đầu kia mới tạo mới bên này, vẫn giữ nguyên các nhập liệu mới
+  nhập ... đừng refresh dữ liệu tôi mới nhập". Đối chiếu thấy mirror TRUNG KẾ
+  (`lib/mirrorTrunkCircuits.ts`, `autoCreateTrunkMirrorForCircuit`) đã có ĐÚNG
+  cơ chế này từ trước (status `"occupied"` — hỏi `confirm()` xóa luồng chiếm
+  chỗ + tạo lại, hoặc tự liên kết luôn nếu tên khớp hệt) — chỉ riêng nhánh
+  thiết bị-thiết bị chưa từng làm tới mức đó. Bổ sung cho khớp:
+  - `autoCreateMirrorForCircuit()` (`lib/deviceDeviceSync.ts`): khi không có
+    `gap`/`mismatch`, soi TRỰC TIẾP thêm 1 bước (không đụng thuật toán dùng
+    chung `findMissingDeviceMirrors` — hàm đó còn phục vụ quét hàng loạt ở
+    `syncAllDeviceMirrorGaps`/`/data-quality`, không nên đổi hành vi quét đó):
+    tách `device_position_next` qua `splitOdfDeviceStructure`, tìm luồng nào
+    khác đang thật sự chiếm đúng thiết bị đích + Trib đó. Tên KHÁC nhau ->
+    status mới `"occupied"` (kèm `occupantCircuitId`/`occupantCircuitName`).
+    Tên GIỐNG HỆT nhưng chưa gắn `mirror_of_id` -> tự liên kết ngay, status
+    mới `"linked"` (đối xứng "Case B" đã có của mirror trung kế, không cần
+    hỏi vì chắc chắn cùng 1 luồng).
+  - `DeviceCircuitList.tsx` (`autoMirrorAfterSave()`): thêm nhánh xử lý
+    `status === "occupied"` — `confirm()` báo rõ tên Trib + tên luồng đang
+    chiếm, hỏi "XÓA luồng cũ đó và TẠO LẠI đúng theo luồng vừa lưu?" — đồng ý
+    thì gọi `replaceMismatchedDeviceMirror()` (đã có sẵn, dùng lại nguyên
+    vẹn — xóa `occupantCircuitId` rồi gọi lại `autoCreateMirrorForCircuit`
+    cho đúng luồng vừa lưu). Toàn bộ bước này chạy SAU KHI luồng vừa lưu đã
+    lưu THÀNH CÔNG (đúng yêu cầu "giữ nguyên các nhập liệu mới nhập" — không
+    có gì bị mất dù người dùng bấm Hủy ở hộp thoại; `confirm()` là hộp thoại
+    trình duyệt chặn đồng bộ, không làm mất state React nào, không có
+    `router.refresh()` nào chạy cho tới khi người dùng tự quyết định xong).
+    Áp dụng CHO CẢ Thêm luồng mới lẫn Sửa luồng (`autoMirrorAfterSave` gọi từ
+    cả `submitCreate()` lẫn `saveEdit()`).
+  - Ca dữ liệu đã lỡ trùng lặp ở trên (`"100 ADN1.P2 (18/1/8)..."`, tự đứng
+    riêng, không có mirror) — KHÔNG dùng cách "Sửa rồi Lưu lại" để tự kích
+    hoạt luồng xử lý mới này: vì mirror đúng ĐANG gắn với bản "100GE" gốc rồi,
+    làm vậy sẽ XÓA NHẦM mirror đúng đó và tạo lại trỏ ngược về bản trùng —
+    chỉ cần XÓA THẲNG dòng trùng đó (nút Xóa bình thường) là đủ, không đụng gì
+    tới cặp đã liên kết đúng.
+  - File sửa: `lib/deviceDeviceSync.ts`, `components/odf-device/DeviceCircuitList.tsx`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Cần người dùng tự
+    thử: Thêm/Sửa 1 luồng thiết bị có "Vị trí ODF (tiếp theo)" trỏ đúng 1
+    thiết bị+Trib local ĐANG bị 1 luồng khác tên chiếm — xác nhận có hộp
+    thoại hỏi rõ, chọn Đồng ý thấy luồng cũ bị xóa và mirror mới đúng được
+    tạo; chọn Hủy thấy luồng vừa lưu vẫn còn nguyên, chỉ chưa liên kết.
