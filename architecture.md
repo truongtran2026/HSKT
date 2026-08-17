@@ -5537,3 +5537,51 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     nơi đã có báo lỗi thật. Từ nay, khi VIẾT MỚI hoặc SỬA LẠI bất kỳ form
     Thêm/Sửa nào có state nháp, áp dụng pattern này NGAY TỪ ĐẦU thay vì đợi
     báo lỗi lần 3.
+
+## 99. Sửa lỗ hổng: gõ tọa độ ODF quên chữ "ODF" bị âm thầm coi là free text, bỏ qua kiểm tra rack có thật (2026-08-17)
+
+- **Báo cáo người dùng**: thử nhập ở "Thêm dòng mới" bên Thư viện vị trí
+  thiết bị 1 tọa độ kiểu "11/9/15,16" (thiếu chữ "ODF" ở đầu, đúng chuẩn phải
+  là "ODF 11/9 (15,16)") — không thấy gợi ý chuẩn hóa lại đúng form. Người
+  dùng đoán đúng nguyên nhân (rack "ODF 11/9" chưa tồn tại thật) và yêu cầu:
+  phải báo rõ + CHẶN không cho lưu dòng mới cho tới khi rack đó được tạo thật
+  (vào `/odf-device`/`/odf-trunk`).
+- **Nguyên nhân thật (khác giả thuyết ban đầu)**: `validateLibraryDraft()`
+  (`DevicePositionMapClient.tsx`) ĐÃ CÓ block kiểm tra rack có thật
+  (`matchTrunkPosition` + thông báo lỗi rõ ràng) từ Phần C của đợt sửa trước
+  — nhưng block đó chỉ chạy khi `looksLikeRealPositionText(odfPositionTrimmed)`
+  trả `true`. Hàm này (`lib/deviceNotes.ts`) TRƯỚC ĐÂY coi bất kỳ text nào
+  KHÔNG chứa chữ "odf"/"ddf" là "free text" (mục đích ban đầu: loại trừ giá
+  trị "Kết nối trực tiếp" ra khỏi các kiểm tra uniqueness). Hệ quả phụ không
+  lường trước: gõ 1 tọa độ ODF thật nhưng QUÊN gõ chữ "ODF" cũng bị coi là
+  free text — toàn bộ block kiểm tra rack có thật bị BỎ QUA HOÀN TOÀN, cho
+  lưu thẳng 1 tọa độ không tồn tại mà không báo lỗi gì.
+- **Đã rà thật trước khi sửa** (script tạm, đã xóa sau khi dùng) để chắc chắn
+  không phá vỡ chỗ khác đang dựa vào hàm này: quét toàn bộ
+  `device_position_map.odf_position` (1957 dòng) và `circuits.
+  device_position_own` (2205 dòng, phần "own" — 2 nơi DUY NHẤT gọi thẳng
+  `looksLikeRealPositionText` trên text thô) — giá trị free-text hợp lệ DUY
+  NHẤT từng dùng là chính xác "Kết nối trực tiếp" (không có biến thể nào
+  khác). Phần "next" (`device_position_next`) KHÔNG bao giờ gọi thẳng hàm
+  này (luôn qua `splitOdfDeviceStructure`/`odfPartOf` để tách phần ODF trước
+  — xem `lib/mirrorTrunkCircuits.ts`, `lib/deviceRackPorts.ts`,
+  `lib/devicePositionMap.ts`), nên các giá trị "next" dạng "thiết bị (port)"
+  (vd "OME-MSPP#3 (S22-2)", tồn tại thật, 60 dòng) hoàn toàn không bị ảnh
+  hưởng bởi thay đổi này.
+- **Sửa**: `looksLikeRealPositionText()` đổi lại — chỉ coi là free text khi
+  khớp ĐÚNG "Kết nối trực tiếp" (so khớp qua `normalizeVN`, không phân biệt
+  hoa/thường/dấu), còn lại LUÔN coi là tọa độ thật, bắt buộc phải khớp đúng 1
+  rack có thật trong `/odf-device`/`/odf-trunk` mới được lưu. Không đổi gì ở
+  `DevicePositionMapClient.tsx` — logic block đã có sẵn từ trước, giờ mới
+  thực sự CHẠY ĐÚNG cho mọi trường hợp thay vì chỉ chạy khi người dùng nhớ gõ
+  chữ "ODF"/"DDF".
+- **Tác dụng phụ tích cực**: 2 hàm rà trùng lặp ở `/data-quality`
+  (`findDevicePositionConflicts`, `findDeviceOwnPositionDuplicates` ở
+  `lib/deviceCircuits.ts`, và `findLibraryOwnPositionDuplicates` ở
+  `lib/devicePositionMap.ts`) cũng dùng chung hàm này — trước đây có thể ĐÃ
+  BỎ SÓT xung đột thật nếu 1 trong các dòng trùng lặp thiếu chữ "ODF"/"DDF",
+  giờ quét đúng và đầy đủ hơn.
+- **Dọn kèm**: phát hiện 1 dòng rác test cũ trong `device_position_map`
+  (`device_name="ADN1.3650#1 IPCC"`, `device_position="TEST-TRIB-1"`,
+  `odf_position="TEST-POS-1"`) qua đúng đợt rà dữ liệu này — đã xóa (rõ ràng
+  là dữ liệu test còn sót lại, không phải dữ liệu trạm thật).

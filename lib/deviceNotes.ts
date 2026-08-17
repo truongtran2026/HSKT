@@ -109,10 +109,25 @@ export function normalizeDevicePositionKey(position: string): string {
 // khái niệm device_direct ở architecture.md mục 3.6), không phải tọa độ vật
 // lý thật. Rất nhiều thiết bị khác nhau dùng chung đúng câu chữ này nên nếu
 // đưa vào kiểm tra "1 vị trí không bị 2 thiết bị dùng chung" sẽ báo sai hàng
-// loạt. Chỉ coi là tọa độ thật khi có nhắc tới "ODF"/"DDF".
+// loạt.
+//
+// TRƯỚC ĐÂY hàm này coi bất kỳ text nào KHÔNG chứa chữ "ODF"/"DDF" là free
+// text — có lỗ hổng thật (phát hiện qua báo cáo người dùng 2026-08-17): gõ 1
+// tọa độ ODF nhưng QUÊN gõ chữ "ODF" (vd "11/9/15,16" thay vì chuẩn "ODF 11/9
+// (15,16)") bị coi nhầm là free text, khiến validateLibraryDraft() ở
+// DevicePositionMapClient.tsx ÂM THẦM BỎ QUA bước kiểm tra "rack này có tồn
+// tại thật không" — cho lưu 1 tọa độ ODF không có thật mà không báo lỗi gì.
+// Đã rà thật toàn bộ dữ liệu (2026-08-17): trong `device_position_map.odf_
+// position` (1957 dòng) và `circuits.device_position_own` (2205 dòng, phần
+// "own" — phần "next" KHÔNG dùng hàm này, có thể là cấu trúc "thiết bị (port)"
+// khác hẳn, xem splitOdfDeviceStructure), giá trị free-text hợp lệ DUY NHẤT
+// từng dùng là chính xác "Kết nối trực tiếp" — không có biến thể nào khác.
+// Nên đổi lại: chỉ coi là free text khi khớp ĐÚNG giá trị này, còn lại LUÔN
+// coi là tọa độ thật (bắt buộc phải khớp rack có thật).
+const DIRECT_CONNECTION_TEXT = "Kết nối trực tiếp";
+
 export function looksLikeRealPositionText(position: string): boolean {
-  const n = normalizeVN(position);
-  return n.includes("odf") || n.includes("ddf");
+  return normalizeVN(position).trim() !== normalizeVN(DIRECT_CONNECTION_TEXT);
 }
 
 // scripts/import-legacy.ts tự sinh tên "(chưa đặt tên) <thiết bị> - Trib <n>"
