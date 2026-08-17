@@ -5504,3 +5504,36 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     thử: mở "Thêm luồng mới", gõ dở vài ô, bấm nút Refresh trên bảng — xác
     nhận panel vẫn mở VÀ dữ liệu vừa gõ còn nguyên; tương tự với Sửa 1 luồng
     đang gõ dở rồi bấm Refresh.
+
+- **Mục 98 (2026-08-17) — QUY ĐỊNH CHUNG MỚI (bài học từ Mục 96+97, cùng 1
+  lỗi lặp lại 2 lần ở 2 trang khác nhau): mọi form "Thêm mới"/"Sửa" có state
+  nháp riêng PHẢI lưu vào `sessionStorage`, không đợi người dùng báo lỗi mất
+  dữ liệu rồi mới vá.** Người dùng nhấn mạnh: "lỗi trước bị rồi giờ lặp lại"
+  — đúng, cùng 1 triệu chứng (state form "Thêm mới"/"Sửa" bị mất dù
+  `router.refresh()`/điều hướng KHÔNG lẽ ra không đụng gì tới state Client
+  Component) xảy ra 2 LẦN Ở 2 COMPONENT KHÁC NHAU (`DevicePositionMapClient.tsx`
+  Mục 96, `DeviceCircuitList.tsx` Mục 97) trong CÙNG 1 buổi — rà soát code cả
+  2 lần đều KHÔNG tìm ra nguyên nhân logic rõ ràng trong chính file đó (nghi
+  vấn hàng đầu: đổi trang giữa chừng rồi quay lại — React không có cách nào
+  giữ state qua việc unmount route, đây là giới hạn tự nhiên chứ không phải
+  bug sửa được bằng cách đọc lại code cũ; không loại trừ hoàn toàn khả năng
+  khác vì môi trường này không có trình duyệt để tái hiện trực tiếp). Thay vì
+  tiếp tục vá phản ứng (đợi báo lỗi rồi mới sửa từng trang), CHUYỂN THÀNH QUY
+  ĐỊNH CHỦ ĐỘNG cho MỌI form tương tự sau này trong app:
+  - Bất kỳ state "draft" nào đại diện cho dữ liệu NGƯỜI DÙNG ĐANG GÕ DỞ trong
+    1 form Thêm mới/Sửa (chưa bấm Lưu) — dù ở trang nào — PHẢI lazy-init đọc
+    từ `sessionStorage` (không phải `localStorage` — đây là dữ liệu "đang gõ
+    dở" theo phiên làm việc, không phải tùy chọn cần nhớ lâu dài) + 1
+    `useEffect` ghi lại mỗi khi đổi, theo ĐÚNG khuôn mẫu đã dùng ở Mục 96/97
+    (`loadStoredDraft()`/`loadStoredCreateDraft()`/`loadStoredEdit()` +
+    `useEffect(() => sessionStorage.setItem(...), [state])`).
+  - Tự động dọn key sessionStorage khi form đã xử lý xong (lưu thành công,
+    hoặc bấm Hủy nếu ý muốn là bỏ hẳn) — tái dùng ĐÚNG các lệnh reset-về-rỗng
+    đã có sẵn trong code hiện tại (vd `setDraft(EMPTY_DRAFT)`), không cần
+    thêm code riêng — bản thân effect ghi lại sẽ tự lưu giá trị rỗng đó.
+  - **CHƯA retrofit hết mọi form khác trong app** (vd `PortTable.tsx`,
+    `DeviceCategoryClient.tsx`, `RackListTable.tsx`, `AddDeviceRackForm.tsx`...
+    đều có form Thêm/Sửa riêng, CHƯA áp dụng pattern này) — chỉ mới làm ở 2
+    nơi đã có báo lỗi thật. Từ nay, khi VIẾT MỚI hoặc SỬA LẠI bất kỳ form
+    Thêm/Sửa nào có state nháp, áp dụng pattern này NGAY TỪ ĐẦU thay vì đợi
+    báo lỗi lần 3.
