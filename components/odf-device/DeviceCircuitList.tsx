@@ -231,6 +231,71 @@ const EMPTY_CREATE_DRAFT: CreateDraft = {
   notes: "",
 };
 
+// Lưu tạm khung "Thêm luồng mới"/"Sửa luồng" vào sessionStorage (yêu cầu
+// người dùng 2026-08-17, cùng lớp vấn đề đã sửa cho "Thư viện vị trí thiết
+// bị" — DevicePositionMapClient.tsx: "khi bấm Refresh ở bảng đang xem, các
+// giá trị nhập trong khung Thêm/Sửa luồng nên ổn định" — router.refresh()
+// (RefreshButton) đã được xác nhận nhiều lần là KHÔNG remount Client
+// Component / KHÔNG tự ý xóa state trong file này (rà lại toàn bộ
+// setCreateDraft/setEdit — chỉ có 2 nơi gọi: lúc mở form Thêm mới
+// (openCreate, luôn muốn RỖNG) và SAU KHI lưu/xóa thành công (đúng ý muốn,
+// dọn form)). Không loại trừ được hoàn toàn khả năng mất state do 1 nguyên
+// nhân khác ngoài phạm vi rà soát tĩnh được (đổi trang giữa chừng, hành vi
+// trình duyệt cụ thể...) — dùng CHUNG cách phòng thủ đã áp dụng ở
+// DevicePositionMapClient.tsx: lưu vào `sessionStorage` (sống hết phiên
+// trong tab, mất khi đóng tab — đúng bản chất "đang gõ dở") để khung Thêm/
+// Sửa luồng sống sót qua MỌI tình huống mất state, không cần biết chắc
+// nguyên nhân gốc là gì.
+const CREATE_DRAFT_STORAGE_KEY = "device-circuit-create-draft-v1";
+const CREATING_OPEN_STORAGE_KEY = "device-circuit-create-open-v1";
+const EDIT_DRAFT_STORAGE_KEY = "device-circuit-edit-draft-v1";
+
+function loadStoredCreateDraft(): CreateDraft {
+  if (typeof window === "undefined") return EMPTY_CREATE_DRAFT;
+  try {
+    const raw = window.sessionStorage.getItem(CREATE_DRAFT_STORAGE_KEY);
+    if (!raw) return EMPTY_CREATE_DRAFT;
+    const parsed = JSON.parse(raw) as Partial<CreateDraft>;
+    const out = { ...EMPTY_CREATE_DRAFT };
+    for (const key of Object.keys(out) as (keyof CreateDraft)[]) {
+      if (typeof parsed[key] === "string") out[key] = parsed[key] as string;
+    }
+    return out;
+  } catch {
+    return EMPTY_CREATE_DRAFT;
+  }
+}
+
+function loadStoredCreatingOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.sessionStorage.getItem(CREATING_OPEN_STORAGE_KEY) === "1";
+}
+
+function loadStoredEdit(): EditState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(EDIT_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<EditState>;
+    if (typeof parsed.id !== "string" || !parsed.id) return null;
+    return {
+      id: parsed.id,
+      deviceName: typeof parsed.deviceName === "string" ? parsed.deviceName : null,
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      tribText: typeof parsed.tribText === "string" ? parsed.tribText : "",
+      positionOwn: typeof parsed.positionOwn === "string" ? parsed.positionOwn : "",
+      positionNextOdf: typeof parsed.positionNextOdf === "string" ? parsed.positionNextOdf : "",
+      positionNextDevice: typeof parsed.positionNextDevice === "string" ? parsed.positionNextDevice : "",
+      positionNextTrib: typeof parsed.positionNextTrib === "string" ? parsed.positionNextTrib : "",
+      interfaceType: typeof parsed.interfaceType === "string" ? parsed.interfaceType : "",
+      counterpartText: typeof parsed.counterpartText === "string" ? parsed.counterpartText : "",
+      notes: typeof parsed.notes === "string" ? parsed.notes : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Các trường DÙNG CHUNG giữa form "Thêm luồng mới" và "Sửa luồng" (yêu cầu
 // người dùng 2026-07-27: khung Sửa phải giống hệt khung Thêm, vì bản chất là
 // cùng các trường đó) — chỉ khác ở phần chọn/hiển thị Thiết bị (Thêm được
@@ -365,7 +430,18 @@ export default function DeviceCircuitList({
     counterpart: "",
     notes: "",
   });
-  const [edit, setEdit] = useState<EditState | null>(null);
+  // Lazy init đọc thẳng sessionStorage (xem loadStoredEdit ở trên) — khôi
+  // phục lại đúng dòng đang Sửa + dữ liệu đang gõ dở nếu component này vừa
+  // được tạo lại vì bất kỳ lý do gì (F5, mất state ngoài dự đoán...).
+  const [edit, setEdit] = useState<EditState | null>(loadStoredEdit);
+  useEffect(() => {
+    try {
+      if (edit) window.sessionStorage.setItem(EDIT_DRAFT_STORAGE_KEY, JSON.stringify(edit));
+      else window.sessionStorage.removeItem(EDIT_DRAFT_STORAGE_KEY);
+    } catch {
+      // Best-effort — không quan trọng tới mức phải báo lỗi cho người dùng.
+    }
+  }, [edit]);
   // Toggle panel "Kiểm tra đồng bộ" (yêu cầu người dùng 2026-08-02) — reset
   // về ẩn mỗi khi ĐỔI DÒNG đang sửa (key theo edit.id) để không lỡ hiện panel
   // của dòng cũ khi mở sửa dòng khác.
@@ -427,8 +503,25 @@ export default function DeviceCircuitList({
     counterpart: false,
   });
   const [conflictPage, setConflictPage] = useState(0);
-  const [creating, setCreating] = useState(false);
-  const [createDraft, setCreateDraft] = useState<CreateDraft>(EMPTY_CREATE_DRAFT);
+  const [creating, setCreating] = useState(loadStoredCreatingOpen);
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(CREATING_OPEN_STORAGE_KEY, creating ? "1" : "0");
+    } catch {
+      // Best-effort.
+    }
+  }, [creating]);
+  // Lazy init đọc thẳng sessionStorage (xem loadStoredCreateDraft ở trên) —
+  // khôi phục lại đúng những gì đang gõ dở trong khung "Thêm luồng mới" nếu
+  // component này vừa được tạo lại vì bất kỳ lý do gì.
+  const [createDraft, setCreateDraft] = useState<CreateDraft>(loadStoredCreateDraft);
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(CREATE_DRAFT_STORAGE_KEY, JSON.stringify(createDraft));
+    } catch {
+      // Best-effort.
+    }
+  }, [createDraft]);
 
   // Thư viện "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" (bảng
   // device_position_map, quản lý ở /odf-device/vi-tri-thiet-bi) — dùng để

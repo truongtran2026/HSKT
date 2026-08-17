@@ -5470,3 +5470,37 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     bị) rồi quay lại `/odf-device/vi-tri-thiet-bi` — xác nhận dữ liệu vừa gõ
     còn nguyên; bấm Thêm lưu thành công — xác nhận khung trống lại đúng như
     trước (không còn sót draft cũ).
+
+- **Mục 97 (2026-08-17) — Hồ sơ đấu nối: khung "Thêm luồng mới"/"Sửa luồng"
+  cũng sống sót qua bấm Refresh, cùng cách đã làm ở Mục 96.** Người dùng báo
+  lại ĐÚNG lớp vấn đề vừa sửa cho Thư viện vị trí thiết bị, lần này ở
+  `DeviceCircuitList.tsx` (`/odf-device/sua-luong`): "khi bấm refresh ở bảng
+  đang view... các giá trị nhập [ở khung Thêm luồng mới] thì nên ổn định...
+  ô nào cố định như thiết bị, trib thì giữ lại chứ; hoặc các ô như giao tiếp,
+  đối phương cũng vậy". Lần này rõ ràng là bấm NÚT REFRESH (`RefreshButton`,
+  chỉ gọi `router.refresh()`) — không phải đổi trang như Mục 96. Rà lại toàn
+  bộ `setCreateDraft`/`setEdit` trong file: chỉ 2 nơi gọi — lúc mở form Thêm
+  mới (`openCreate()`, chủ ý luôn muốn RỖNG) và NGAY SAU KHI lưu/xóa thành
+  công (chủ ý dọn form, đúng ý muốn) — không có chỗ nào khác đụng tới 2 state
+  này, `RefreshButton` xác nhận chỉ gọi đúng `router.refresh()` không làm gì
+  thêm. Không loại trừ được hoàn toàn 1 nguyên nhân khác ngoài phạm vi rà
+  soát tĩnh (môi trường này không có trình duyệt để tái hiện trực tiếp) —
+  dùng lại ĐÚNG cách phòng thủ đã áp dụng ở Mục 96 thay vì tiếp tục đoán mò
+  nguyên nhân: lưu vào `sessionStorage`, khôi phục khi component được tạo lại
+  vì bất kỳ lý do gì.
+  - `createDraft` (khung "Thêm luồng mới"), `creating` (panel đang mở hay
+    đóng), và `edit` (khung "Sửa luồng", gồm cả đang sửa dòng nào) — cả 3 đổi
+    sang lazy-init đọc từ `sessionStorage` (`loadStoredCreateDraft()`,
+    `loadStoredCreatingOpen()`, `loadStoredEdit()`), kèm `useEffect` ghi lại
+    mỗi khi đổi. `edit` ghi `null` thì tự `sessionStorage.removeItem()` (khác
+    `createDraft` — object luôn tồn tại, ghi thẳng `EMPTY_CREATE_DRAFT` khi
+    rỗng cũng an toàn).
+  - Tự động dọn sạch key sessionStorage tương ứng NGAY KHI lưu/xóa thành công
+    hay bấm Hủy Sửa (qua đúng các lệnh `setEdit(null)`/`setCreateDraft(EMPTY_CREATE_DRAFT)`/
+    `setCreating(false)` đã có sẵn, không cần thêm code riêng) — không lo draft
+    cũ hiện lại sau khi đã xử lý xong.
+  - File sửa: `components/odf-device/DeviceCircuitList.tsx`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Cần người dùng tự
+    thử: mở "Thêm luồng mới", gõ dở vài ô, bấm nút Refresh trên bảng — xác
+    nhận panel vẫn mở VÀ dữ liệu vừa gõ còn nguyên; tương tự với Sửa 1 luồng
+    đang gõ dở rồi bấm Refresh.
