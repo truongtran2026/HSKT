@@ -54,6 +54,38 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { deviceName: "", devicePosition: "", odfPosition: "" };
 
+// Lưu tạm khung "Thêm dòng mới" vào sessionStorage (yêu cầu người dùng
+// 2026-08-17: "xóa một port... nó reset lại các ô của khung thêm dòng mới —
+// chưa đạt yêu cầu"). Rà lại toàn bộ file xác nhận KHÔNG có hàm nào tự ý gọi
+// `setDraft` ngoài `addRow()` sau khi lưu THÀNH CÔNG (đúng ý muốn) — nên khả
+// năng cao nhất là người dùng đã rời trang này (vd sang sửa/xóa port ở
+// `/odf-device/[rackId]`) rồi quay lại: đó là 1 COMPONENT MỚI hoàn toàn
+// (điều hướng sang route khác luôn hủy state React của trang cũ, không có
+// cách nào giữ lại chỉ bằng state trong component) — không phải lỗi logic
+// trong file này, mà là giới hạn tự nhiên của state React khi đổi trang. Lưu
+// vào `sessionStorage` (còn sống hết phiên làm việc trong tab, mất khi đóng
+// tab — hợp lý cho "đang gõ dở", không nên dùng `localStorage` sống mãi) để
+// khung này sống sót qua MỌI tình huống làm mất state component (đổi trang,
+// refresh cứng F5, hay bất kỳ nguyên nhân nào khác) — không cần biết chính
+// xác nguyên nhân gốc, chỉ cần đảm bảo dữ liệu đang gõ dở không bao giờ mất.
+const DRAFT_STORAGE_KEY = "device-position-map-draft-v1";
+
+function loadStoredDraft(): Draft {
+  if (typeof window === "undefined") return EMPTY_DRAFT;
+  try {
+    const raw = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return EMPTY_DRAFT;
+    const parsed = JSON.parse(raw) as Partial<Draft>;
+    return {
+      deviceName: typeof parsed.deviceName === "string" ? parsed.deviceName : "",
+      devicePosition: typeof parsed.devicePosition === "string" ? parsed.devicePosition : "",
+      odfPosition: typeof parsed.odfPosition === "string" ? parsed.odfPosition : "",
+    };
+  } catch {
+    return EMPTY_DRAFT;
+  }
+}
+
 function draftPreviewActive(d: Draft): boolean {
   return !!(d.deviceName.trim() || d.devicePosition.trim() || d.odfPosition.trim());
 }
@@ -121,7 +153,19 @@ export default function DevicePositionMapClient({
   } = useColumnOrder<AllCol>("device-position-map-col-order-v2", DEFAULT_ALL_ORDER);
   const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<SortKey, string>>({ deviceName: "", devicePosition: "", odfPosition: "" });
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  // Lazy init đọc thẳng sessionStorage (xem loadStoredDraft ở trên) — khôi
+  // phục lại đúng những gì đang gõ dở nếu component này vừa được tạo lại
+  // (đổi trang rồi quay lại, F5, v.v...), không đợi 1 nhịp render rồi mới
+  // nạp (tránh nháy rỗng rồi mới hiện lại).
+  const [draft, setDraft] = useState<Draft>(loadStoredDraft);
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // Best-effort — sessionStorage có thể bị chặn (chế độ ẩn danh khắt khe
+      // v.v...), không quan trọng tới mức phải báo lỗi cho người dùng.
+    }
+  }, [draft]);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);

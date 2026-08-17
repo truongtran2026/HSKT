@@ -5438,3 +5438,35 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Cần người dùng tự
     thử: Thêm 1 luồng mới cho 1 thiết bị đã có sẵn Trib đó (copy y hệt 1 dòng
     cũ) — xác nhận bị chặn, báo rõ tên luồng đang chiếm Trib.
+
+- **Mục 96 (2026-08-17) — Thư viện vị trí thiết bị: khung "Thêm dòng mới"
+  sống sót qua mọi tình huống mất state (đổi trang rồi quay lại, F5...), lưu
+  vào `sessionStorage`.** Người dùng báo: gõ dở khung "Thêm dòng mới", đi Xóa
+  1 dòng khác (ở trang khác, vd port của thiết bị trên `/odf-device/[rackId]`)
+  rồi quay lại — khung "Thêm dòng mới" bị RỖNG, phải gõ lại — dù Mục 92 đã
+  xác nhận không hàm nào TRONG FILE này tự ý gọi `setDraft` khi Sửa/Xóa 1
+  dòng KHÁC ở CHÍNH trang thư viện. Rà lại: đúng, không có bug logic trong
+  `DevicePositionMapClient.tsx` — nhưng nếu người dùng ĐI SANG TRANG KHÁC rồi
+  quay lại (đúng như mô tả "xóa một port của thiết bị kèm odf" — nhiều khả
+  năng là thao tác ở rack ODF/DDF thiết bị, 1 route hoàn toàn khác), đó là
+  COMPONENT MỚI — React state không có cách nào sống sót qua việc đổi route,
+  đây là giới hạn tự nhiên chứ không sửa được bằng cách "không gọi setDraft".
+  - Fix: `draft` (state khung "Thêm dòng mới") đổi sang lazy-init đọc từ
+    `sessionStorage` (`loadStoredDraft()`, key `device-position-map-draft-v1`)
+    thay vì `useState(EMPTY_DRAFT)`, cộng thêm `useEffect` ghi lại
+    `sessionStorage` mỗi khi `draft` đổi. Dùng `sessionStorage` (sống hết
+    phiên trong tab, mất khi đóng tab) chứ không phải `localStorage` (sống
+    mãi) — đúng bản chất "đang gõ dở", không phải 1 tùy chọn cần nhớ lâu dài.
+    Khi `addRow()` lưu thành công và tự `setDraft(EMPTY_DRAFT)` (hành vi cũ,
+    vẫn giữ nguyên), `sessionStorage` cũng tự xóa theo qua chính effect đó —
+    không để sót draft cũ hiện lại sau khi đã lưu xong.
+  - Cách này an toàn dù KHÔNG chắc chắn 100% nguyên nhân gốc là đổi trang hay
+    1 kiểu remount nào khác trong Next.js — sessionStorage phục hồi đúng dữ
+    liệu bất kể nguyên nhân, không cần biết chính xác cơ chế nào đã làm mất
+    state.
+  - File sửa: `components/odf-device/DevicePositionMapClient.tsx`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Cần người dùng tự
+    thử: gõ dở khung "Thêm dòng mới", sang trang khác (vd 1 rack ODF/DDF thiết
+    bị) rồi quay lại `/odf-device/vi-tri-thiet-bi` — xác nhận dữ liệu vừa gõ
+    còn nguyên; bấm Thêm lưu thành công — xác nhận khung trống lại đúng như
+    trước (không còn sót draft cũ).
