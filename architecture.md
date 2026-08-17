@@ -5399,3 +5399,42 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   - File sửa: `lib/deviceDeviceSync.ts`.
   - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Đã backfill xong 9
     cặp cũ (log đầy đủ trong lịch sử chạy script, không lặp lại ở đây).
+
+- **Mục 95 (2026-08-17) — Chặn NGAY LÚC LƯU khi 1 thiết bị bị nhập trùng 2
+  luồng cùng 1 Trib.** Truy lại tận gốc ca trùng lặp ở Mục 93: circuit
+  `29ccdf95` (đã xóa) và `657d6e12` từng cùng tồn tại với CÙNG `device_id`
+  (ADN1.P2) + CÙNG `trib_text` ("18/1/8") — không có gì trong app chặn việc
+  này trước đây; người ta chỉ phát hiện được nhờ TRIỆU CHỨNG phụ (mirror
+  "chưa liên kết" bất thường), không phải cảnh báo trực tiếp. Người dùng hỏi
+  thẳng: "phải có cơ chế gì để không xảy ra hiện tượng tương tự". Bản chất:
+  **1 Trib = 1 port vật lý cụ thể trên 1 thiết bị — không có trường hợp hợp
+  lệ nào để 2 dòng `circuits` cùng lúc dùng chung 1 cặp (`device_id`,
+  `trib_text`)** (khác hẳn rule "1 Vị trí ODF dùng chung nhiều Trib qua 'Kết
+  nối trực tiếp'" ở `lib/devicePositionMap.ts` — đó là chiều NGƯỢC và có
+  ngoại lệ, còn đây chính Trib bị trùng thì KHÔNG có ngoại lệ nào).
+  - `findDuplicateDeviceTrib(deviceId, tribText, excludeId)` (hàm mới trong
+    `components/odf-device/DeviceCircuitList.tsx`, dùng `circuits` prop đã
+    tải sẵn — không cần query thêm): tìm 1 luồng KHÁC (loại trừ chính nó khi
+    Sửa) có cùng `deviceId` + Trib khớp `normalizeDevicePositionKey`.
+  - Gắn CHẶN LƯU (không phải cảnh báo mềm) ở CẢ `submitCreate()` (Thêm luồng
+    mới — theo `createDraft.deviceId`) lẫn `saveEdit()` (Sửa luồng — tra lại
+    `deviceId` gốc từ `circuits` qua `edit.id`, vì `EditState` không giữ sẵn
+    field này, thiết bị vốn cố định khi Sửa) — đặt NGAY SAU bước kiểm tra
+    thiếu trường bắt buộc (`findMissingRequiredFields`), TRƯỚC mọi bước ghi
+    CSDL khác. Lỗi hiện rõ tên luồng đang chiếm Trib đó, hướng dẫn sửa/xóa
+    luồng cũ nếu là cùng 1 luồng, hoặc kiểm tra lại Trib nếu thực ra khác.
+  - **Phạm vi**: chỉ chặn được đường NHẬP TAY qua UI (`/odf-device/sua-luong`)
+    — đúng đường đã gây ra ca thật. Các script quản trị ghi thẳng CSDL (vd
+    `syncAllDeviceMirrorGaps`) không đi qua chốt này, nhưng đã có chốt RIÊNG
+    từ Mục 93 (`autoCreateMirrorForCircuit` không tạo mirror trùng khi Trib
+    đích đã có luồng khác — trả "occupied"/"linked"), không phải khoảng
+    trống bỏ ngỏ. Chưa làm thêm 1 panel rà soát THỤ ĐỘNG kiểu "Xung đột vị
+    trí" (`positionConflicts`, đã có sẵn ở cuối trang) cho riêng trùng lặp
+    Trib — vì chốt CHẶN LƯU ở đây đã giải quyết đúng nguyên nhân gốc (nhập
+    tay 2 lần) và dữ liệu hiện tại đã sạch (ca duy nhất phát hiện được đã xóa
+    ở Mục 93); có thể bổ sung sau nếu phát sinh thêm ca tương tự từ nguồn
+    khác.
+  - File sửa: `components/odf-device/DeviceCircuitList.tsx`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Cần người dùng tự
+    thử: Thêm 1 luồng mới cho 1 thiết bị đã có sẵn Trib đó (copy y hệt 1 dòng
+    cũ) — xác nhận bị chặn, báo rõ tên luồng đang chiếm Trib.

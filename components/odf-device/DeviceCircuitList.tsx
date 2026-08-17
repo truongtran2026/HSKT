@@ -845,6 +845,24 @@ export default function DeviceCircuitList({
     return missing;
   }
 
+  // Chặn TRÙNG LẶP thiết bị+Trib (yêu cầu người dùng 2026-08-17, sau ca thật
+  // nhập trùng y hệt 1 luồng lần 2 — dữ liệu này chỉ phát hiện được RA nhờ
+  // trạng thái liên kết mirror "chưa liên kết" bất thường, người dùng phải tự
+  // hỏi mới lần ra: "về nguyên tắc là phải xóa chứ sao để một luồng mà giống
+  // nhau y hệt port ra vậy được"). Trib LÀ 1 port vật lý cụ thể trên 1 thiết
+  // bị — không có trường hợp hợp lệ nào để 2 dòng `circuits` cùng
+  // `device_id` + cùng Trib cùng tồn tại (khác hẳn rule "1 Vị trí ODF dùng
+  // chung nhiều Trib" ở `lib/devicePositionMap.ts` — đó là chiều NGƯỢC, qua
+  // "Kết nối trực tiếp"; ở ĐÂY chính Trib bị trùng, không có ngoại lệ). Chặn
+  // NGAY LÚC LƯU (Thêm mới lẫn Sửa) thay vì chỉ phát hiện thụ động sau này ở
+  // /data-quality — đúng tinh thần "be first the gate", không để lọt vào rồi
+  // mới dọn.
+  function findDuplicateDeviceTrib(deviceId: string | null, tribText: string, excludeId: string | null): DeviceCircuitRow | null {
+    const tribKey = normalizeDevicePositionKey(tribText);
+    if (!deviceId || !tribKey) return null;
+    return circuits.find((c) => c.id !== excludeId && c.deviceId === deviceId && normalizeDevicePositionKey(c.tribText ?? "") === tribKey) ?? null;
+  }
+
   // Cuộn tới đúng dòng + tô sáng tạm thời khi hash là "#dc-<id>" — cả lúc
   // vào trang lần đầu (vd link ngoài) lẫn khi bấm link "trùng vị trí" ngay
   // trong CÙNG trang này (danh sách trùng vị trí giờ nằm chung 1 trang, xem
@@ -1296,6 +1314,19 @@ export default function DeviceCircuitList({
       setError(`Vui lòng nhập đủ: ${missingFields.join(", ")}.`);
       return;
     }
+    // Chặn trùng thiết bị+Trib với 1 luồng KHÁC đã có sẵn (xem
+    // findDuplicateDeviceTrib) — kiểm tra theo deviceId gốc của chính luồng
+    // đang sửa (edit không cho đổi thiết bị, chỉ cần tra lại từ `circuits`).
+    const originalCircuit = circuits.find((c) => c.id === edit.id);
+    const dupTrib = findDuplicateDeviceTrib(originalCircuit?.deviceId ?? null, edit.tribText, edit.id);
+    if (dupTrib) {
+      setError(
+        `Thiết bị "${edit.deviceName ?? originalCircuit?.deviceName ?? "?"}" đã có 1 luồng KHÁC ở đúng Trib "${edit.tribText.trim()}": "${
+          dupTrib.name
+        }" — 1 Trib chỉ mang được ĐÚNG 1 luồng (là 1 port vật lý cụ thể). Sửa/xóa luồng đó trước nếu đây là cùng 1 luồng, hoặc kiểm tra lại Trib vừa nhập nếu thực ra là 2 luồng khác nhau.`
+      );
+      return;
+    }
     // Chặn lưu TOÀN BỘ khi luồng ĐÃ liên kết và Vị trí ODF (thiết bị)/Vị trí
     // ODF (tiếp theo)/Trib vừa đổi sang SỐ LIỆU THẬT khác (yêu cầu người
     // dùng 2026-08-02, bước 2/6 — đối xứng chốt chặn ở PortTable.tsx
@@ -1644,6 +1675,19 @@ export default function DeviceCircuitList({
     const missingFields = findMissingRequiredFields(createDraft, isCableMode);
     if (missingFields.length > 0) {
       setError(`Vui lòng nhập đủ: ${missingFields.join(", ")}.`);
+      return;
+    }
+    // Chặn trùng thiết bị+Trib với 1 luồng KHÁC đã có sẵn (xem
+    // findDuplicateDeviceTrib) — đúng ca thật gây ra bug "nhập trùng luồng
+    // lần 2" (2026-08-17), chặn ngay từ đây thay vì để lọt vào rồi mới phát
+    // hiện qua triệu chứng "chưa liên kết được".
+    const dupTrib = findDuplicateDeviceTrib(createDraft.deviceId, createDraft.tribText, null);
+    if (dupTrib) {
+      setError(
+        `Thiết bị này đã có 1 luồng KHÁC ở đúng Trib "${createDraft.tribText.trim()}": "${
+          dupTrib.name
+        }" — 1 Trib chỉ mang được ĐÚNG 1 luồng (là 1 port vật lý cụ thể). Sửa luồng đó thay vì thêm mới nếu đây là cùng 1 luồng, hoặc kiểm tra lại Trib vừa nhập nếu thực ra là 2 luồng khác nhau.`
+      );
       return;
     }
     setBusy(true);
