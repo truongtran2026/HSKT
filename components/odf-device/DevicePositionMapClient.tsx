@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -14,15 +14,15 @@ import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { useColumnOrder } from "@/lib/useColumnOrder";
 import { matchTrunkPosition, formatCanonicalOdfPosition, type TrunkPortRow } from "@/lib/trunkPorts";
 import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
+import { findMirrorTrunkCircuits, cleanupAfterMirrorCascade } from "@/lib/mirrorTrunkCircuits";
 import { translatePgError } from "@/lib/translatePgError";
 import DataTh from "@/components/ui/DataTh";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import RefreshButton from "@/components/ui/RefreshButton";
-import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
-import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
+import { findCircuitsUsingLibraryRow, type DevicePositionMapRow, type RelatedCircuitRef } from "@/lib/devicePositionMap";
 import type { DeviceRow } from "@/lib/devices";
 
 type SortKey = "deviceName" | "devicePosition" | "odfPosition";
@@ -53,6 +53,30 @@ interface Draft {
 }
 
 const EMPTY_DRAFT: Draft = { deviceName: "", devicePosition: "", odfPosition: "" };
+
+function draftPreviewActive(d: Draft): boolean {
+  return !!(d.deviceName.trim() || d.devicePosition.trim() || d.odfPosition.trim());
+}
+
+// Lọc bảng chính theo khung "Thêm dòng mới" đang gõ dở (yêu cầu người dùng
+// 2026-08-17) — để soi trùng lặp TRƯỚC khi bấm Thêm: gõ Thiết bị+Trib -> chỉ
+// còn các dòng khớp thiết bị+trib đó (để biết đã có chưa); gõ thêm ô ODF thì
+// bảng HIỆN THÊM (OR, không thay bộ lọc thiết bị+trib) bất kỳ dòng nào (dù
+// thiết bị/trib khác) đang trùng đúng ODF đó — phát hiện port đã bị thiết bị
+// khác chiếm trước khi lưu nhầm/ghi đè. Không dùng chung matchesFilter AND
+// như bộ lọc cột (đó là lọc thu hẹp thông thường) vì đây là 2 nhóm câu hỏi
+// khác nhau ("dòng này giống gì tôi sắp thêm" và "ODF này đã bị ai chiếm"),
+// cố tình OR để không bỏ sót nhóm thứ 2.
+function matchesDraftPreview(r: DevicePositionMapRow, d: Draft): boolean {
+  const deviceQ = d.deviceName.trim();
+  const posQ = d.devicePosition.trim();
+  const odfQ = d.odfPosition.trim();
+  const hasIdentity = !!(deviceQ || posQ);
+  const hasOdf = !!odfQ;
+  const identityMatch = hasIdentity && (!deviceQ || matchesFilter(r.deviceName, deviceQ)) && (!posQ || matchesFilter(r.devicePosition, posQ));
+  const odfMatch = hasOdf && matchesFilter(r.odfPosition, odfQ);
+  return identityMatch || odfMatch;
+}
 
 // Tên thiết bị luôn hiện — 2 cột còn lại ẩn/hiện được (quy định chung mọi
 // bảng, xem architecture.md).
@@ -97,23 +121,36 @@ export default function DevicePositionMapClient({
   } = useColumnOrder<AllCol>("device-position-map-col-order-v2", DEFAULT_ALL_ORDER);
   const orderedAll = colOrder.filter((col) => STRUCTURAL_COLUMNS.has(col) || visible[col as VisibleCol]);
   const [filters, setFilters] = useState<Record<SortKey, string>>({ deviceName: "", devicePosition: "", odfPosition: "" });
-  // Mặc định KHÔNG hiện bảng (yêu cầu người dùng 2026-08-08) — chỉ hiện khi
-  // đã lọc theo lĩnh vực THẬT hoặc chủ động bấm "Xem tất cả".
-  const [viewAll, setViewAll] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Cảnh báo khi dòng vừa Thêm bị CHÍNH bộ lọc/lĩnh vực đang chọn ẩn mất khỏi
-  // bảng ngay sau khi lưu — lỗi thực tế gặp phải 2026-07-29 (tưởng bấm Thêm
-  // không có tác dụng, thật ra dữ liệu đã lưu đúng, chỉ là đang bị lọc ẩn).
-  // Không tự ý xóa bộ lọc thay người dùng (có thể họ đang cố tình lọc theo 1
-  // lĩnh vực để thêm liên tiếp nhiều dòng cùng loại) — chỉ báo rõ + có nút để
-  // tự bỏ lọc nếu muốn xem ngay.
-  const [addHiddenNotice, setAddHiddenNotice] = useState<string | null>(null);
+  // Banner xác nhận Thêm/Sửa/Xóa đã thành công (yêu cầu người dùng 2026-08-17
+  // — trước đó chỉ có cảnh báo cho ca "Thêm xong nhưng bị bộ lọc ẩn mất",
+  // giờ gộp chung cho cả 3 thao tác để luôn biết chắc đã lưu/xóa xong).
+  // `highlightId`: id dòng vừa Thêm/Sửa — dùng để cuộn tới + nháy viền xanh
+  // (xem useEffect bên dưới), không áp dụng cho Xóa (dòng không còn nữa).
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string[] | null>(null); // null = tất cả lĩnh vực
-  const scopeChosen = viewAll || categoryFilter !== null;
+
+  // Cuộn tới + nháy viền xanh dòng vừa Thêm/Sửa (yêu cầu người dùng
+  // 2026-08-17: "phải hiện ra tôi mới biết là thêm thành công hay chưa") —
+  // đợi tới khi `rows` (prop mới sau router.refresh()) THẬT SỰ chứa id đó
+  // rồi mới cuộn (tránh cuộn hụt khi DOM dòng đó chưa kịp render).
+  useEffect(() => {
+    if (!highlightId) return;
+    if (!rows.some((r) => r.id === highlightId)) return;
+    const el = document.getElementById(`dpm-row-${highlightId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = setTimeout(() => setHighlightId(null), 3000);
+    return () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    };
+  }, [highlightId, rows]);
   // Mặc định MỞ SẴN (không thu gọn) — người dùng phản hồi 2026-07-27: bấm
   // lọc "Chưa phân loại" ở khung Lĩnh vực chỉ lọc bảng bên dưới, không liên
   // quan gì tới khung này, nên nếu thu gọn sẵn thì không biết chỗ nào để
@@ -125,6 +162,21 @@ export default function DevicePositionMapClient({
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  // Cảnh báo luồng thiết bị (circuits) đang phụ thuộc đúng dòng thư viện sắp
+  // Sửa/Xóa (yêu cầu người dùng 2026-08-17: "thư viện xóa mà luồng vẫn còn
+  // thì ko logic") — set khi findCircuitsUsingLibraryRow() tìm thấy kết quả,
+  // chặn thao tác thật lại chờ người dùng chọn 1 trong 3 lựa chọn ở panel
+  // (xem renderRelatedCircuitsPanel bên dưới).
+  interface RelatedCircuitsPrompt {
+    action: "edit" | "delete";
+    row: DevicePositionMapRow;
+    editDraft?: Draft; // chỉ có khi action="edit" — dữ liệu đã validate xong, chờ xác nhận cascade rồi mới lưu
+    matches: RelatedCircuitRef[];
+    selectedIds: Set<string>;
+  }
+  const [relatedCircuitsPrompt, setRelatedCircuitsPrompt] = useState<RelatedCircuitsPrompt | null>(null);
+  const [circuitCheckBusy, setCircuitCheckBusy] = useState(false);
+
   const deviceNameOptions = useMemo(() => devices.map((d) => d.name), [devices]);
 
   const realCategoryOptions = useMemo(() => {
@@ -135,7 +187,7 @@ export default function DevicePositionMapClient({
 
   function setFilter(key: SortKey, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
-    setAddHiddenNotice(null);
+    setSaveNotice(null);
   }
 
   const odfPositionOptions = useMemo(() => {
@@ -291,15 +343,11 @@ export default function DevicePositionMapClient({
       }
       return [...prev, cat];
     });
-    setAddHiddenNotice(null);
+    setSaveNotice(null);
   }
 
   function resetCategory() {
-    // Bấm "Tất cả" là 1 lựa chọn CHỦ ĐỘNG — coi như viewAll luôn (cùng cách
-    // đã làm ở DeviceCircuitList.tsx).
     setCategoryFilter(null);
-    setViewAll(true);
-    setAddHiddenNotice(null);
   }
 
   const filtered = useMemo(() => {
@@ -313,9 +361,10 @@ export default function DevicePositionMapClient({
       const set = new Set(categoryFilter);
       list = list.filter((r) => set.has(rowCategory(r)));
     }
+    if (draftPreviewActive(draft)) list = list.filter((r) => matchesDraftPreview(r, draft));
     const arr = [...list].sort((a, b) => compareByKey(sortKey, a, b));
     return sortDir === "desc" ? arr.reverse() : arr;
-  }, [rows, filters, categoryFilter, categoryByDeviceKey, sortKey, sortDir]);
+  }, [rows, filters, categoryFilter, categoryByDeviceKey, sortKey, sortDir, draft]);
 
   const exportColumns = useMemo(() => {
     const cols: { label: string; getValue: (r: DevicePositionMapRow) => string | number | null }[] = [
@@ -425,15 +474,15 @@ export default function DevicePositionMapClient({
       return;
     }
     setBusy(true);
-    setAddHiddenNotice(null);
+    setSaveNotice(null);
     const deviceName = validated.canonicalDeviceName;
     const devicePosition = draft.devicePosition.trim();
     const odfPosition = draft.odfPosition.trim();
-    const { error: err } = await supabase.from("device_position_map").insert({
-      device_name: deviceName,
-      device_position: devicePosition,
-      odf_position: odfPosition,
-    });
+    const { data: inserted, error: err } = await supabase
+      .from("device_position_map")
+      .insert({ device_name: deviceName, device_position: devicePosition, odf_position: odfPosition })
+      .select("id")
+      .single();
     setBusy(false);
     if (err) {
       setError(translatePgError(err.message));
@@ -441,17 +490,19 @@ export default function DevicePositionMapClient({
     }
 
     // Kiểm tra ngay: dòng vừa lưu có bị bộ lọc cột HOẶC chip Lĩnh vực đang
-    // chọn loại khỏi bảng không — xem ghi chú ở khai báo addHiddenNotice.
+    // chọn loại khỏi bảng không — xem ghi chú ở khai báo saveNotice.
     const passesColumnFilters =
       matchesFilter(deviceName, filters.deviceName) &&
       matchesFilter(devicePosition, filters.devicePosition) &&
       matchesFilter(odfPosition, filters.odfPosition);
     const newRowCategory = categoryByDeviceKey.get(normalizeDeviceNameKey(deviceName)) ?? UNCATEGORIZED_LABEL;
     const passesCategory = categoryFilter === null || categoryFilter.includes(newRowCategory);
-    if (!passesColumnFilters || !passesCategory) {
-      setAddHiddenNotice(`Đã lưu dòng mới ("${deviceName}"), nhưng đang bị ẩn bởi bộ lọc hiện tại.`);
-    }
-
+    setSaveNotice(
+      !passesColumnFilters || !passesCategory
+        ? `Đã lưu dòng mới ("${deviceName}"), nhưng đang bị ẩn bởi bộ lọc hiện tại.`
+        : `Đã lưu dòng mới ("${deviceName}" — "${devicePosition}" — "${odfPosition}").`
+    );
+    setHighlightId(inserted?.id ?? null);
     setDraft(EMPTY_DRAFT);
     router.refresh();
   }
@@ -467,6 +518,27 @@ export default function DevicePositionMapClient({
     setError(null);
   }
 
+  // Thực thi THẬT sự lệnh Sửa (đã qua validate + đã qua bước hỏi cascade nếu
+  // cần) — tách riêng khỏi saveEdit() vì có 2 lối gọi tới: lưu thẳng (không
+  // có luồng liên quan) hoặc lưu sau khi người dùng đã chọn xong ở panel
+  // cảnh báo (xem renderRelatedCircuitsPanel).
+  async function performSaveEdit(id: string, canonicalDeviceName: string, d: Draft) {
+    setBusy(true);
+    const { error: err } = await supabase
+      .from("device_position_map")
+      .update({ device_name: canonicalDeviceName, device_position: d.devicePosition.trim(), odf_position: d.odfPosition.trim() })
+      .eq("id", id);
+    setBusy(false);
+    if (err) {
+      setError(translatePgError(err.message));
+      return;
+    }
+    setSaveNotice(`Đã sửa dòng ("${canonicalDeviceName}" — "${d.devicePosition.trim()}" — "${d.odfPosition.trim()}").`);
+    setHighlightId(id);
+    setEditId(null);
+    router.refresh();
+  }
+
   async function saveEdit() {
     if (!editId) return;
     setError(null);
@@ -475,26 +547,36 @@ export default function DevicePositionMapClient({
       setError(validated.error);
       return;
     }
-    setBusy(true);
-    const { error: err } = await supabase
-      .from("device_position_map")
-      .update({
-        device_name: validated.canonicalDeviceName,
-        device_position: editDraft.devicePosition.trim(),
-        odf_position: editDraft.odfPosition.trim(),
-      })
-      .eq("id", editId);
-    setBusy(false);
-    if (err) {
-      setError(translatePgError(err.message));
-      return;
+    const oldRow = rows.find((r) => r.id === editId);
+    const identityChanged =
+      !oldRow ||
+      normalizeDeviceNameKey(oldRow.deviceName) !== normalizeDeviceNameKey(validated.canonicalDeviceName) ||
+      normalizeDevicePositionKey(oldRow.devicePosition ?? "") !== normalizeDevicePositionKey(editDraft.devicePosition) ||
+      normalizeDevicePositionKey(oldRow.odfPosition ?? "") !== normalizeDevicePositionKey(editDraft.odfPosition);
+    if (oldRow && identityChanged) {
+      setCircuitCheckBusy(true);
+      let matches: RelatedCircuitRef[] = [];
+      try {
+        matches = await findCircuitsUsingLibraryRow(supabase, {
+          deviceName: oldRow.deviceName,
+          devicePosition: oldRow.devicePosition ?? "",
+          odfPosition: oldRow.odfPosition ?? "",
+        });
+      } catch (e) {
+        setCircuitCheckBusy(false);
+        setError(e instanceof Error ? translatePgError(e.message) : String(e));
+        return;
+      }
+      setCircuitCheckBusy(false);
+      if (matches.length > 0) {
+        setRelatedCircuitsPrompt({ action: "edit", row: oldRow, editDraft, matches, selectedIds: new Set() });
+        return;
+      }
     }
-    setEditId(null);
-    router.refresh();
+    await performSaveEdit(editId, validated.canonicalDeviceName, editDraft);
   }
 
-  async function deleteRow(r: DevicePositionMapRow) {
-    if (!confirm(`Xóa dòng "${r.deviceName}" — "${r.devicePosition ?? ""}" — "${r.odfPosition ?? ""}"?`)) return;
+  async function performDeleteRow(r: DevicePositionMapRow) {
     setBusy(true);
     setError(null);
     const { error: err } = await supabase.from("device_position_map").delete().eq("id", r.id);
@@ -503,7 +585,89 @@ export default function DevicePositionMapClient({
       setError(translatePgError(err.message));
       return;
     }
+    setSaveNotice(`Đã xóa dòng ("${r.deviceName}" — "${r.devicePosition ?? ""}" — "${r.odfPosition ?? ""}").`);
     router.refresh();
+  }
+
+  async function deleteRow(r: DevicePositionMapRow) {
+    setError(null);
+    setCircuitCheckBusy(true);
+    let matches: RelatedCircuitRef[] = [];
+    try {
+      matches = await findCircuitsUsingLibraryRow(supabase, {
+        deviceName: r.deviceName,
+        devicePosition: r.devicePosition ?? "",
+        odfPosition: r.odfPosition ?? "",
+      });
+    } catch (e) {
+      setCircuitCheckBusy(false);
+      setError(e instanceof Error ? translatePgError(e.message) : String(e));
+      return;
+    }
+    setCircuitCheckBusy(false);
+    if (matches.length > 0) {
+      setRelatedCircuitsPrompt({ action: "delete", row: r, matches, selectedIds: new Set() });
+      return;
+    }
+    // Không có luồng nào liên quan — giữ nguyên hành vi confirm() gọn như cũ.
+    if (!confirm(`Xóa dòng "${r.deviceName}" — "${r.devicePosition ?? ""}" — "${r.odfPosition ?? ""}"?`)) return;
+    await performDeleteRow(r);
+  }
+
+  // Xóa hàng loạt luồng THẬT (circuits) đã tick trong panel cảnh báo — tái
+  // dùng ĐÚNG quy trình an toàn của DeviceCircuitList.tsx (tra mirror trung
+  // kế TRƯỚC khi xóa, dọn ports/transit_links SAU khi xóa) để không để sót
+  // mirror mồ côi, xem lib/mirrorTrunkCircuits.ts.
+  async function deleteCircuitsCascade(ids: string[]) {
+    if (ids.length === 0) return;
+    const mirrors = [...(await findMirrorTrunkCircuits(supabase, ids)).values()];
+    const { error: err } = await supabase.from("circuits").delete().in("id", ids);
+    if (err) throw err;
+    if (mirrors.length > 0) await cleanupAfterMirrorCascade(supabase, mirrors);
+  }
+
+  function toggleRelatedCircuitSelect(id: string) {
+    setRelatedCircuitsPrompt((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev.selectedIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { ...prev, selectedIds: next };
+    });
+  }
+
+  // 3 lựa chọn ở panel cảnh báo (xem renderRelatedCircuitsPanel): giữ
+  // nguyên các luồng, xóa các luồng đã tick trước khi Sửa/Xóa thư viện, hoặc
+  // hủy toàn bộ (không đụng gì).
+  async function resolveRelatedCircuitsPrompt(mode: "onlyLibrary" | "withCircuits" | "cancel") {
+    const prompt = relatedCircuitsPrompt;
+    if (!prompt) return;
+    if (mode === "cancel") {
+      setRelatedCircuitsPrompt(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === "withCircuits" && prompt.selectedIds.size > 0) {
+        await deleteCircuitsCascade([...prompt.selectedIds]);
+      }
+    } catch (e) {
+      setBusy(false);
+      setError(`Xóa luồng liên quan thất bại, CHƯA thực hiện thao tác thư viện: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
+      return;
+    }
+    setBusy(false);
+    setRelatedCircuitsPrompt(null);
+    if (prompt.action === "delete") {
+      await performDeleteRow(prompt.row);
+    } else {
+      const validated = validateLibraryDraft(prompt.editDraft!, prompt.row.id);
+      if ("error" in validated) {
+        setError(validated.error); // Không thể xảy ra thực tế (đã validate ở saveEdit() trước khi mở panel) — phòng hờ.
+        return;
+      }
+      await performSaveEdit(prompt.row.id, validated.canonicalDeviceName, prompt.editDraft!);
+    }
   }
 
   function colWidthOf(col: AllCol): number {
@@ -661,10 +825,22 @@ export default function DevicePositionMapClient({
           <td key={col} className="px-3 py-2">
             <RoleGate allow={["operator", "admin"]}>
               <div className="flex gap-2">
-                <button className="text-primary-600 hover:underline" onClick={() => openEdit(r)} disabled={busy} title="Sửa" aria-label="Sửa">
+                <button
+                  className="text-primary-600 hover:underline disabled:opacity-50"
+                  onClick={() => openEdit(r)}
+                  disabled={busy || circuitCheckBusy}
+                  title="Sửa"
+                  aria-label="Sửa"
+                >
                   <IconEdit />
                 </button>
-                <button className="text-red-600 hover:underline" onClick={() => deleteRow(r)} disabled={busy} title="Xóa" aria-label="Xóa">
+                <button
+                  className="text-red-600 hover:underline disabled:opacity-50"
+                  onClick={() => deleteRow(r)}
+                  disabled={busy || circuitCheckBusy}
+                  title={circuitCheckBusy ? "Đang kiểm tra luồng liên quan..." : "Xóa"}
+                  aria-label="Xóa"
+                >
                   <IconTrash />
                 </button>
               </div>
@@ -672,6 +848,53 @@ export default function DevicePositionMapClient({
           </td>
         );
     }
+  }
+
+  // Panel cảnh báo khi Sửa/Xóa 1 dòng thư viện đang có luồng THẬT (circuits)
+  // tham chiếu đúng vị trí đó (yêu cầu người dùng 2026-08-17: "thư viện xóa
+  // mà luồng vẫn còn thì ko logic") — xem findCircuitsUsingLibraryRow() ở
+  // lib/devicePositionMap.ts. Checkbox mặc định KHÔNG tick (không tự chọn
+  // xóa hộ luồng thật thay người dùng).
+  function renderRelatedCircuitsPanel(prompt: {
+    action: "edit" | "delete";
+    row: DevicePositionMapRow;
+    matches: RelatedCircuitRef[];
+    selectedIds: Set<string>;
+  }) {
+    const actionLabel = prompt.action === "delete" ? "Xóa" : "Sửa";
+    return (
+      <div className="mb-4 rounded-lg border border-red-200 bg-red-50/60 p-3">
+        <p className="text-sm font-medium text-red-800">
+          {actionLabel} dòng thư viện "{prompt.row.deviceName}" — "{prompt.row.devicePosition ?? ""}" — "{prompt.row.odfPosition ?? ""}
+          " sẽ khiến {prompt.matches.length} luồng thiết bị sau LỆCH khỏi thư viện (Hồ sơ đấu nối):
+        </p>
+        <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+          {prompt.matches.map((m) => (
+            <label key={m.id} className="flex items-start gap-2 rounded-md border border-red-100 bg-white p-2 text-sm hover:bg-red-50/40">
+              <input type="checkbox" className="mt-1" checked={prompt.selectedIds.has(m.id)} onChange={() => toggleRelatedCircuitSelect(m.id)} />
+              <span>
+                <span className="text-slate-700">{m.name || "(chưa đặt tên)"}</span>
+                <span className="ml-2 text-xs text-slate-400">
+                  — {m.side === "own" ? "luồng của chính thiết bị/Trib này" : `luồng của thiết bị khác (${m.deviceName ?? "?"} — ${m.tribText ?? ""})`}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-red-700">Tick chọn luồng muốn XÓA LUÔN (không thể hoàn tác), hoặc để trống nếu chỉ muốn {actionLabel.toLowerCase()} thư viện.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className="btn-primary" onClick={() => resolveRelatedCircuitsPrompt("withCircuits")} disabled={busy}>
+            {actionLabel} thư viện + xóa luồng đã tick ({prompt.selectedIds.size})
+          </button>
+          <button className="btn-secondary" onClick={() => resolveRelatedCircuitsPrompt("onlyLibrary")} disabled={busy}>
+            Chỉ {actionLabel.toLowerCase()} thư viện, giữ nguyên luồng
+          </button>
+          <button className="text-sm text-slate-500 hover:underline" onClick={() => resolveRelatedCircuitsPrompt("cancel")} disabled={busy}>
+            Hủy
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -722,24 +945,27 @@ export default function DevicePositionMapClient({
             </button>
           </RoleGate>
         </div>
-        {addHiddenNotice && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <span>{addHiddenNotice}</span>
-            <button
-              type="button"
-              className="font-medium underline hover:text-amber-900"
-              onClick={() => {
-                setFilters({ deviceName: "", devicePosition: "", odfPosition: "" });
-                setCategoryFilter(null);
-                setViewAll(true);
-                setAddHiddenNotice(null);
-              }}
-            >
-              Bỏ lọc để xem
-            </button>
+        {saveNotice && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            <span>{saveNotice}</span>
+            {(Object.values(filters).some((v) => v) || categoryFilter !== null || draftPreviewActive(draft)) && (
+              <button
+                type="button"
+                className="font-medium underline hover:text-emerald-900"
+                onClick={() => {
+                  setFilters({ deviceName: "", devicePosition: "", odfPosition: "" });
+                  setCategoryFilter(null);
+                  setSaveNotice(null);
+                }}
+              >
+                Bỏ lọc để xem
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {relatedCircuitsPrompt && renderRelatedCircuitsPanel(relatedCircuitsPrompt)}
 
       <div className="mb-4">
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Lĩnh vực</p>
@@ -889,7 +1115,6 @@ export default function DevicePositionMapClient({
         </div>
       </div>
 
-      <EmptyUntilFiltered active={scopeChosen} onShowAll={() => setViewAll(true)} prompt="Chọn lĩnh vực ở trên để xem, hoặc">
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full table-fixed text-sm">
           <colgroup>
@@ -904,10 +1129,14 @@ export default function DevicePositionMapClient({
             {filtered.map((r) => {
               const editing = editId === r.id;
               const unmatched = !existingDeviceKeys.has(normalizeDeviceNameKey(r.deviceName));
+              const highlighted = r.id === highlightId;
               return (
                 <tr
                   key={r.id}
-                  className={`border-t border-slate-100 ${unmatched && !editing ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-primary-50/50"}`}
+                  id={`dpm-row-${r.id}`}
+                  className={`border-t border-slate-100 transition-colors ${
+                    highlighted ? "bg-green-100 ring-2 ring-inset ring-green-400" : unmatched && !editing ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-primary-50/50"
+                  }`}
                 >
                   {editing ? orderedAll.map((col) => renderEditCell(col)) : orderedAll.map((col) => renderViewCell(col, r))}
                 </tr>
@@ -926,7 +1155,6 @@ export default function DevicePositionMapClient({
           </tbody>
         </table>
       </div>
-      </EmptyUntilFiltered>
     </div>
   );
 }

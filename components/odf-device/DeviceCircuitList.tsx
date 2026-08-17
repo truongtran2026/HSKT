@@ -463,6 +463,19 @@ export default function DeviceCircuitList({
     return list.find((e) => normalizeDevicePositionKey(e.devicePosition ?? "") === target) ?? null;
   }
 
+  // Tra NGƯỢC không cần biết trước thiết bị (yêu cầu người dùng 2026-08-17)
+  // — dùng cho Ô1 "Vị trí ODF (tiếp theo)": lúc gõ Ô1, Ô2 "Thiết bị (tiếp
+  // theo)" CHƯA có gì để findLibraryMatchByOdf() lọc theo (hàm đó luôn trả
+  // null khi deviceName rỗng) nên trước đây gõ đúng 1 ODF đã có sẵn trong
+  // thư viện vẫn không tự điền được Thiết bị/Trib. Quét toàn bộ thư viện
+  // (không lọc theo thiết bị), khớp odfPosition trước — thiết bị/Trib của
+  // dòng đó chính là kết quả cần điền.
+  function findLibraryMatchByOdfAny(odfValue: string) {
+    const target = normalizeDevicePositionKey(odfValue);
+    if (!target) return null;
+    return devicePositionMap.find((m) => normalizeDevicePositionKey(m.odfPosition ?? "") === target) ?? null;
+  }
+
   function tribOptionsForDevice(deviceName: string | null): string[] {
     if (!deviceName) return [];
     const list = libraryByDevice.get(normalizeDeviceNameKey(deviceName)) ?? [];
@@ -1800,10 +1813,26 @@ export default function DeviceCircuitList({
                 onChange({ positionNextOdf: v, positionNextDevice: match.cableRouteName ?? "", positionNextTrib: fiberText });
               } else {
                 // Không khớp rack trung kế nào (hoặc khớp ODF/DDF nội bộ) ->
-                // chế độ Thiết bị (Ô2 quay lại free-text, dùng
-                // findLibraryMatchByOdf như trước).
+                // chế độ Thiết bị (Ô2 quay lại free-text). Ưu tiên 1: đã biết
+                // thiết bị (đang gõ/đã chọn Ô2) -> tự điền Trib theo đúng
+                // thiết bị đó như trước. Ưu tiên 2 (mới, 2026-08-17): CHƯA
+                // biết thiết bị (Ô2 còn rỗng, đúng ca "gõ ODF trước") -> tra
+                // ngược toàn bộ thư viện theo đúng ODF, tự điền LUÔN cả Ô2
+                // lẫn Ô3 nếu tìm thấy. Không đè lên nếu người dùng đã tự gõ
+                // 1 thiết bị khác (tôn trọng dữ liệu đang nhập tay).
                 const libMatch = findLibraryMatchByOdf(values.positionNextDevice || null, v);
-                onChange({ positionNextOdf: v, positionNextTrib: libMatch?.devicePosition ?? values.positionNextTrib });
+                if (libMatch) {
+                  onChange({ positionNextOdf: v, positionNextTrib: libMatch.devicePosition ?? values.positionNextTrib });
+                } else if (!values.positionNextDevice.trim()) {
+                  const anyMatch = findLibraryMatchByOdfAny(v);
+                  onChange({
+                    positionNextOdf: v,
+                    positionNextDevice: anyMatch?.deviceName ?? values.positionNextDevice,
+                    positionNextTrib: anyMatch?.devicePosition ?? values.positionNextTrib,
+                  });
+                } else {
+                  onChange({ positionNextOdf: v });
+                }
               }
             }}
             onBlur={() => {

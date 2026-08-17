@@ -5200,3 +5200,112 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     ODF/DDF khác đi (phải bị chặn); cuộn bảng chính xem các dòng có tên thiết
     bị lạ (chưa có trong `/devices`) có tô vàng + badge "chưa khớp Danh mục"
     hay không.
+
+- **Mục 92 (2026-08-17) — Tắt Router Cache client toàn app; Thư viện vị trí
+  thiết bị: xem hết dữ liệu, lọc theo khung Thêm, cảnh báo luồng liên đới;
+  Hồ sơ đấu nối: tự điền Thiết bị/Trib khi gõ ODF đã có trong thư viện.**
+  Người dùng dùng thử thực tế báo 2 nhóm bất cập.
+
+  **A. QUY ĐỊNH CHUNG MỚI: `next.config.mjs` → `experimental.staleTimes.dynamic
+  = 0`.** Nguyên nhân gốc của "sửa xong ở trang này, chuyển tab Sidebar sang
+  trang khác vẫn thấy dữ liệu cũ" (khác hẳn case đa-tab/đa-trình-duyệt đã vá
+  bằng `RefreshButton` ở Mục 90): Next.js 14 giữ RSC payload đã tải trong
+  **Router Cache PHÍA CLIENT** ~30 giây cho MỌI điều hướng qua `<Link>`/
+  `router.push`, BẤT KỂ trang đã khai báo `dynamic = "force-dynamic"` ở server
+  hay chưa — cờ đó chỉ tắt cache phía server, không tắt cache điều hướng phía
+  client. Toàn bộ trang trong app đều là dữ liệu Supabase sống, không trang
+  nào cần cache điều hướng — `staleTimes.dynamic = 0` áp dụng TOÀN CỤC, không
+  cần sửa từng trang, không ảnh hưởng `router.refresh()`/`RefreshButton` (vẫn
+  hoạt động như cũ, chỉ thêm: giờ chuyển trang cũng tự động mới).
+
+  **B. `DeviceCircuitList.tsx` (Hồ sơ đấu nối) — tự điền Thiết bị/Trib (tiếp
+  theo) khi gõ ODF đã có trong thư viện.** Lỗi thật: `findLibraryMatchByOdf
+  (deviceName, odfValue)` đòi biết trước `deviceName`, nhưng lúc gõ Ô1 "Vị trí
+  ODF (tiếp theo)" thì Ô2 "Thiết bị (tiếp theo)" CÒN RỖNG — hàm luôn trả
+  `null`, không bao giờ tự điền được theo chiều "gõ ODF trước, để hệ thống
+  suy ra thiết bị". Thêm hàm `findLibraryMatchByOdfAny(odfValue)` — quét
+  TOÀN BỘ `devicePositionMap` (không lọc theo thiết bị) khớp `odfPosition`.
+  `onChange` của Ô1 (nhánh không khớp rack trung kế): ưu tiên 1 vẫn
+  `findLibraryMatchByOdf` khi đã biết thiết bị (giữ hành vi cũ); nếu chưa có
+  kết quả VÀ Ô2 đang rỗng → fallback `findLibraryMatchByOdfAny`, tự điền CẢ
+  Ô2 lẫn Ô3. Không đè khi Ô2 đã có chữ khác (tôn trọng đang gõ tay).
+
+  **C. `DevicePositionMapClient.tsx` (Thư viện vị trí thiết bị).**
+  1. **Bỏ ẩn mặc định** — gỡ `EmptyUntilFiltered`/`viewAll`/`scopeChosen`
+     (thêm ở Mục 90 để tăng tốc, nhưng thư viện chỉ vài trăm dòng, không nặng
+     như `circuits`) — bảng luôn hiện; chip "Lĩnh vực" vẫn là bộ lọc thủ công,
+     không còn là điều kiện để HIỆN bảng.
+  2. **Lọc bảng dưới theo khung "Thêm dòng mới"** (yêu cầu người dùng: gõ
+     Thiết bị+Trib để biết đã có chưa, gõ thêm ODF thì bảng dưới hiện THÊM —
+     OR, không thay thế — bất kỳ dòng nào dù thiết bị/trib khác đang trùng
+     đúng ODF đó, để phát hiện port đã bị thiết bị khác chiếm trước khi lưu
+     nhầm). Hàm thuần `matchesDraftPreview(r, draft)`: `identityMatch` (khớp
+     Thiết bị VÀ Trib, chỉ tính phần đã gõ) OR `odfMatch` (khớp ODF) — áp
+     dụng thêm (AND) vào `filtered` khi `draftPreviewActive(draft)`.
+  3. **Không có gì reset khung "Thêm dòng mới" khi Sửa/Xóa dòng khác** — đã
+     rà lại `openEdit`/`saveEdit`/`deleteRow`: không hàm nào đụng `setDraft`,
+     `router.refresh()` không remount Client Component nên `draft` không mất
+     (đúng cơ chế `RefreshButton` đã dùng ở Mục 90). Không có gì để sửa —
+     nếu người dùng vẫn tái hiện được sau đợt này, cần bước lặp lại cụ thể để
+     tìm nguyên nhân khác.
+  4. **Banner xác nhận Thêm/Sửa/Xóa + highlight dòng vừa lưu** — gộp
+     `addHiddenNotice` (chỉ có cho ca "Thêm xong nhưng bị lọc ẩn") thành
+     `saveNotice: string | null` dùng chung 3 thao tác (banner xanh lá emerald,
+     nút "Bỏ lọc để xem" chỉ hiện khi có bộ lọc/draft đang thu hẹp bảng).
+     `highlightId` (id dòng vừa Thêm/Sửa, không áp dụng Xóa) — `useEffect`
+     đợi `rows` (prop mới sau `router.refresh()`) THẬT SỰ chứa id đó rồi mới
+     `scrollIntoView({block:"center"})` + tô `bg-green-100 ring-2 ring-green-400`
+     ~3 giây (dòng `<tr>` gắn `id={`dpm-row-${r.id}`}`) rồi tự tắt.
+
+  **D. Cảnh báo luồng thiết bị (`circuits`) đang phụ thuộc dòng thư viện sắp
+  Sửa/Xóa** (yêu cầu người dùng: "thư viện xóa mà luồng vẫn còn thì ko logic"
+  — thư viện chỉ là GỢI Ý được "làm giàu" TỪ `circuits` qua
+  `growDevicePositionMapByTrib()`/`maybeGrowLibrary()`, không phải nguồn sự
+  thật, nên xóa/sửa nó không được tự động xóa luồng thật, nhưng PHẢI báo).
+  - `findCircuitsUsingLibraryRow(client, {deviceName, devicePosition,
+    odfPosition})` (`lib/devicePositionMap.ts`, mới) — bỏ qua nếu
+    `!looksLikeRealPositionText(odfPosition)` ("Kết nối trực tiếp" dùng chung
+    nhiều Trib, không phải 1 vị trí duy nhất để đối chiếu). Quét phân trang
+    `circuits` (cột nhẹ: `id, name, trib_text, device_position_own,
+    device_position_next, devices(name)`), khớp 2 chiều qua
+    `normalizeDeviceNameKey`/`normalizeDevicePositionKey`: **"own"** — chính
+    luồng của đúng thiết bị+Trib này đang dùng đúng ODF này; **"next"** —
+    luồng của THIẾT BỊ KHÁC có `device_position_next` (tách qua
+    `splitOdfDeviceStructure`, lấy `odfPart`) trỏ đúng tới ODF này.
+  - UI (`DevicePositionMapClient.tsx`): gọi hàm trên NGAY TRƯỚC khi thực thi
+    Sửa (chỉ khi định danh dòng — thiết bị/Trib/ODF — thật sự đổi so với
+    dòng gốc, tránh làm phiền khi chỉ sửa lỗi chính tả không đổi định danh)
+    hoặc Xóa. Rỗng → thực hiện thẳng như cũ (Xóa vẫn giữ `confirm()` gọn cũ
+    khi không liên quan gì). Có kết quả → panel `renderRelatedCircuitsPanel`
+    (nền đỏ nhạt) liệt kê tên luồng + chiều own/next + thiết bị/Trib, checkbox
+    từng dòng (mặc định KHÔNG tick), 3 nút: "Sửa/Xóa thư viện + xóa luồng đã
+    tick", "Chỉ Sửa/Xóa thư viện, giữ nguyên luồng", "Hủy". Xóa luồng đã tick
+    tái dùng ĐÚNG quy trình an toàn của `DeviceCircuitList.tsx`
+    (`findMirrorTrunkCircuits` TRƯỚC khi xóa + `cleanupAfterMirrorCascade`
+    SAU khi xóa, từ `lib/mirrorTrunkCircuits.ts`) — không để sót mirror trung
+    kế mồ côi.
+
+  **E. Chuẩn hóa tiền tố "ADN1." cho thiết bị trong thư viện** — kiểm tra qua
+  script tạm `scripts/tmp-add-adn1-prefix.ts` (chạy xong đã xóa): quét toàn
+  bộ 137 dòng `devices`, **0 dòng thiếu tiền tố "ADN1."** — bảng `devices` đã
+  chuẩn hóa đầy đủ từ trước (khác nhận định ban đầu của người dùng). Vì
+  `validateLibraryDraft()` bắt buộc `device_position_map.device_name` khớp
+  ĐÚNG `devices.name` (Mục 91), mọi dòng thư viện lưu qua form từ 2026-08-03
+  trở đi đã tự động có tiền tố đúng. Phần "có chỗ là X có chỗ là ADN1.X"
+  người dùng thấy chỉ còn tồn tại ở các dòng `device_position_map` CŨ chưa
+  khớp thiết bị thật nào (`unmatchedGroups`) — nhóm này CỐ Ý không tự động
+  sửa (không biết chắc đó là thiết bị nào), để nguyên cho khung "Chuẩn hóa
+  tên thiết bị chưa khớp"/highlight amber (Mục 91) xử lý thủ công.
+
+  - File sửa: `next.config.mjs`, `components/odf-device/DeviceCircuitList.tsx`,
+    `components/odf-device/DevicePositionMapClient.tsx`, `lib/devicePositionMap.ts`.
+  - Kiểm chứng: `npx tsc --noEmit` + `npm run build` sạch. Chưa test bằng tay
+    thật (không có trình duyệt tự động ở môi trường này) — cần người dùng tự
+    thử: (a) sửa 1 dòng thư viện, chuyển tab Sidebar sang Hồ sơ đấu nối, xác
+    nhận dữ liệu mới có ngay không cần bấm Refresh; (b) gõ ODF đã có trong
+    thư viện vào "Vị trí ODF (tiếp theo)" ở Hồ sơ đấu nối, xác nhận Thiết
+    bị/Trib tự điền; (c) vào thư viện xác nhận bảng hiện đủ dữ liệu ngay từ
+    đầu, không cần chọn Lĩnh vực trước; (d) gõ thử Thiết bị+Trib rồi thêm ODF
+    trùng 1 dòng khác, xác nhận bảng dưới hiện cả 2 nhóm; (e) Sửa/Xóa 1 dòng
+    thư viện đang có luồng thật liên quan, xác nhận panel cảnh báo hiện đúng
+    luồng, thử cả 3 lựa chọn.

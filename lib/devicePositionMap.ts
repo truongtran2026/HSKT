@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
+import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 
 // Tra cứu "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" — xem migration
 // 20260724000001_device_position_map.sql. Bảng độc lập, KHÔNG đụng
@@ -176,6 +177,82 @@ export function distinctPositionsForDevice(deviceName: string, all: DevicePositi
     if (r.devicePosition && normalizeDeviceNameKey(r.deviceName) === key) set.add(r.devicePosition);
   }
   return [...set].sort();
+}
+
+export interface RelatedCircuitRef {
+  id: string;
+  name: string;
+  side: "own" | "next"; // "own": chính luồng của thiết bị/Trib này đang dùng dòng thư viện; "next": luồng của THIẾT BỊ KHÁC đang trỏ tới đúng vị trí ODF này
+  deviceName: string | null;
+  tribText: string | null;
+}
+
+interface RawCircuitForRelatedScan {
+  id: string;
+  name: string;
+  trib_text: string | null;
+  device_position_own: string | null;
+  device_position_next: string | null;
+  devices: { name: string } | { name: string }[] | null;
+}
+
+function deviceNameOfRawCircuit(c: RawCircuitForRelatedScan): string | null {
+  const d = c.devices;
+  if (!d) return null;
+  return Array.isArray(d) ? (d[0]?.name ?? null) : d.name;
+}
+
+// Thư viện chỉ là gợi ý được "làm giàu" TỪ chính circuits (xem
+// growDevicePositionMapByTrib/maybeGrowLibrary ở DeviceCircuitList.tsx) —
+// không phải nguồn sự thật. Sửa/xóa 1 dòng thư viện mà vẫn còn luồng THẬT
+// đang tham chiếu đúng vị trí đó là dữ liệu lệch nhau (yêu cầu người dùng
+// 2026-08-17: "thư viện xóa mà luồng vẫn còn thì ko logic") — quét trước để
+// chủ động cảnh báo/đề xuất xóa luôn, KHÔNG tự động xóa (destructive, phải
+// để người dùng xác nhận từng luồng).
+export async function findCircuitsUsingLibraryRow(
+  client: SupabaseClient,
+  row: { deviceName: string; devicePosition: string; odfPosition: string }
+): Promise<RelatedCircuitRef[]> {
+  if (!looksLikeRealPositionText(row.odfPosition)) return []; // "Kết nối trực tiếp" dùng chung nhiều Trib, không phải 1 vị trí duy nhất để đối chiếu.
+  const nameKey = normalizeDeviceNameKey(row.deviceName);
+  const tribKey = normalizeDevicePositionKey(row.devicePosition);
+  const odfKey = normalizeDevicePositionKey(row.odfPosition);
+
+  const supabase = client;
+  const pageSize = 1000;
+  const circuits: RawCircuitForRelatedScan[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("circuits")
+      .select("id, name, trib_text, device_position_own, device_position_next, devices(name)")
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as RawCircuitForRelatedScan[];
+    circuits.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  const result: RelatedCircuitRef[] = [];
+  for (const c of circuits) {
+    const ownDeviceName = deviceNameOfRawCircuit(c);
+    const isOwnMatch =
+      ownDeviceName != null &&
+      normalizeDeviceNameKey(ownDeviceName) === nameKey &&
+      normalizeDevicePositionKey(c.trib_text ?? "") === tribKey &&
+      normalizeDevicePositionKey(c.device_position_own ?? "") === odfKey;
+    if (isOwnMatch) {
+      result.push({ id: c.id, name: c.name, side: "own", deviceName: ownDeviceName, tribText: c.trib_text });
+      continue; // 1 circuit chỉ đúng 1 chiều — đã khớp "own" thì không cần soát "next" nữa.
+    }
+    if (!c.device_position_next) continue;
+    const split = splitOdfDeviceStructure(c.device_position_next);
+    const odfPart = split.matched ? (split.odfPart ?? "") : c.device_position_next;
+    if (normalizeDevicePositionKey(odfPart) === odfKey) {
+      result.push({ id: c.id, name: c.name, side: "next", deviceName: ownDeviceName, tribText: c.trib_text });
+    }
+  }
+  return result;
 }
 
 export interface LibraryOwnPositionDuplicate {
