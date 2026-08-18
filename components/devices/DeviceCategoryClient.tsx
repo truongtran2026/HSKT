@@ -22,7 +22,7 @@ import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import RefreshButton from "@/components/ui/RefreshButton";
 import EmptyUntilFiltered from "@/components/ui/EmptyUntilFiltered";
-import { IconTrash } from "@/components/ui/icons";
+import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
 import type { DeviceRow } from "@/lib/devices";
 import type { DeviceCircuitRow } from "@/lib/deviceCircuits";
@@ -188,6 +188,11 @@ export default function DeviceCategoryClient({
 
   const [newCategoryName, setNewCategoryName] = useState("");
   const [categoryBusy, setCategoryBusy] = useState<string | null>(null);
+  // Nút "×" xóa lĩnh vực chỉ hiện khi bật chế độ sửa (yêu cầu người dùng
+  // 2026-08-18: "ko nền để có dấu x bên cạnh thế nhìn xấu" — icon bút Sửa
+  // bấm vào mới lộ ra nút "×" ở từng chip, đỡ rối mắt lúc bình thường chỉ
+  // dùng để lọc).
+  const [categoryEditMode, setCategoryEditMode] = useState(false);
 
   async function addCategory() {
     const name = newCategoryName.trim();
@@ -773,7 +778,19 @@ export default function DeviceCategoryClient({
       </div>
 
       <div className="mb-3">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Lĩnh vực</p>
+        <div className="mb-1 flex items-center gap-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Lĩnh vực</p>
+          <RoleGate allow={["admin"]}>
+            <button
+              type="button"
+              title={categoryEditMode ? "Xong — ẩn nút xóa" : "Sửa — hiện nút xóa từng lĩnh vực"}
+              onClick={() => setCategoryEditMode((v) => !v)}
+              className={"rounded p-0.5 " + (categoryEditMode ? "bg-primary-100 text-primary-700" : "text-slate-400 hover:text-slate-600")}
+            >
+              <IconEdit className="h-3.5 w-3.5" />
+            </button>
+          </RoleGate>
+        </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
@@ -802,7 +819,7 @@ export default function DeviceCategoryClient({
                 <button type="button" onClick={() => toggleCategory(cat)} className="px-3 py-1.5">
                   {cat}
                 </button>
-                {isRealCategory && (
+                {isRealCategory && categoryEditMode && (
                   <RoleGate allow={["admin"]}>
                     <button
                       type="button"

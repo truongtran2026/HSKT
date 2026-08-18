@@ -5747,3 +5747,19 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   rỗng (như mọi tab khác trong trang này). Mục đích: bắt được NGAY khi có
   thiết bị mới thiếu lĩnh vực, chủ động thay vì đợi phát hiện qua "luồng bị
   thiếu" như báo cáo gốc.
+- **Migration đã được người dùng tự chạy 2026-08-18** qua Supabase Dashboard
+  → SQL Editor (đã xác nhận + kiểm chứng lại: `device_categories` có đủ 6
+  dòng seed) — tính năng Mục 102 đã deploy production cùng ngày.
+
+## 104. Nút "×" xóa lĩnh vực chỉ hiện khi bật "chế độ Sửa" (2026-08-18)
+
+- **Phản hồi người dùng** ngay sau khi thấy Mục 102 lên production: "phần
+  lĩnh vực thì ko nền để có dấu x bên cạnh thế nhìn xấu mà có một icon để
+  bấm vào chung chức năng Edit thì lúc này mới xuất hiện dấu x ở các lĩnh
+  vực rồi ấn x để xóa thì đẹp hơn."
+- **Sửa** (`DeviceCategoryClient.tsx`): thêm state `categoryEditMode`
+  (mặc định `false`) + 1 icon bút (`IconEdit`, RoleGate admin) cạnh tiêu đề
+  "Lĩnh vực" — bấm để bật/tắt. Nút "×" trên mỗi chip lĩnh vực (Mục 102) giờ
+  chỉ render khi `categoryEditMode === true` (thêm điều kiện `&&
+  categoryEditMode`, giữ nguyên toàn bộ logic đếm/chặn xóa cũ) — bình
+  thường các chip chỉ dùng để lọc, gọn như trước khi có tính năng xóa.
