@@ -179,6 +179,28 @@ export function distinctPositionsForDevice(deviceName: string, all: DevicePositi
   return [...set].sort();
 }
 
+export interface DevicePositionLibraryMatch {
+  deviceName: string;
+  devicePosition: string | null;
+  odfPosition: string | null;
+}
+
+// Tra ngược "Vị trí ODF" -> dòng thư viện, KHÔNG cần biết trước thiết bị nào
+// đang cắm vào đó — quét toàn bộ thư viện tìm đúng 1 dòng có odfPosition khớp
+// (yêu cầu người dùng 2026-08-17, dùng cho Ô1 "Vị trí ODF (tiếp theo)" bên Hồ
+// sơ đấu nối; dùng lại 2026-08-18 cho Ô1 "Chuyển tiếp" bên ODF trung kế —
+// PortTable.tsx — cùng 1 thư viện device_position_map nên tách ra đây dùng
+// chung, tránh 2 bản logic dò lệch nhau). odfValue nên đã chuẩn hóa "ODF x/y
+// (a,b)" trước khi gọi (xem formatCanonicalOdfPosition) — thư viện lưu đúng
+// dạng này nên so khớp thô (chỉ chuẩn hóa khoảng trắng/dấu) là đủ.
+export function findLibraryMatchByOdfAny(odfValue: string, rows: DevicePositionMapRow[]): DevicePositionLibraryMatch | null {
+  const target = normalizeDevicePositionKey(odfValue);
+  if (!target) return null;
+  const row = rows.find((m) => normalizeDevicePositionKey(m.odfPosition ?? "") === target);
+  if (!row) return null;
+  return { deviceName: row.deviceName, devicePosition: row.devicePosition, odfPosition: row.odfPosition };
+}
+
 export interface RelatedCircuitRef {
   id: string;
   name: string;

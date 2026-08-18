@@ -14,7 +14,7 @@ import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from 
 import { writeTransitForPorts } from "@/lib/transitLinks";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, transitDisplay, type TrunkPortRow } from "@/lib/trunkPorts";
 import { autoCreateTrunkTrunkMirrorForCircuit, replaceOccupantAndCreateTrunkTrunkMirror } from "@/lib/mirrorTrunkCircuits";
-import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
+import { distinctPositionsForDevice, findLibraryMatchByOdfAny, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { useColumnOrder } from "@/lib/useColumnOrder";
@@ -1794,6 +1794,16 @@ function EditRow({
   const [transitDeviceName, setTransitDeviceName] = useState(() => splitOdfDeviceStructure(edit.transitText).deviceName ?? "");
   const [transitDevicePort, setTransitDevicePort] = useState(() => splitOdfDeviceStructure(edit.transitText).port ?? "");
 
+  // Cho phép chuyển sang giao diện 3 ô riêng NGAY CẢ KHI transitText lúc mở
+  // sửa chưa khớp cấu trúc 2 (transitSplit=false, vd luồng mới/Chuyển tiếp
+  // đang trống) — bấm gợi ý "đã có trong thư viện" bên dưới (xem
+  // libraryDeviceMatch/applyLibraryDeviceMatch) sẽ bật cờ này lên để hiện 3 ô
+  // Thiết bị/Port thay vì chỉ 1 ô gộp. transitSplit vẫn giữ nguyên KHÔNG đổi
+  // (tính 1 lần lúc mount, xem lý do ở comment phía trên) — chỉ CỘNG THÊM 1
+  // đường để vào chế độ 3 ô, không thay thế.
+  const [forceSplit, setForceSplit] = useState(false);
+  const showSplit = transitSplit || forceSplit;
+
   function buildTransitText(odf: string, deviceName: string, devicePort: string) {
     return `${odf} - ${deviceName} (${devicePort})`;
   }
@@ -1857,6 +1867,43 @@ function EditRow({
   // Trung kế, bên thiết bị thì là tên thiết bị kèm port" — cùng tinh thần Ô2
   // "Cáp quang (tiếp theo)" đã làm ở DeviceCircuitList.tsx (isCableMode).
   const bareTrunkCableRouteName = bareMatch && bareMatch.rackDomain === "trunk" ? bareMatch.cableRouteName : null;
+
+  // Hiện kèm Port (+ "(sợi x,y)" khi số sợi khác số port — người dùng
+  // 2026-08-18) ngay dưới tên tuyến cáp ở trên, đỡ phải bấm "Xem nhanh" mới
+  // biết cắm đúng port nào.
+  const bareTrunkPortDisplay = useMemo(() => {
+    if (!bareMatch || bareMatch.rackDomain !== "trunk" || !bareMatch.resolvedPorts || bareMatch.resolvedPorts.length === 0) return null;
+    return bareMatch.resolvedPorts
+      .map((p) => `${p.portNumber}${p.fiberNumber != null && p.fiberNumber !== p.portNumber ? ` (sợi ${p.fiberNumber})` : ""}`)
+      .join(", ");
+  }, [bareMatch]);
+
+  // Đối chiếu với "Thư viện vị trí thiết bị" (device_position_map) — KHÁC
+  // nguồn dữ liệu với bareMatch ở trên (bareMatch đối chiếu port/rack THẬT
+  // trong trunkPorts, còn đây đối chiếu dữ liệu thiết bị đã lưu trong thư
+  // viện) — người dùng phát hiện 2026-08-18: gõ "Vị trí ODF" (ô đầu) trùng 1
+  // dòng đã có trong thư viện thì phải tự gợi ý ra được thiết bị + Port/Trib
+  // tương ứng ở 2 ô còn lại, hiện tại không có gì cả. Chỉ tính khi CHƯA có
+  // Thiết bị/Port đang gõ (tôn trọng dữ liệu người dùng đã tự nhập tay) —
+  // dùng odfSuggestion/bareOdfSuggestion (đã chuẩn hóa) làm chuỗi tra cứu nếu
+  // có, vì thư viện lưu đúng dạng chuẩn "ODF x/y (a,b)".
+  const libraryDeviceMatch = useMemo(() => {
+    if (transitDeviceName.trim() || transitDevicePort.trim()) return null;
+    const odfForLookup = showSplit ? odfSuggestion ?? transitOdfPart : bareOdfSuggestion ?? edit.transitText;
+    return findLibraryMatchByOdfAny(odfForLookup, devicePositionMap);
+  }, [transitDeviceName, transitDevicePort, showSplit, odfSuggestion, transitOdfPart, bareOdfSuggestion, edit.transitText, devicePositionMap]);
+
+  function applyLibraryDeviceMatch() {
+    if (!libraryDeviceMatch) return;
+    const odf = (showSplit ? odfSuggestion ?? transitOdfPart : bareOdfSuggestion ?? edit.transitText).trim();
+    const deviceName = libraryDeviceMatch.deviceName;
+    const devicePort = libraryDeviceMatch.devicePosition ?? "";
+    setTransitOdfPart(odf);
+    setTransitDeviceName(deviceName);
+    setTransitDevicePort(devicePort);
+    setForceSplit(true);
+    onChange({ ...edit, transitText: buildTransitText(odf, deviceName, devicePort) });
+  }
 
   // Slide-over "xem nhanh" (yêu cầu người dùng 2026-07-29, "Giai đoạn 2") —
   // xem port trung kế đích / thiết bị đối phương mà KHÔNG rời rack đang sửa.
@@ -1965,7 +2012,7 @@ function EditRow({
             </datalist>
           </Field>
           <Field label="Chuyển tiếp">
-            {transitSplit ? (
+            {showSplit ? (
               // Cấu trúc 2 — 2 ô riêng (ODF + thiết bị/port) cho dễ sửa, ghép
               // lại thành 1 chuỗi transitText khi gõ (lưu/hiển thị không đổi).
               <div className="flex flex-col gap-1">
@@ -1998,6 +2045,16 @@ function EditRow({
                     title="Bấm để thay bằng đúng chuẩn form"
                   >
                     💡 Gợi ý: {odfSuggestion} — bấm để áp dụng
+                  </button>
+                )}
+                {libraryDeviceMatch && (
+                  <button
+                    type="button"
+                    className="self-start rounded border border-primary-300 bg-primary-50 px-2 py-0.5 text-xs text-primary-800 hover:bg-primary-100"
+                    onClick={applyLibraryDeviceMatch}
+                    title="Bấm để tự điền Thiết bị + Port theo đúng thư viện vị trí thiết bị"
+                  >
+                    💡 Đã có trong thư viện: {libraryDeviceMatch.deviceName} ({libraryDeviceMatch.devicePosition ?? "?"}) — bấm để điền
                   </button>
                 )}
                 {/* Ô Thiết bị + ô Port tách riêng (yêu cầu người dùng
@@ -2111,12 +2168,28 @@ function EditRow({
                     💡 Gợi ý: {bareOdfSuggestion} — bấm để áp dụng
                   </button>
                 )}
+                {libraryDeviceMatch && (
+                  <button
+                    type="button"
+                    className="self-start rounded border border-primary-300 bg-primary-50 px-2 py-0.5 text-xs text-primary-800 hover:bg-primary-100"
+                    onClick={applyLibraryDeviceMatch}
+                    title="Bấm để tách ra 3 ô riêng, tự điền Thiết bị + Port theo đúng thư viện vị trí thiết bị"
+                  >
+                    💡 Đã có trong thư viện: {libraryDeviceMatch.deviceName} ({libraryDeviceMatch.devicePosition ?? "?"}) — bấm để điền
+                  </button>
+                )}
                 {bareTrunkCableRouteName && (
                   <>
                     <div className="mt-1 text-[11px] text-slate-400">
                       Tên ODF trung kế (tự nhận diện — nối thẳng, không qua thiết bị)
                     </div>
                     <div className="input flex items-center bg-slate-100 text-slate-500">{bareTrunkCableRouteName}</div>
+                    {bareTrunkPortDisplay && (
+                      <>
+                        <div className="mt-1 text-[11px] text-slate-400">Port</div>
+                        <div className="input flex items-center bg-slate-100 text-slate-500">{bareTrunkPortDisplay}</div>
+                      </>
+                    )}
                     <button
                       type="button"
                       className="self-start text-xs text-primary-600 hover:underline"

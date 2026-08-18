@@ -5837,3 +5837,53 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   liệu dạng text tự do, cân nhắc dùng `ClearableInput` thay `<input
   className="input">` trần, cùng tinh thần "áp dụng pattern chung ngay từ
   đầu" đã chốt ở Mục 98.
+
+## 107. ODF trung kế — ô "Chuyển tiếp" tự điền Thiết bị/Port từ Thư viện vị trí thiết bị (2026-08-18)
+
+- **Yêu cầu người dùng**: gõ ô đầu tiên ("Vị trí ODF") trong "Chuyển tiếp"
+  (form Sửa ở `PortTable.tsx`, trang ODF trung kế) khớp 1 dòng đã có sẵn
+  trong "Thư viện vị trí thiết bị" (`device_position_map`) thì 2 ô còn lại
+  (Thiết bị, Port/Trib) phải tự có gợi ý điền theo — hiện KHÔNG có gì cả.
+  Nếu ODF đó lại là 1 ODF trung kế khác (nối thẳng, không qua thiết bị) thì
+  ô 2 phải là tên tuyến cáp quang, ô 3 là port kèm "(sợi x,y)" khi số sợi
+  khác số port.
+- **Nguyên nhân**: `PortTable.tsx` đã có sẵn 2 cơ chế gợi ý cho ô "Chuyển
+  tiếp" nhưng cả 2 đều KHÔNG đối chiếu với thư viện `device_position_map`:
+  `odfSuggestion`/`bareOdfSuggestion` chỉ chuẩn hóa CHUỖI ODF (chuẩn hóa
+  form, không tra thiết bị), còn `bareMatch`/`bareTrunkCableRouteName` chỉ
+  đối chiếu port/rack THẬT trong `trunkPorts` (báo được tên tuyến cáp khi
+  ODF trỏ sang 1 rack `domain='trunk'` khác, nhưng không biết gì về dữ liệu
+  thiết bị đã lưu trong thư viện). Thêm nữa, dòng luồng MỚI (Chuyển tiếp còn
+  trống) luôn rơi vào chế độ "1 ô gộp" (`transitSplit` tính 1 lần lúc mount
+  từ `splitOdfDeviceStructure("")` → `false`) nên vốn KHÔNG CÓ đường nào để
+  tách riêng ra 2 ô Thiết bị/Port cho tới khi tự gõ đủ cả chuỗi
+  `"<ODF> - <thiết bị>(<port>)"` vào 1 ô — không thực tế cho ca đang cần.
+- **Sửa**:
+  - `lib/devicePositionMap.ts`: thêm hàm dùng chung
+    `findLibraryMatchByOdfAny(odfValue, rows)` — quét thư viện tìm dòng có
+    `odfPosition` khớp, KHÔNG cần biết trước thiết bị (tách ra từ hàm cùng
+    tên trước đây chỉ có ở `DeviceCircuitList.tsx`, giờ file đó gọi lại hàm
+    dùng chung này qua alias `findLibraryMatchByOdfAnyLib`, tránh 2 bản logic
+    dò lệch nhau).
+  - `PortTable.tsx` (`EditRow`): thêm state `forceSplit` — bấm gợi ý mới sẽ
+    bật cờ này để CHUYỂN SANG chế độ 3 ô riêng dù `transitSplit` (tính lúc
+    mount) đang `false`; `showSplit = transitSplit || forceSplit` thay thế
+    `transitSplit` ở điều kiện render (transitSplit gốc GIỮ NGUYÊN không đổi
+    — chỉ cộng thêm 1 đường vào chế độ 3 ô, không thay logic cũ).
+  - `libraryDeviceMatch` (useMemo) — tra `findLibraryMatchByOdfAny()` bằng
+    chuỗi ODF đã chuẩn hóa (`odfSuggestion`/`bareOdfSuggestion` nếu có, thư
+    viện lưu đúng dạng "ODF x/y (a,b)"), CHỈ tính khi ô Thiết bị VÀ ô Port
+    đang trống (tôn trọng dữ liệu đã gõ tay, không đè). Có kết quả thì hiện
+    nút gợi ý (cùng kiểu 💡 các nút khác trong file, nhưng dùng màu
+    `primary` để phân biệt với nhóm màu `amber` "chuẩn hóa form") ở CẢ 2
+    nhánh (đã tách/chưa tách ô) — bấm `applyLibraryDeviceMatch()`: điền
+    `transitOdfPart`/`transitDeviceName`/`transitDevicePort`, bật
+    `forceSplit(true)`, ghi lại `edit.transitText` gộp đủ 3 phần.
+  - Case "ODF trỏ sang trung kế khác" (đã có sẵn `bareTrunkCableRouteName`
+    hiện tên tuyến cáp) — bổ sung `bareTrunkPortDisplay` hiện thêm dòng
+    Port/"(sợi x,y)" ngay dưới tên tuyến cáp (trước đây phải bấm "Xem nhanh
+    port đích →" mới thấy port; giờ hiện luôn, nút xem nhanh vẫn giữ để xem
+    chi tiết luồng đang chiếm port đó nếu cần), tái dùng đúng công thức
+    `fiberNumber != null && fiberNumber !== portNumber ? " (sợi X)" : ""`
+    đã dùng ở slide-over "Xem nhanh" cùng file và ở `DeviceCircuitList.tsx`.
+- `npx tsc --noEmit` + `npm run build` sạch.

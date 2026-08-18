@@ -65,7 +65,7 @@ import { autoCreateMirrorForCircuit, replaceMismatchedDeviceMirror } from "@/lib
 import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import { translatePgError } from "@/lib/translatePgError";
 import type { DeviceRow } from "@/lib/devices";
-import type { DevicePositionMapRow } from "@/lib/devicePositionMap";
+import { findLibraryMatchByOdfAny as findLibraryMatchByOdfAnyLib, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 
 // Header dùng components/ui/DataTh.tsx (quy định chung cho mọi bảng, xem
 // architecture.md) — trước đây có 2 bản viết riêng (SortFilterTh/
@@ -565,9 +565,7 @@ export default function DeviceCircuitList({
   // (không lọc theo thiết bị), khớp odfPosition trước — thiết bị/Trib của
   // dòng đó chính là kết quả cần điền.
   function findLibraryMatchByOdfAny(odfValue: string) {
-    const target = normalizeDevicePositionKey(odfValue);
-    if (!target) return null;
-    return devicePositionMap.find((m) => normalizeDevicePositionKey(m.odfPosition ?? "") === target) ?? null;
+    return findLibraryMatchByOdfAnyLib(odfValue, devicePositionMap);
   }
 
   function tribOptionsForDevice(deviceName: string | null): string[] {
