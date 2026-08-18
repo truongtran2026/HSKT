@@ -61,3 +61,22 @@ export async function fetchCircuitOptions(client: SupabaseClient): Promise<Circu
     transitTexts: [...transitTexts].sort((a, b) => a.localeCompare(b)),
   };
 }
+
+// Phát hiện gõ THIẾU hậu tố chuẩn ở ô "Giao tiếp" (yêu cầu người dùng
+// 2026-08-18: "100GE thì lại gõ là 100, 10GE thì gõ là 10" — lỗi hay gặp
+// nhất khi sửa nhanh, tay lỡ xóa mất hậu tố). Chỉ gợi ý khi giá trị gõ hoàn
+// toàn là SỐ (an toàn — "STM1"/"FE" không phải lỗi thiếu hậu tố, không nên
+// gợi ý lung tung) và ghép thêm đúng 1 hậu tố đã biết ("GE"/"G"/"M", đúng 3
+// hậu tố xuất hiện trong dữ liệu thật: 10GE/100GE/1GE, 4G, 65M/90M) ra TRÙNG
+// 1 giá trị ĐÃ TỪNG DÙNG thật trong hệ thống — không suy đoán mù, chỉ gợi ý
+// khi chắc chắn khớp dữ liệu có sẵn.
+export function suggestInterfaceTypeFix(value: string, knownTypes: readonly string[]): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return null;
+  const knownSet = new Set(knownTypes);
+  for (const suffix of ["GE", "G", "M"]) {
+    const candidate = `${trimmed}${suffix}`;
+    if (knownSet.has(candidate)) return candidate;
+  }
+  return null;
+}

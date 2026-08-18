@@ -5585,3 +5585,74 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   (`device_name="ADN1.3650#1 IPCC"`, `device_position="TEST-TRIB-1"`,
   `odf_position="TEST-POS-1"`) qua đúng đợt rà dữ liệu này — đã xóa (rõ ràng
   là dữ liệu test còn sót lại, không phải dữ liệu trạm thật).
+
+## 100. Xóa luồng "mirror" ĐỐI XỨNG (xóa 1 bên tự xóa luôn bên kia, không tự tạo lại) + tự đồng bộ Tên/Giao tiếp/Đối phương cho cặp thiết bị-thiết bị đã liên kết (2026-08-18)
+
+- **Báo cáo người dùng**: "Luồng sau khi đã liên kết màu xanh lá là ok và sẽ
+  tự tạo link mirror ở đầu còn lại. vậy khi edit hoặc xóa ở bất kỳ bên nào
+  thì bên còn lại cũng phải đồng bộ theo... xóa bên chính thì bên mirror
+  mất; còn xóa bên mirror thì bên chính là đồng bộ qua mirror => ko bị xóa
+  bên mirror là không đúng."
+- **Xóa — nguyên nhân thật (bug có chủ đích từ trước, nay đổi lại)**:
+  `deleteGroup()` ở `PortTable.tsx` (`/odf-trunk`), khi xóa 1 luồng trung kế
+  ĐANG LÀ mirror của 1 luồng thiết bị (`circuit.mirrorOfId` có sẵn), gọi
+  ngay `autoCreateTrunkMirrorForCircuit(supabase, circuit.mirrorOfId)` để
+  **TỰ TẠO LẠI** mirror — tính năng này được thêm CHỦ Ý ở đợt 2026-08-02 (xem
+  comment cũ trong code), lúc đó mục đích là tránh "mồ côi dữ liệu" khi lỡ
+  xóa nhầm mirror mà luồng thiết bị gốc vẫn còn nguyên. Hệ quả: xóa mirror
+  "không ăn thua gì" — port vừa trống thì mirror lại tự sinh ra ngay, đúng
+  điều người dùng hiện phàn nàn. Chiều ngược lại (xóa luồng thiết bị gốc ở
+  `DeviceCircuitList.tsx`) đã LUÔN xóa cascade mirror theo từ trước (FK
+  `mirror_of_id on delete cascade`, xem migration `circuits_mirror_of`) —
+  KHÔNG có logic tự tạo lại tương tự, nên chiều đó đã đúng ý người dùng sẵn.
+- **Sửa**: bỏ hẳn nhánh "tự tạo lại" ở `deleteGroup()`, thay bằng xóa ĐỐI
+  XỨNG — tra tên luồng thiết bị gốc (`circuit.mirrorOfId`) để cảnh báo rõ
+  trong `confirm()`, xóa xong luồng trung kế (qua RPC `delete_trunk_circuit`
+  như cũ) thì xóa LUÔN circuit thiết bị gốc đó (`circuits.delete().eq("id",
+  circuit.mirrorOfId)`). Giờ xóa từ BÊN NÀO cũng xóa cả cặp, không còn phân
+  biệt "chính"/"mirror" nữa.
+- **Edit — khoảng trống thật tìm thấy khi rà lại (không phải cùng 1 lỗi)**:
+  cặp **thiết bị-trung kế** (qua `lib/circuitPairSync.ts`) đã đồng bộ Tên tự
+  động (không hỏi `confirm()`) + CHẶN LƯU nếu Vị trí ODF/Trib đổi sang số
+  liệu khác (từ đợt 2026-08-02) — chiều này ĐÃ ĐÚNG từ trước, không cần sửa.
+  Nhưng cặp **thiết bị-thiết bị** (qua `lib/deviceDeviceSync.ts`) thì KHÔNG
+  có cơ chế tương tự: `autoCreateMirrorForCircuit()` cho 1 cặp ĐÃ liên kết
+  luôn trả `"no-gap"` (Trib đích đã có người chiếm = chính mirror đó) —
+  nghĩa là sửa Tên/Giao tiếp/Đối phương ở 1 bên của 1 cặp thiết bị-thiết bị
+  đã liên kết từ trước tới giờ KHÔNG đồng bộ gì cả, 2 bên lệch dần theo thời
+  gian mà không ai biết.
+- **Sửa**: thêm khối mới cuối `saveEdit()` (`DeviceCircuitList.tsx`) — tìm
+  "phía kia" theo 2 chiều (circuit đang sửa CHÍNH LÀ mirror qua
+  `mirrorOfId` có sẵn, HOẶC LÀ NGUỒN của 1 mirror khác qua tìm ngược trong
+  `circuits`), rồi tự đẩy Tên/Giao tiếp/Đối phương sang phía kia, KHÔNG hỏi
+  `confirm()` (cùng tinh thần "an toàn tự đẩy" đã áp dụng cho Tên bên cặp
+  thiết bị-trung kế). KHÔNG đồng bộ Trib/Vị trí ODF own — đó là port THẬT
+  RIÊNG của TỪNG thiết bị (khác cặp thiết bị-trung kế, nơi 2 phía cùng trỏ 1
+  vị trí vật lý duy nhất) — chỉ đồng bộ đúng 3 trường mà
+  `autoCreateMirrorForCircuit()`'s `insert()` đã copy sẵn lúc tạo mirror
+  lần đầu (Tên, Giao tiếp, Đối phương — Đối phương thêm ở Mục 94).
+
+## 101. Hỏi lại khi "Giao tiếp" là giá trị CHƯA TỪNG dùng + gợi ý sửa khi thiếu hậu tố chuẩn (2026-08-18)
+
+- **Yêu cầu người dùng**: "khi nhập thêm luồng hay edit mà lỡ tay sửa bị
+  chệch so với format chuẩn. ví dụ 100GE thì lại gõ là 100, 10GE thì gõ là
+  10 => phải hỏi lại người dùng là bạn có chắc chắn là thêm loại giao tiếp
+  mới này vào không."
+- **Đã rà dữ liệu thật trước khi sửa** (script tạm, đã xóa sau khi dùng):
+  toàn bộ 2197 `circuits.interface_type` hiện chỉ có ĐÚNG 15 giá trị khác
+  nhau (10GE, 100GE, GE, DWDM, STM64, STM16, STM1, FE, 1GE, 4G, 65M, 90M,
+  WDM, STM1/4, trống) — KHÔNG có dòng nào đang bị lỗi kiểu "100"/"10" như mô
+  tả. Báo lại người dùng: dữ liệu hiện tại đã sạch, không có gì cần sửa —
+  tính năng thêm ở đây là phòng ngừa CHO SAU NÀY.
+- **Sửa**: thêm `suggestInterfaceTypeFix(value, knownTypes)`
+  (`lib/circuitOptions.ts`) — nếu giá trị gõ HOÀN TOÀN LÀ SỐ (an toàn, không
+  gợi ý lung tung cho "STM1"/"FE") và ghép thêm 1 trong 3 hậu tố xuất hiện
+  thật trong dữ liệu ("GE"/"G"/"M") ra TRÙNG 1 giá trị ĐÃ TỪNG DÙNG, trả về
+  gợi ý đó. Wired vào `submitCreate()`/`saveEdit()` (`DeviceCircuitList.tsx`,
+  so với `interfaceOptions` — tập giá trị từ `circuits` thiết bị) và
+  `saveEdit()` (`PortTable.tsx`, so với `options.interfaceTypes` — tập toàn
+  cục từ `fetchCircuitOptions()`, gồm cả 2 phía thiết bị+trung kế) — khi gõ
+  giá trị mới, hiện `confirm()` nêu rõ gợi ý sửa nếu có, cho phép Hủy để sửa
+  lại hoặc OK để xác nhận đúng là muốn thêm loại giao tiếp mới. Bỏ qua khi
+  ô để trống (không đổi yêu cầu bắt buộc/không bắt buộc đã có sẵn ở mỗi
+  trang).

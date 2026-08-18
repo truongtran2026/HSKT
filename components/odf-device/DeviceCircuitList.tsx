@@ -53,6 +53,7 @@ import { applySyncFromDevice, hasPositionChanged, hasTribChanged, type CircuitPa
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { findDevicePositionConflicts, type DeviceCircuitRow } from "@/lib/deviceCircuits";
 import { confirmBulkDelete } from "@/lib/dangerousConfirm";
+import { suggestInterfaceTypeFix } from "@/lib/circuitOptions";
 import {
   findMirrorTrunkCircuits,
   cleanupAfterMirrorCascade,
@@ -956,6 +957,23 @@ export default function DeviceCircuitList({
     return circuits.find((c) => c.id !== excludeId && c.deviceId === deviceId && normalizeDevicePositionKey(c.tribText ?? "") === tribKey) ?? null;
   }
 
+  // Hỏi lại khi "Giao tiếp" là 1 giá trị CHƯA TỪNG dùng trong hệ thống (yêu
+  // cầu người dùng 2026-08-18: "100GE thì lại gõ là 100... phải hỏi lại
+  // người dùng là bạn có chắc chắn là thêm loại giao tiếp mới này vào
+  // không"). Trả `true` = cho lưu tiếp (giá trị đã biết, hoặc người dùng xác
+  // nhận đúng là muốn thêm loại mới, hoặc rỗng — Giao tiếp rỗng đã bị chặn
+  // riêng ở findMissingRequiredFields). `false` = hủy lưu, để người dùng sửa
+  // lại (bấm Hủy ở confirm, hoặc gõ đúng ĐÃ khớp sẵn nên không cần hỏi).
+  function confirmInterfaceTypeIfNew(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed || interfaceOptions.includes(trimmed)) return true;
+    const suggestion = suggestInterfaceTypeFix(trimmed, interfaceOptions);
+    const msg = suggestion
+      ? `Giao tiếp "${trimmed}" chưa từng dùng trong hệ thống — có phải bạn gõ THIẾU, ý là "${suggestion}"?\n\nBấm Hủy để sửa lại, bấm OK nếu ĐÚNG là muốn thêm loại giao tiếp MỚI "${trimmed}".`
+      : `Giao tiếp "${trimmed}" chưa từng dùng trong hệ thống — bạn có chắc chắn muốn thêm loại giao tiếp MỚI này (không phải gõ nhầm/thiếu)?`;
+    return confirm(msg);
+  }
+
   // Cuộn tới đúng dòng + tô sáng tạm thời khi hash là "#dc-<id>" — cả lúc
   // vào trang lần đầu (vd link ngoài) lẫn khi bấm link "trùng vị trí" ngay
   // trong CÙNG trang này (danh sách trùng vị trí giờ nằm chung 1 trang, xem
@@ -1420,6 +1438,7 @@ export default function DeviceCircuitList({
       );
       return;
     }
+    if (!confirmInterfaceTypeIfNew(edit.interfaceType)) return;
     // Chặn lưu TOÀN BỘ khi luồng ĐÃ liên kết và Vị trí ODF (thiết bị)/Vị trí
     // ODF (tiếp theo)/Trib vừa đổi sang SỐ LIỆU THẬT khác (yêu cầu người
     // dùng 2026-08-02, bước 2/6 — đối xứng chốt chặn ở PortTable.tsx
@@ -1539,6 +1558,40 @@ export default function DeviceCircuitList({
         } catch (e) {
           setError(`Đã lưu luồng, nhưng đồng bộ tên sang trung kế thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
         }
+      }
+    }
+
+    // Tự đồng bộ Tên/Giao tiếp/Đối phương sang luồng THIẾT BỊ-THIẾT BỊ đã
+    // liên kết (mirror qua lib/deviceDeviceSync.ts) — ĐỐI XỨNG cơ chế tự đồng
+    // bộ TÊN đã có cho cặp thiết bị-trung kế ở trên, nhưng trước đây CHƯA có
+    // gì tương tự cho cặp thiết bị-thiết bị (yêu cầu người dùng 2026-08-18:
+    // "khi edit hoặc xóa ở bất kỳ bên nào thì bên còn lại cũng phải đồng bộ
+    // theo" — rà lại autoCreateMirrorForCircuit() cho thấy với 1 cặp ĐÃ liên
+    // kết, hàm đó luôn trả "no-gap" (Trib đích đã có người chiếm = chính
+    // mirror đó) — không đồng bộ gì cả, đúng lỗ hổng người dùng chỉ ra). Tìm
+    // "phía kia" theo CẢ 2 chiều: circuit đang sửa CHÍNH LÀ mirror (có sẵn
+    // mirrorOfId), hoặc circuit đang sửa LÀ NGUỒN của 1 mirror khác (1 dòng
+    // khác có mirrorOfId = chính nó) — `circuits` ở đây CHỈ chứa luồng thiết
+    // bị (không lẫn luồng trung kế) nên khớp được là chắc chắn đúng loại.
+    // KHÔNG đồng bộ Trib/Vị trí ODF own — đó là port THẬT RIÊNG của TỪNG
+    // thiết bị (khác cặp thiết bị-trung kế, nơi 2 phía cùng trỏ 1 vị trí vật
+    // lý) — chỉ đồng bộ đúng 3 trường mirror mới tạo đã copy sẵn (xem
+    // autoCreateMirrorForCircuit's insert()). Không hỏi confirm() — an toàn
+    // tự đẩy, cùng tinh thần đã áp dụng cho tên bên cặp thiết bị-trung kế.
+    const deviceMirrorCounterpartId = originalCircuit?.mirrorOfId ?? circuits.find((c) => c.mirrorOfId === edit.id)?.id ?? null;
+    if (deviceMirrorCounterpartId) {
+      const { error: syncErr } = await supabase
+        .from("circuits")
+        .update({
+          name: edit.name.trim() || "(chưa đặt tên)",
+          interface_type: edit.interfaceType.trim() || null,
+          counterpart_text: edit.counterpartText.trim() || null,
+        })
+        .eq("id", deviceMirrorCounterpartId);
+      if (syncErr) {
+        setError(
+          `Đã lưu luồng, nhưng đồng bộ Tên/Giao tiếp/Đối phương sang luồng thiết bị-thiết bị liên kết thất bại: ${translatePgError(syncErr.message)}`
+        );
       }
     }
 
@@ -1783,6 +1836,7 @@ export default function DeviceCircuitList({
       );
       return;
     }
+    if (!confirmInterfaceTypeIfNew(createDraft.interfaceType)) return;
     setBusy(true);
     setError(null);
     setLibraryGrowWarning(null);

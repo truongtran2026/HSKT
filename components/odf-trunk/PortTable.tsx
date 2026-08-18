@@ -13,17 +13,13 @@ import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { writeTransitForPorts } from "@/lib/transitLinks";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, transitDisplay, type TrunkPortRow } from "@/lib/trunkPorts";
-import {
-  autoCreateTrunkMirrorForCircuit,
-  autoCreateTrunkTrunkMirrorForCircuit,
-  replaceOccupantAndCreateTrunkTrunkMirror,
-} from "@/lib/mirrorTrunkCircuits";
+import { autoCreateTrunkTrunkMirrorForCircuit, replaceOccupantAndCreateTrunkTrunkMirror } from "@/lib/mirrorTrunkCircuits";
 import { distinctPositionsForDevice, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
 import { useColumnOrder } from "@/lib/useColumnOrder";
 import { buildTrunkPortReportText } from "@/lib/circuitReportText";
-import type { CircuitOptions } from "@/lib/circuitOptions";
+import { suggestInterfaceTypeFix, type CircuitOptions } from "@/lib/circuitOptions";
 import { deviceCategoryLabel, type DeviceRow } from "@/lib/devices";
 import { formatLastUpdated } from "@/lib/format";
 import DataTh from "@/components/ui/DataTh";
@@ -725,6 +721,21 @@ export default function PortTable({
         }
       }
     }
+    // Hỏi lại khi "Giao tiếp" là 1 giá trị CHƯA TỪNG dùng trong hệ thống (yêu
+    // cầu người dùng 2026-08-18: "100GE thì lại gõ là 100... phải hỏi lại
+    // người dùng là bạn có chắc chắn" — đối xứng chốt chặn ở DeviceCircuitList.tsx
+    // saveEdit()/submitCreate()). Bỏ qua khi rỗng (Giao tiếp không bắt buộc ở
+    // trang này, khác bên thiết bị).
+    {
+      const trimmed = edit.interfaceType.trim();
+      if (trimmed && !options.interfaceTypes.includes(trimmed)) {
+        const suggestion = suggestInterfaceTypeFix(trimmed, options.interfaceTypes);
+        const msg = suggestion
+          ? `Giao tiếp "${trimmed}" chưa từng dùng trong hệ thống — có phải bạn gõ THIẾU, ý là "${suggestion}"?\n\nBấm Hủy để sửa lại, bấm OK nếu ĐÚNG là muốn thêm loại giao tiếp MỚI "${trimmed}".`
+          : `Giao tiếp "${trimmed}" chưa từng dùng trong hệ thống — bạn có chắc chắn muốn thêm loại giao tiếp MỚI này (không phải gõ nhầm/thiếu)?`;
+        if (!confirm(msg)) return;
+      }
+    }
     setSaving(true);
     setError(null);
     try {
@@ -951,9 +962,28 @@ export default function PortTable({
     // saveEdit() đã làm khi tách 1 port ra khỏi cặp (removedPortIds).
     const transitLinkIds = linkedPorts.map((p) => p.transitLinkId).filter((id): id is string => !!id);
     const transitNote = transitLinkIds.length > 0 ? " và dữ liệu Chuyển tiếp của các port đó" : "";
+
+    // Luồng này CHÍNH LÀ mirror của 1 luồng thiết bị (mirrorOfId có sẵn) — tra
+    // tên luồng gốc để cảnh báo rõ, và XÓA LUÔN CẢ 2 BÊN (yêu cầu người dùng
+    // 2026-08-18: "xóa bên mirror thì bên chính... đồng bộ qua mirror => ko
+    // bị xóa bên mirror là không đúng"). TRƯỚC ĐÂY (2026-08-02) xóa xong lại
+    // TỰ TẠO LẠI mirror ngay (autoCreateTrunkMirrorForCircuit) — lúc đó mục
+    // đích là chống "mồ côi dữ liệu" khi người dùng lỡ xóa nhầm, nhưng hệ quả
+    // là xóa mirror "không ăn thua gì" (tự sinh lại ngay), đúng điều người
+    // dùng hiện phàn nàn. Đổi hẳn sang xóa ĐỐI XỨNG luôn nguồn — khớp với
+    // chiều ngược lại (xóa nguồn ở DeviceCircuitList.tsx đã luôn xóa mirror
+    // theo, qua FK mirror_of_id on delete cascade, từ trước).
+    let sourceCircuitName: string | null = null;
+    if (circuit.mirrorOfId) {
+      const { data: src } = await supabase.from("circuits").select("name").eq("id", circuit.mirrorOfId).maybeSingle();
+      sourceCircuitName = src?.name ?? null;
+    }
+    const mirrorNote = circuit.mirrorOfId
+      ? `\n\nLƯU Ý: luồng này đang là "mirror" của luồng thiết bị "${sourceCircuitName ?? "(không rõ)"}" bên Hồ sơ đấu nối — sẽ XÓA LUÔN CẢ luồng thiết bị đó (đối xứng với chiều xóa ngược lại).`
+      : "";
     if (
       !confirm(
-        `Xóa luồng "${circuit.name}"? Sẽ giải phóng port ${linkedPorts.map((p) => p.portNumber).join(", ")} về trạng thái trống${transitNote}.`
+        `Xóa luồng "${circuit.name}"? Sẽ giải phóng port ${linkedPorts.map((p) => p.portNumber).join(", ")} về trạng thái trống${transitNote}.${mirrorNote}`
       )
     ) {
       return;
@@ -968,30 +998,10 @@ export default function PortTable({
       // trạng thái dở dang (circuit đã xóa nhưng port vẫn 'in_use').
       const { error: rpcErr } = await supabase.rpc("delete_trunk_circuit", { p_circuit_id: circuit.id });
       if (rpcErr) throw rpcErr;
-      // Xóa 1 luồng trung kế ĐANG LÀ mirror của 1 luồng thiết bị (mirrorOfId
-      // có sẵn) giải phóng port nhưng luồng thiết bị vẫn còn nguyên dữ liệu
-      // trỏ tới đúng vị trí đó — người dùng phát hiện 2026-08-02 (chủ động
-      // xóa để thử, "chưa thấy gì": "rõ ràng sync được thì có thông tin và
-      // trạng thái đã liên kết"): trước đây không có gì tự phục hồi, phải tự
-      // vào lưu lại luồng thiết bị mới kích hoạt lại được tự-tạo-mirror. Giờ
-      // gọi thẳng lại `autoCreateTrunkMirrorForCircuit` cho ĐÚNG luồng thiết
-      // bị gốc ngay sau khi xóa — port vừa trống nên sẽ tự tạo lại thành công
-      // (trừ khi dữ liệu thiết bị đã đổi sang trỏ nơi khác từ trước, khi đó
-      // trả "no-gap", vô hại).
       if (circuit.mirrorOfId) {
-        try {
-          const recreated = await autoCreateTrunkMirrorForCircuit(supabase, circuit.mirrorOfId);
-          if (recreated.status === "error") {
-            setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${translatePgError(recreated.message)}`);
-          } else if (recreated.status === "occupied") {
-            setError(
-              `Đã xóa luồng, nhưng vị trí ${recreated.rackCode} (${recreated.portNumbers.join(
-                ","
-              )}) lại đang có luồng khác ("${recreated.occupantCircuitName}") — vào lại luồng thiết bị gốc và Lưu để xử lý tiếp.`
-            );
-          }
-        } catch (e) {
-          setError(`Đã xóa luồng, nhưng tự tạo lại mirror cho luồng thiết bị gốc thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
+        const { error: srcErr } = await supabase.from("circuits").delete().eq("id", circuit.mirrorOfId);
+        if (srcErr) {
+          setError(`Đã xóa luồng trung kế, nhưng xóa luồng thiết bị gốc thất bại: ${translatePgError(srcErr.message)}`);
         }
       }
       refreshAndThen();
