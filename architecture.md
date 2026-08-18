@@ -5881,9 +5881,16 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     `forceSplit(true)`, ghi lại `edit.transitText` gộp đủ 3 phần.
   - Case "ODF trỏ sang trung kế khác" (đã có sẵn `bareTrunkCableRouteName`
     hiện tên tuyến cáp) — bổ sung `bareTrunkPortDisplay` hiện thêm dòng
-    Port/"(sợi x,y)" ngay dưới tên tuyến cáp (trước đây phải bấm "Xem nhanh
-    port đích →" mới thấy port; giờ hiện luôn, nút xem nhanh vẫn giữ để xem
-    chi tiết luồng đang chiếm port đó nếu cần), tái dùng đúng công thức
+    Port/"(sợi x,y)" ngay dưới tên tuyến cáp, tái dùng đúng công thức
     `fiberNumber != null && fiberNumber !== portNumber ? " (sợi X)" : ""`
-    đã dùng ở slide-over "Xem nhanh" cùng file và ở `DeviceCircuitList.tsx`.
+    đã dùng ở `DeviceCircuitList.tsx`.
+- **Follow-up cùng ngày** — người dùng: "Nếu đã có gợi ý thế rồi bấm cái ăn
+  luôn thì ko cần bấm xem nhanh nữa, bỏ nút xem nhanh đi luôn". Bỏ HẲN nút
+  "Xem nhanh port đích →" + panel slide-over `quickView === "trunk"` + memo
+  `bareMatchedTrunkPorts` (đều hết tác dụng vì `bareTrunkPortDisplay` đã hiện
+  sẵn Port/"(sợi x,y)" ngay trong form, không cần mở panel riêng mới xem
+  được nữa) — `quickView` chỉ còn `"device" | null`. Panel "Xem nhanh thiết
+  bị này →" (`quickView === "device"`) GIỮ NGUYÊN, không liên quan tới gợi ý
+  thư viện lần này (hiện thông tin khác — chi tiết thiết bị, không phải
+  port/sợi).
 - `npx tsc --noEmit` + `npm run build` sạch.

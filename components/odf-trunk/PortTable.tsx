@@ -1906,15 +1906,9 @@ function EditRow({
   }
 
   // Slide-over "xem nhanh" (yêu cầu người dùng 2026-07-29, "Giai đoạn 2") —
-  // xem port trung kế đích / thiết bị đối phương mà KHÔNG rời rack đang sửa.
-  // Port đích lấy thẳng từ `trunkPorts` (đã tải sẵn TOÀN BỘ port + luồng
-  // hiện tại của mọi rack cho trang này) — không cần fetch thêm gì.
-  const [quickView, setQuickView] = useState<"trunk" | "device" | null>(null);
-  const bareMatchedTrunkPorts = useMemo(() => {
-    if (!bareMatch || bareMatch.rackDomain !== "trunk" || !bareMatch.resolvedPorts) return [];
-    const portNumbers = new Set(bareMatch.resolvedPorts.map((p) => p.portNumber));
-    return trunkPorts.filter((p) => p.rackCode === bareMatch.rackCode && portNumbers.has(p.portNumber));
-  }, [bareMatch, trunkPorts]);
+  // xem thiết bị đối phương mà KHÔNG rời rack đang sửa. Panel "trunk" (xem
+  // port trung kế đích) đã bỏ 2026-08-18, xem comment ở nơi render panel.
+  const [quickView, setQuickView] = useState<"device" | null>(null);
 
   // Ô "Thiết bị" (tách từ cấu trúc 2, yêu cầu người dùng 2026-07-29) — check
   // "đã có trong hồ sơ thiết bị (devices) chưa", CÙNG kiểu UX với ô Vị trí
@@ -2190,13 +2184,6 @@ function EditRow({
                         <div className="input flex items-center bg-slate-100 text-slate-500">{bareTrunkPortDisplay}</div>
                       </>
                     )}
-                    <button
-                      type="button"
-                      className="self-start text-xs text-primary-600 hover:underline"
-                      onClick={() => setQuickView("trunk")}
-                    >
-                      Xem nhanh port đích →
-                    </button>
                   </>
                 )}
               </div>
@@ -2318,41 +2305,12 @@ function EditRow({
       </td>
 
       {/* Chỉ render khi thật sự có thể mở (yêu cầu người dùng 2026-07-29) —
-          tránh mỗi dòng đang sửa đều âm thầm gắn thêm 2 <aside> vào DOM dù
-          không liên quan gì (bareMatch/matchedDevice không khớp thì never
-          mở được panel này), gây rối khi có nhiều dòng debug/test DOM. */}
-      {bareTrunkCableRouteName && (
-      <SlideOverPanel open={quickView === "trunk"} onClose={() => setQuickView(null)} title={`${bareMatch?.rackCode ?? ""} — xem nhanh`}>
-        <div className="space-y-3">
-          {bareMatchedTrunkPorts.map((p) => (
-            <div key={p.portId} className="rounded border border-slate-200 p-3 text-sm">
-              <p className="font-medium text-slate-700">
-                Port {p.portNumber}
-                {p.fiberNumber != null && p.fiberNumber !== p.portNumber ? ` (sợi ${p.fiberNumber})` : ""}
-              </p>
-              {p.circuit ? (
-                <>
-                  <p className="mt-1 text-slate-600">Luồng: {p.circuit.name}</p>
-                  {p.circuit.interfaceType && <p className="text-slate-500">Giao tiếp: {p.circuit.interfaceType}</p>}
-                </>
-              ) : (
-                <p className="mt-1 text-slate-400">— Trống —</p>
-              )}
-            </div>
-          ))}
-          {bareMatchedTrunkPorts.length === 0 && <p className="text-sm text-slate-400">Không tìm thấy port thật khớp.</p>}
-          {bareMatchedTrunkPorts[0] && (
-            <Link
-              href={`/odf-trunk/${bareMatchedTrunkPorts[0].rackId}#port-${bareMatchedTrunkPorts[0].portId}`}
-              className="text-sm text-primary-600 hover:underline"
-            >
-              Mở đầy đủ rack {bareMatch?.rackCode} →
-            </Link>
-          )}
-        </div>
-      </SlideOverPanel>
-      )}
-
+          tránh mỗi dòng đang sửa đều âm thầm gắn thêm <aside> vào DOM dù
+          không liên quan gì (matchedDevice không khớp thì never mở được
+          panel này), gây rối khi có nhiều dòng debug/test DOM. Panel "trunk"
+          (Xem nhanh port đích) đã BỎ 2026-08-18 — người dùng: có gợi ý 💡
+          bấm điền thẳng + Port/(sợi x,y) đã hiện sẵn ngay trong ô rồi, không
+          cần bấm xem thêm panel riêng nữa. */}
       {matchedDevice && (
       <SlideOverPanel open={quickView === "device"} onClose={() => setQuickView(null)} title={matchedDevice.name}>
         <div className="space-y-2 text-sm">
