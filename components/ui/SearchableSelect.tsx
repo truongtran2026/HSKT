@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeVN } from "@/lib/text";
+import FilterInput from "@/components/ui/FilterInput";
 
 export interface SearchableSelectItem {
   value: string;
@@ -80,13 +81,7 @@ export default function SearchableSelect({
       {open && (
         <div className="absolute z-20 mt-1 w-full min-w-[240px] rounded-lg border border-slate-200 bg-white shadow-lg">
           <div className="border-b border-slate-100 p-2">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Lọc..."
-              className="w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal text-slate-700 focus:border-primary-400 focus:outline-none"
-            />
+            <FilterInput autoFocus value={query} onChange={setQuery} placeholder="Lọc..." />
           </div>
           <div className="max-h-72 overflow-y-auto p-2">
             {grouped.map(([group, groupItems]) => (

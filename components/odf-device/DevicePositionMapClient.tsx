@@ -17,6 +17,7 @@ import { resolveDeviceByExactOrAlias, type DeviceAliasRow } from "@/lib/deviceAl
 import { findMirrorTrunkCircuits, cleanupAfterMirrorCascade } from "@/lib/mirrorTrunkCircuits";
 import { translatePgError } from "@/lib/translatePgError";
 import DataTh from "@/components/ui/DataTh";
+import ClearableInput from "@/components/ui/ClearableInput";
 import ColumnPicker from "@/components/ui/ColumnPicker";
 import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import RefreshButton from "@/components/ui/RefreshButton";
@@ -944,30 +945,30 @@ export default function DevicePositionMapClient({
       <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50/40 p-3">
         <p className="text-sm font-medium text-primary-800 mb-2">Thêm dòng mới</p>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            className="input w-auto max-w-[220px]"
+          <ClearableInput
+            className="w-auto max-w-[220px]"
             list="dpm-device-name-options"
             placeholder="VD: ADN1.OTS2 BB1"
             value={draft.deviceName}
-            onChange={(e) => setDraft({ ...draft, deviceName: e.target.value })}
+            onChange={(v) => setDraft({ ...draft, deviceName: v })}
           />
           <datalist id="dpm-device-name-options">
             {deviceNameOptions.map((d) => (
               <option key={d} value={d} />
             ))}
           </datalist>
-          <input
-            className="input w-auto max-w-[220px]"
+          <ClearableInput
+            className="w-auto max-w-[220px]"
             placeholder="VD: S1-1, 1/0/27"
             value={draft.devicePosition}
-            onChange={(e) => setDraft({ ...draft, devicePosition: e.target.value })}
+            onChange={(v) => setDraft({ ...draft, devicePosition: v })}
           />
-          <input
-            className="input w-auto max-w-[220px]"
+          <ClearableInput
+            className="w-auto max-w-[220px]"
             list="dpm-odf-position-options"
             placeholder="VD: ODF 5/7 (37,38)"
             value={draft.odfPosition}
-            onChange={(e) => setDraft({ ...draft, odfPosition: e.target.value })}
+            onChange={(v) => setDraft({ ...draft, odfPosition: v })}
             onBlur={() => {
               const match = matchTrunkPosition(draft.odfPosition, trunkPorts);
               const canonical = formatCanonicalOdfPosition(match);

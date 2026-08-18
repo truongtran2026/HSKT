@@ -5806,3 +5806,34 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   đang ở port 9 (nâng port 9 từ `link_role='single'` lên `'tx'`, thêm port
   10 làm `'rx'`), ghi "Chuyển tiếp" đúng giá trị đã xác nhận cho CẢ 2 port,
   cập nhật `device_position_next` bên thiết bị thành "ODF 2/7.2 (09,10)".
+
+## 106. Nút "×" xóa nhanh chữ trong ô lọc/ô nhập liệu (QUY ĐỊNH CHUNG, 2026-08-18)
+
+- **Yêu cầu người dùng**: "Thư viện vị trí thiết bị -> các ô trong khung
+  thêm dòng mới hoặc phần lọc phía bảng dưới thì có thêm nút icon để bỏ
+  lọc hay clear chữ/số trong ô hết để gõ lại cho nhanh. Trong khung chọn
+  multiple select hoặc các khung tương tự thì khi gõ từ khóa để lọc cũng
+  phải có icon để bỏ lọc đi (bỏ chọn thì có mà xóa chữ/số trong ô lọc sau
+  khi gõ thì chưa có)."
+- **Sửa ở ĐÚNG 2 component DÙNG CHUNG** (không patch riêng từng trang) để
+  tự động áp dụng cho TOÀN BỘ app:
+  - **`FilterInput.tsx`** (ô lọc nhỏ dưới mỗi tiêu đề cột, dùng trong
+    `DataTh.tsx` — tức MỌI cột lọc của MỌI bảng trong app) — thêm nút "×"
+    chỉ hiện khi ô đang có chữ, bấm xóa sạch + tự focus lại vào ô luôn.
+    `GroupedMultiSelect.tsx`'s ô gõ tìm ĐÃ dùng sẵn `FilterInput` từ trước
+    nên tự động có nút "×" theo, không cần sửa thêm gì ở file đó.
+  - **`SearchableSelect.tsx`**'s ô gõ tìm trước đây là `<input>` viết tay
+    riêng (trùng lặp y hệt style `FilterInput`) — đổi sang dùng thẳng
+    `FilterInput` (thêm prop `autoFocus` cho `FilterInput` để giữ đúng hành
+    vi "mở dropdown tự focus ngay" đã có) — vừa gọn code vừa tự có nút "×".
+- **`ClearableInput.tsx`** (mới) — đối xứng `FilterInput` nhưng cỡ ô nhập
+  liệu thường (class `.input`, dùng cho form Thêm/Sửa, khác `FilterInput`
+  cỡ nhỏ dùng cho lọc). Áp dụng cho 3 ô ở khung "Thêm dòng mới"
+  (`DevicePositionMapClient.tsx` — Tên thiết bị/Vị trí thiết bị/Vị trí
+  ODF), giữ nguyên `list=`/`onBlur=` (auto-chuẩn hóa ODF) đang có sẵn.
+  **CHƯA áp dụng** cho mọi ô nhập liệu khác trong app (vd khung Sửa 1
+  dòng, form Thêm/Sửa luồng ở `DeviceCircuitList.tsx`/`PortTable.tsx`) —
+  chỉ mới làm đúng phạm vi người dùng nêu; từ nay khi VIẾT MỚI 1 ô nhập
+  liệu dạng text tự do, cân nhắc dùng `ClearableInput` thay `<input
+  className="input">` trần, cùng tinh thần "áp dụng pattern chung ngay từ
+  đầu" đã chốt ở Mục 98.
