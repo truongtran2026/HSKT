@@ -217,6 +217,7 @@ interface MoveState {
   sourcePortIds: string[];
   circuitId: string;
   circuitName: string;
+  mirrorOfId: string | null;
   racks: { id: string; code: string; cable_route_name: string | null }[];
   targetRackId: string | null;
   targetPorts: { id: string; port_number: number; status: string }[];
@@ -1051,6 +1052,7 @@ export default function PortTable({
       sourcePortIds: linkedPorts.map((p) => p.id),
       circuitId: circuit.id,
       circuitName: circuit.name,
+      mirrorOfId: circuit.mirrorOfId,
       racks: [],
       targetRackId: null,
       targetPorts: [],
@@ -1109,12 +1111,28 @@ export default function PortTable({
     );
   }
 
+  // Bấm tick "Ghép Tx/Rx" mà KHÔNG gõ số port ghép -> tự gợi ý port liền kề
+  // nếu còn trống (yêu cầu người dùng 2026-08-18, phát hiện qua ca thật
+  // "quay đầu cáp quang" ODF 6/12(09,10) -> ODF 2/7.2(09,10): tick ghép
+  // nhưng không gõ số, tưởng tự hiểu là "2 sợi liền kề" nhưng trước đây
+  // KHÔNG có gì tự làm — chỉ port đích chính (9) được gán, port 10 bị bỏ
+  // sót hoàn toàn). ĐỐI XỨNG `toggleMerge()` (form Sửa/Thêm luồng ở CHÍNH
+  // trang này) — hàm đó ĐÃ có đúng hành vi này từ trước, riêng form "Chuyển
+  // tuyến" (`toggleMoveMerge`) thì bị bỏ sót, không đồng bộ theo.
   function toggleMoveMerge(checked: boolean) {
     setMove((m) => {
       if (!m) return m;
       if (!checked) return { ...m, mergeEnabled: false };
-      const { id, error: err } = resolveMoveTargetPort(m.targetPorts, m.secondTargetPortNumber, m.targetPortId);
-      return { ...m, mergeEnabled: true, secondTargetPortId: id, secondTargetPortError: err };
+      let numberText = m.secondTargetPortNumber;
+      if (!numberText) {
+        const idx = m.targetPorts.findIndex((p) => p.id === m.targetPortId);
+        const cur = m.targetPorts[idx];
+        const next = m.targetPorts[idx + 1];
+        const adjacentEligible = !!cur && cur.port_number % 2 === 1 && !!next && next.status === "unused" && next.port_number - cur.port_number === 1;
+        if (adjacentEligible) numberText = String(next!.port_number);
+      }
+      const { id, error: err } = resolveMoveTargetPort(m.targetPorts, numberText, m.targetPortId);
+      return { ...m, mergeEnabled: true, secondTargetPortNumber: numberText, secondTargetPortId: id, secondTargetPortError: err };
     });
   }
 
@@ -1154,6 +1172,64 @@ export default function PortTable({
       if (linkErr) throw linkErr;
       const { error: statusErr } = await supabase.from("ports").update({ status: "in_use" }).in("id", destPortIds);
       if (statusErr) throw statusErr;
+
+      // "Quay đầu cáp quang" (yêu cầu người dùng 2026-08-18, phát hiện qua ca
+      // thật luồng 100GE ASBR#2-MX2020(7/1/6)-2T9.P1(16/1/6) chuyển tuyến từ
+      // ODF 6/12(09,10) sang ODF 2/7.2(09,10)): "Chuyển tiếp" là dữ liệu của
+      // PORT (transit_links khóa theo source_port_id), không tự đi theo
+      // circuit khi circuit chuyển port — TRƯỚC ĐÂY confirmMove() chỉ xóa
+      // "Chuyển tiếp" ở port nguồn (khi đồng ý xóa nguồn), không copy sang
+      // port đích, khiến cột "Chuyển tiếp" ở vị trí mới trống trơn dù sợi cáp
+      // vật lý (đã "quay đầu" sang port mới) vẫn dẫn tới đúng chỗ cũ. Copy
+      // nguyên văn raw_text từ port nguồn ĐẦU TIÊN sang port đích (đúng quy
+      // ước "2 sợi Tx/Rx dùng chung 1 giá trị Chuyển tiếp" đã áp dụng khắp
+      // nơi khác, xem writeTransitForPorts) — làm TRƯỚC bước hỏi xóa nguồn,
+      // để dù người dùng chọn giữ tạm cả 2 nơi thì port đích vẫn đã có đúng
+      // dữ liệu.
+      const sourceTransitText = ports.find((p) => p.id === move.sourcePortIds[0])?.transitText ?? null;
+      if (sourceTransitText) {
+        await writeTransitForPorts(supabase, destPortIds, sourceTransitText);
+      }
+
+      // Đồng bộ luôn "Vị trí ODF (tiếp theo)" bên luồng THIẾT BỊ đã liên kết
+      // sang vị trí trung kế MỚI — trước đây confirmMove() không đụng gì tới
+      // bảng `circuits` nên luồng thiết bị vẫn trỏ về vị trí trung kế CŨ sau
+      // khi chuyển tuyến, sai lệch dữ liệu 2 bên y hệt lớp lỗi "mirror không
+      // đồng bộ" đã sửa ở Mục 100. Luồng trung kế đang chuyển có thể là
+      // MIRROR (mirrorOfId trỏ thẳng tới luồng thiết bị — ca phổ biến nhất,
+      // thiết bị nhập trước tự sinh mirror trung kế) hoặc là NGUỒN (1 luồng
+      // thiết bị khác có mirrorOfId trỏ NGƯỢC LẠI về đây — ca luồng trung kế
+      // nhập trước) — tra cả 2 chiều cho chắc, không giả định chỉ 1 chiều.
+      let linkedDeviceCircuitId = move.mirrorOfId;
+      if (!linkedDeviceCircuitId) {
+        const { data: mirrorRow } = await supabase
+          .from("circuits")
+          .select("id")
+          .eq("mirror_of_id", move.circuitId)
+          .not("device_id", "is", null)
+          .maybeSingle();
+        linkedDeviceCircuitId = mirrorRow?.id ?? null;
+      }
+      if (linkedDeviceCircuitId) {
+        const rackCode = move.racks.find((r) => r.id === move.targetRackId)?.code;
+        const portNumbers = destPortIds
+          .map((id) => move.targetPorts.find((p) => p.id === id)?.port_number)
+          .filter((n): n is number => n != null)
+          .sort((a, b) => a - b);
+        if (rackCode && portNumbers.length > 0) {
+          const destMatch = matchTrunkPosition(`${rackCode}(${portNumbers.join(",")})`, trunkPorts);
+          const destCanonical = formatCanonicalOdfPosition(destMatch);
+          if (destCanonical) {
+            const { error: nextErr } = await supabase
+              .from("circuits")
+              .update({ device_position_next: destCanonical })
+              .eq("id", linkedDeviceCircuitId);
+            if (nextErr) {
+              setError(`Đã chuyển tuyến, nhưng cập nhật "Vị trí ODF (tiếp theo)" bên luồng thiết bị liên kết thất bại: ${translatePgError(nextErr.message)}`);
+            }
+          }
+        }
+      }
 
       // Theo đúng architecture.md mục 4.2: luôn hỏi xác nhận trước khi xóa
       // dữ liệu port nguồn. Không đồng ý -> cho phép luồng gán tạm cả 2 nơi

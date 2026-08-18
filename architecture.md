@@ -5763,3 +5763,46 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   chỉ render khi `categoryEditMode === true` (thêm điều kiện `&&
   categoryEditMode`, giữ nguyên toàn bộ logic đếm/chặn xóa cũ) — bình
   thường các chip chỉ dùng để lọc, gọn như trước khi có tính năng xóa.
+
+## 105. "Chuyển tuyến" (di chuyển luồng trung kế sang port khác) không copy "Chuyển tiếp" + không đồng bộ "Vị trí ODF (tiếp theo)" bên thiết bị + tick "Ghép Tx/Rx" không gõ số bị bỏ sót port liền kề (2026-08-18)
+
+- **Báo cáo người dùng** (ca thật): sau khi "Chuyển tuyến" luồng 100GE
+  "ADN1.ASBR#2-MX2020 (13/0/3) - 2T9.P1 (12/1/6)" từ ODF 6/12 (09,10) sang
+  ODF 2/7.2 (09,10), cột "Chuyển tiếp" ở vị trí mới trống trơn (đúng ra phải
+  là "ODF 7/17 (37,38) - ADN1.ASBR#2-MX2020 (13/0/3)"), và luồng THIẾT BỊ
+  liên kết ("ADN1.ASBR#2-MX2020" Trib "13/0/3") vẫn còn "Vị trí ODF (tiếp
+  theo)" trỏ về vị trí CŨ (ODF 6/12) thay vì vị trí MỚI (ODF 2/7.2).
+- **3 nguyên nhân khác nhau, cùng lộ ra qua 1 ca thật** (`PortTable.tsx`,
+  tính năng "Chuyển tuyến" — `confirmMove()`/`toggleMoveMerge()`):
+  1. **"Chuyển tiếp" không được copy sang port đích**: `transit_links` khóa
+     theo `source_port_id` (dữ liệu CỦA PORT, không đi theo circuit khi
+     circuit đổi port) — `confirmMove()` trước đây CHỈ xóa `transit_links`
+     ở port NGUỒN (khi đồng ý xóa nguồn), không hề ghi gì ở port ĐÍCH.
+  2. **Không đồng bộ `device_position_next` bên thiết bị**: `confirmMove()`
+     trước đây không đụng gì tới bảng `circuits` — luồng trung kế đổi vị
+     trí xong, luồng thiết bị liên kết (qua `mirror_of_id`, tra CẢ 2 chiều —
+     luồng đang chuyển có thể là mirror hoặc là nguồn) vẫn trỏ vị trí cũ,
+     cùng lớp lỗi "2 bên lệch dữ liệu" đã sửa ở Mục 100.
+  3. **Tick "Ghép Tx/Rx" không gõ số port bị bỏ sót port liền kề**: người
+     dùng xác nhận thao tác thật — tick ô ghép nhưng KHÔNG gõ số (hiểu ngầm
+     là "2 sợi liền kề 09,10"), nhưng `toggleMoveMerge()` trước đây gọi
+     thẳng `resolveMoveTargetPort()` với chuỗi RỖNG -> không port nào được
+     gán thêm, chỉ port chính (9) được dùng, port 10 bị bỏ sót hoàn toàn.
+     Đối chiếu code thì `toggleMerge()` (form Sửa/Thêm luồng CÙNG trang) đã
+     có sẵn đúng hành vi "tick không gõ số -> tự gợi ý port liền kề nếu còn
+     trống" từ trước — riêng `toggleMoveMerge()` (form "Chuyển tuyến") bị bỏ
+     sót, không đồng bộ theo.
+- **Sửa cả 3**: `toggleMoveMerge()` thêm đúng logic tự gợi ý port liền kề
+  (đối xứng `toggleMerge()`, dùng `m.targetPorts`/`status` thay vì
+  `ports`/`circuit`). `confirmMove()` thêm 2 bước MỚI ngay sau khi gán port
+  đích (trước bước hỏi xóa port nguồn): (a) đọc `transitText` của port
+  nguồn ĐẦU TIÊN, ghi sang TOÀN BỘ port đích qua `writeTransitForPorts()`
+  (đúng đường ghi DUY NHẤT đã dùng khắp nơi khác, có sẵn bảo vệ 11 luồng
+  khuếch đại/DWDM); (b) tra `mirrorOfId` (2 chiều) tìm luồng thiết bị liên
+  kết, tính vị trí chuẩn (`matchTrunkPosition`/`formatCanonicalOdfPosition`)
+  của rack/port đích, `update circuits.device_position_next` cho luồng đó.
+- **Dọn dữ liệu ca thật** (script tạm, đã xóa sau khi dùng, dry-run trước
+  khi commit): thêm port 10 (đang trống, `status='unused'`) vào đúng luồng
+  đang ở port 9 (nâng port 9 từ `link_role='single'` lên `'tx'`, thêm port
+  10 làm `'rx'`), ghi "Chuyển tiếp" đúng giá trị đã xác nhận cho CẢ 2 port,
+  cập nhật `device_position_next` bên thiết bị thành "ODF 2/7.2 (09,10)".
