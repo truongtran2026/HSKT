@@ -5656,3 +5656,94 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   lại hoặc OK để xác nhận đúng là muốn thêm loại giao tiếp mới. Bỏ qua khi
   ô để trống (không đổi yêu cầu bắt buộc/không bắt buộc đã có sẵn ở mỗi
   trang).
+
+## 102. Bảng `device_categories` riêng — Thêm/Xóa "Lĩnh vực" thật (2026-08-18)
+
+- **Yêu cầu người dùng**: "Có một lỗ hổng là hiện tại có 6 lĩnh vực; tôi
+  muốn thêm lĩnh vực thì làm sao thêm (ATBM) và xóa lĩnh vực thì sao (xóa
+  phải không có thiết bị thuộc lĩnh vực đó mới xóa được lĩnh vực)."
+- **Trước đây**: `devices.category` chỉ là cột TEXT tự do — 1 "lĩnh vực" chỉ
+  "tồn tại" ngầm khi có ≥1 thiết bị đang dùng đúng chữ đó (suy ra từ
+  `SELECT DISTINCT`, xem `categoryOptions` cũ ở `DeviceCategoryClient.tsx`).
+  Không thêm được 1 lĩnh vực TRỐNG (chưa gán cho thiết bị nào), không xóa
+  được độc lập, gõ sai chính tả dễ tạo ra 1 "lĩnh vực" trùng ý nhưng khác
+  chữ (không phát hiện được vì không có ràng buộc nào).
+- **Đã hỏi người dùng chọn giữa 2 hướng** (đổi schema, theo đúng quy định
+  CLAUDE.md "không tự ý đổi schema mà không hỏi trước"): (a) tạo bảng
+  `device_categories` riêng, đổi hẳn cách chọn sang dropdown; (b) giữ text
+  tự do, chỉ thêm UI rõ ràng hơn. Người dùng chọn (a).
+- **Migration mới** `supabase/migrations/20260818000001_device_categories.sql`
+  (người dùng phải tự chạy tay qua Supabase Dashboard → SQL Editor — môi
+  trường này không có Supabase CLI/Management API, xem mục ghi chú
+  2026-07-29 ở trên): tạo bảng `device_categories(name text primary key,
+  created_at)`, RLS 3 cấp giống các bảng khác (select mọi người đăng nhập,
+  insert/update operator+admin, delete admin), seed từ 6 giá trị DISTINCT
+  đang có trong `devices.category`, rồi thêm ràng buộc khóa ngoại
+  `devices_category_fkey` (`devices.category` -> `device_categories.name`,
+  **`on delete restrict`** — Postgres tự chặn xóa 1 lĩnh vực nếu còn thiết
+  bị tham chiếu, đúng yêu cầu; **`on update cascade`** — đổi tên 1 lĩnh vực
+  tự động cập nhật mọi `devices.category` đang dùng tên cũ).
+- **QUYẾT ĐỊNH THIẾT KẾ quan trọng**: GIỮ NGUYÊN `devices.category` là cột
+  TEXT (không đổi sang `category_id` FK số) — chỉ THÊM ràng buộc khóa ngoại
+  text→text. Lý do: hàng chục chỗ code trong app đang dùng `category` như
+  string trực tiếp (`deviceCategoryLabel()`, mọi group-by-category ở
+  `DeviceCircuitList.tsx`/`DevicePositionMapClient.tsx`/
+  `DeviceCategoryClient.tsx`/`ImportExportClient.tsx`/`CommandPalette.tsx`/
+  `PortTable.tsx`) — đổi sang FK số sẽ phải sửa TẤT CẢ những chỗ đó, rủi ro
+  cao không cần thiết. Cách này chỉ cần thêm 1 bảng + 1 constraint, code cũ
+  gần như không đổi gì.
+- **`lib/deviceCategories.ts`** (mới): `fetchDeviceCategories(client):
+  Promise<string[]>` — đọc toàn bộ `device_categories.name`, dùng ở cả 2
+  trang cần chọn lĩnh vực để GHI (không phải chỉ lọc):
+  - `app/devices/page.tsx` -> `DeviceCategoryClient.tsx`: `categoryOptions`
+    (chip lọc ở đầu trang) đổi từ suy ra-từ-devices sang lấy thẳng
+    `deviceCategories` (+ thêm `UNCATEGORIZED_LABEL` vào cuối CHỈ KHI thật
+    sự có ≥1 thiết bị `category=null`, giữ đúng khả năng lọc "Chưa phân
+    loại" như cũ). Ô "Lĩnh vực" ở form "+ Thêm thiết bị" và khung gán hàng
+    loạt (`bulkCategory`) đổi từ `<input list=...>` (gõ tự do) sang
+    `<select>` (chỉ chọn được lĩnh vực có thật trong `device_categories`).
+    Thêm khung "+ Thêm lĩnh vực mới" (input + nút, RoleGate
+    operator/admin) ngay dưới chip lọc — insert thẳng vào
+    `device_categories`. Mỗi chip lĩnh vực THẬT (trừ "Chưa phân loại") có
+    thêm nút "×" (RoleGate admin) — tự đếm số thiết bị đang dùng TRƯỚC khi
+    cho xóa (báo lỗi rõ ràng nếu còn > 0, không đợi lỗi FK từ CSDL mới báo).
+  - `app/odf-device/vi-tri-thiet-bi/page.tsx` -> `DevicePositionMapClient.tsx`:
+    ô "Lĩnh vực (nếu tạo thiết bị mới)" trong khung "Chuẩn hóa tên thiết bị
+    chưa khớp" (`renameCategory`) cũng đổi từ input tự do (datalist) sang
+    `<select>` cùng lý do.
+  - `DeviceCircuitList.tsx`'s `createDraft.category` (dùng để LỌC danh sách
+    thiết bị trong form "Thêm luồng mới", KHÔNG ghi `devices.category`)
+    KHÔNG đổi — đây là bộ lọc đọc, không phải đường ghi, không có rủi ro gõ
+    sai tạo lĩnh vực rác.
+
+## 103. Cảnh báo chủ động "Thiết bị chưa có Lĩnh vực" ở /data-quality (2026-08-18)
+
+- **Báo cáo người dùng**: "Hiện tại cũng có thiết bị không thuộc lĩnh vực
+  nào cả, chính vì vậy khi hiển thị danh sách luồng thì không có những
+  luồng mà qua thiết bị không thuộc lĩnh vực nào => thiếu. Cụ thể là đây là
+  thiết bị DPI#1."
+- **Đã rà thật trước khi sửa**: tại thời điểm nhận báo cáo, `ADN1.DPI#1`
+  (và `DPI#2`) đã có `category="IP"`, và **CẢ 140/140 thiết bị** trong CSDL
+  đều đã có Lĩnh vực (0 thiết bị null) — không tái hiện được ca cụ thể
+  DPI#1 lúc rà. Đọc kỹ code xác nhận: MỌI nơi group theo lĩnh vực trong app
+  (`DeviceCircuitList.tsx`, `DevicePositionMapClient.tsx`,
+  `ImportExportClient.tsx`, `CommandPalette.tsx`) đều dùng
+  `UNCATEGORIZED_LABEL` ("Chưa phân loại") làm fallback khi thiết bị chưa
+  có lĩnh vực — luồng qua thiết bị đó KHÔNG bị mất, chỉ rơi vào bộ lọc
+  "Chưa phân loại" thay vì lĩnh vực cụ thể. Nhiều khả năng ca DPI#1 đã được
+  tự sửa (gán lĩnh vực) trước khi tới lượt rà lại, hoặc người dùng chỉ quen
+  bấm các chip lĩnh vực cụ thể (IP/Truyền Dẫn/...) mà bỏ sót chip "Chưa
+  phân loại" nên tưởng luồng bị mất.
+- **Rủi ro thật SẼ CÒN TÁI DIỄN**: thiết bị tự sinh (`source="auto"`, qua
+  `resolveOrCreateNextDevice()`/`maybeCreateCounterpartDevice()`/
+  `applyPendingGroup()`...) không hỏi Lĩnh vực lúc tạo — MỌI thiết bị mới
+  tạo qua các luồng này đều `category=null` cho tới khi ai đó vào
+  `/devices` gán tay. Đây là gốc rễ khiến hiện tượng "tưởng luồng bị mất"
+  có thể tái diễn với thiết bị KHÁC trong tương lai.
+- **Sửa**: thêm `UncategorizedDevicesPanel` trong `DataQualityClient.tsx`
+  (tab "Định dạng & trùng lặp dữ liệu") — liệt kê tên mọi thiết bị
+  `category=null` (tính ở `app/data-quality/page.tsx`, prop mới
+  `devicesWithoutCategory`), kèm link sang `/devices` để gán. Ẩn hẳn khi
+  rỗng (như mọi tab khác trong trang này). Mục đích: bắt được NGAY khi có
+  thiết bị mới thiếu lĩnh vực, chủ động thay vì đợi phát hiện qua "luồng bị
+  thiếu" như báo cáo gốc.

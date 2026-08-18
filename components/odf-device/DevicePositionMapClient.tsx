@@ -135,11 +135,13 @@ export default function DevicePositionMapClient({
   devices,
   trunkPorts,
   deviceAliases,
+  deviceCategories,
 }: {
   rows: DevicePositionMapRow[];
   devices: DeviceRow[];
   trunkPorts: TrunkPortRow[];
   deviceAliases: DeviceAliasRow[];
+  deviceCategories: string[];
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("deviceName");
@@ -222,12 +224,6 @@ export default function DevicePositionMapClient({
   const [circuitCheckBusy, setCircuitCheckBusy] = useState(false);
 
   const deviceNameOptions = useMemo(() => devices.map((d) => d.name), [devices]);
-
-  const realCategoryOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of devices) if (d.category) set.add(d.category);
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [devices]);
 
   function setFilter(key: SortKey, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -1076,18 +1072,14 @@ export default function DevicePositionMapClient({
                     value={renameTarget}
                     onChange={(e) => setRenameTarget(e.target.value)}
                   />
-                  <input
-                    className="input w-auto max-w-[200px]"
-                    list="dpm-category-options"
-                    placeholder="Lĩnh vực (nếu tạo thiết bị mới)"
-                    value={renameCategory}
-                    onChange={(e) => setRenameCategory(e.target.value)}
-                  />
-                  <datalist id="dpm-category-options">
-                    {realCategoryOptions.map((c) => (
-                      <option key={c} value={c} />
+                  <select className="input w-auto max-w-[200px]" value={renameCategory} onChange={(e) => setRenameCategory(e.target.value)}>
+                    <option value="">Lĩnh vực (nếu tạo thiết bị mới)</option>
+                    {deviceCategories.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
                     ))}
-                  </datalist>
+                  </select>
                   <RoleGate allow={["operator", "admin"]}>
                     <button className="btn-primary" onClick={applyRenameGroups} disabled={renameBusy}>
                       {renameBusy ? "Đang lưu..." : "Áp dụng"}

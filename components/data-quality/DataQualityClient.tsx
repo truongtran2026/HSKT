@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { NonConformingTransitLink } from "@/lib/transitLinks";
 import type { DevicePositionConflict, DeviceOwnPositionDuplicate } from "@/lib/deviceCircuits";
 import { mergeDeviceInto, ignoreDevicePair, type DeviceDupCandidate } from "@/lib/deviceDedup";
@@ -60,6 +61,7 @@ export default function DataQualityClient({
   unlinkedPairDetails,
   mismatchedLinkedPairs,
   divergentTransitGroups,
+  devicesWithoutCategory,
   trunkRackCodes,
   deviceRackCodes,
   deviceNames,
@@ -76,13 +78,19 @@ export default function DataQualityClient({
   unlinkedPairDetails: CircuitPairDetail[];
   mismatchedLinkedPairs: CircuitPairDetail[];
   divergentTransitGroups: DivergentTransitGroup[];
+  devicesWithoutCategory: string[];
   trunkRackCodes: string[];
   deviceRackCodes: string[];
   deviceNames: string[];
 }) {
   const syncCount = trunkMissingDeviceItems.length + unlinkedPairDetails.length + mismatchedLinkedPairs.length + unlinkedDeviceDevicePairs.length;
   const formatCount =
-    transitItems.length + transitPositionMismatches.length + deviceCircuitLibraryMismatches.length + dupCandidates.length + divergentTransitGroups.length;
+    transitItems.length +
+    transitPositionMismatches.length +
+    deviceCircuitLibraryMismatches.length +
+    dupCandidates.length +
+    divergentTransitGroups.length +
+    devicesWithoutCategory.length;
   const positionsCount = positionConflicts.length + ownPositionDuplicates.length + libraryOwnPositionDuplicates.length;
 
   const [tab, setTab] = useState<Tab>(syncCount > 0 ? "sync" : formatCount > 0 ? "format" : "positions");
@@ -140,6 +148,7 @@ export default function DataQualityClient({
             <DeviceLibraryMismatchTab items={deviceCircuitLibraryMismatches} />
             <DivergentTransitTab groups={divergentTransitGroups} />
             <DeviceDupTab candidates={dupCandidates} />
+            <UncategorizedDevicesPanel names={devicesWithoutCategory} />
           </div>
         ))}
       {tab === "positions" && (
@@ -412,6 +421,35 @@ function TabButton({
 
 function EmptyState({ text }: { text: string }) {
   return <p className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">{text}</p>;
+}
+
+// ============================================================================
+// Thiết bị chưa có Lĩnh vực (mới, yêu cầu người dùng 2026-08-18) — thiết bị
+// tự sinh (source="auto", qua các luồng "resolveOrCreateNextDevice"/"maybeCreate
+// CounterpartDevice"/"applyPendingGroup"...) không hỏi Lĩnh vực lúc tạo, nên
+// LUÔN category=null cho tới khi ai đó vào /devices gán tay — luồng qua thiết
+// bị đó vẫn hiện đúng (rơi vào bộ lọc "Chưa phân loại", KHÔNG bị mất), nhưng
+// dễ bị bỏ sót nếu người dùng chỉ quen bấm các lĩnh vực đã biết. Chủ động liệt
+// kê ở đây để bắt được NGAY khi phát sinh thiết bị mới, không đợi phát hiện
+// qua "luồng bị thiếu" như báo cáo gốc (rà thật 2026-08-18: tại thời điểm sửa,
+// cả 140 thiết bị đều đã có Lĩnh vực — không có gì cần sửa ngay, đây là hàng
+// rào phòng ngừa cho về sau).
+function UncategorizedDevicesPanel({ names }: { names: string[] }) {
+  if (names.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+      <p className="text-sm font-medium text-amber-800">{names.length} thiết bị chưa có Lĩnh vực</p>
+      <p className="mt-1 text-xs text-amber-700">
+        Luồng qua các thiết bị này vẫn hiện đầy đủ (rơi vào bộ lọc &quot;Chưa phân loại&quot;), nhưng nên gán Lĩnh vực
+        để không bị bỏ sót khi lọc theo lĩnh vực cụ thể. Vào{" "}
+        <Link href="/devices" className="underline hover:text-amber-900">
+          Danh mục thiết bị
+        </Link>{" "}
+        để gán.
+      </p>
+      <p className="mt-2 text-xs text-slate-600">{names.join(", ")}</p>
+    </div>
+  );
 }
 
 // ============================================================================

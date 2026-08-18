@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { fetchDevices, getAdn1StationId } from "@/lib/devices";
 import { fetchDeviceCircuits } from "@/lib/deviceCircuits";
+import { fetchDeviceCategories } from "@/lib/deviceCategories";
 import DeviceCategoryClient from "@/components/devices/DeviceCategoryClient";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -14,10 +15,11 @@ export const metadata: Metadata = { title: "Danh mục thiết bị" };
 
 export default async function DevicesPage() {
   const supabase = await createSupabaseServerClient();
-  const [devices, circuits, stationId] = await Promise.all([
+  const [devices, circuits, stationId, deviceCategories] = await Promise.all([
     fetchDevices(supabase),
     fetchDeviceCircuits(supabase),
     getAdn1StationId(supabase),
+    fetchDeviceCategories(supabase),
   ]);
 
   return (
@@ -29,7 +31,7 @@ export default async function DevicesPage() {
         chuẩn (nếu có) hiện riêng ở khung phía trên bảng.
       </p>
       <div className="mt-6">
-        <DeviceCategoryClient devices={devices} circuits={circuits} stationId={stationId} />
+        <DeviceCategoryClient devices={devices} circuits={circuits} stationId={stationId} deviceCategories={deviceCategories} />
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ import { compareValues } from "@/lib/sort";
 import { useSort } from "@/lib/useSort";
 import { matchesFilter } from "@/lib/tableFilter";
 import { normalizeDeviceNameKey } from "@/lib/deviceNotes";
-import { deviceCategoryLabel } from "@/lib/devices";
+import { deviceCategoryLabel, UNCATEGORIZED_LABEL } from "@/lib/devices";
 import { syncDevicePositionMapNames, deleteDevicePositionMapForNames } from "@/lib/devicePositionMap";
 import { mergeDeviceInto } from "@/lib/deviceDedup";
 import { findMirrorTrunkCircuits, type MirrorTrunkMatch } from "@/lib/mirrorTrunkCircuits";
@@ -116,10 +116,12 @@ export default function DeviceCategoryClient({
   devices,
   circuits,
   stationId,
+  deviceCategories,
 }: {
   devices: DeviceRow[];
   circuits: DeviceCircuitRow[];
   stationId: string;
+  deviceCategories: string[];
 }) {
   const router = useRouter();
   const { sortKey, sortDir, toggleSort } = useSort<SortKey>("name");
@@ -164,19 +166,65 @@ export default function DeviceCategoryClient({
   const [newDeviceCoordinate, setNewDeviceCoordinate] = useState("");
   const [newDeviceCategory, setNewDeviceCategory] = useState("");
 
-  const categoryOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of devices) set.add(deviceCategoryLabel(d.category));
-    return [...set].sort((a, b) => a.localeCompare(b));
+  // Danh sách lĩnh vực THẬT (bảng `device_categories`, migration
+  // 20260818000001) — KHÔNG còn suy từ `devices.category` nữa (trước đây 1
+  // lĩnh vực chỉ "tồn tại" khi có ≥1 thiết bị dùng, không thêm/xóa độc lập
+  // được — yêu cầu người dùng 2026-08-18: "làm sao thêm lĩnh vực (ATBM), xóa
+  // lĩnh vực thì sao"). Chip lọc ở trên bảng vẫn cần thêm "Chưa phân loại"
+  // khi thật sự có ≥1 thiết bị null category — nhãn đó không phải 1 dòng
+  // thật trong device_categories.
+  const hasUncategorizedDevice = useMemo(() => devices.some((d) => !d.category), [devices]);
+  const categoryOptions = useMemo(
+    () => (hasUncategorizedDevice ? [...deviceCategories, UNCATEGORIZED_LABEL] : deviceCategories),
+    [deviceCategories, hasUncategorizedDevice]
+  );
+  // Số thiết bị đang dùng mỗi lĩnh vực — hiện kèm trong UI quản lý + tự chặn
+  // nút Xóa (thà báo trước còn hơn để người dùng bấm rồi mới thấy lỗi FK).
+  const deviceCountByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of devices) if (d.category) map.set(d.category, (map.get(d.category) ?? 0) + 1);
+    return map;
   }, [devices]);
 
-  // Gợi ý khi gán hàng loạt: chỉ lĩnh vực THẬT đã dùng (không gồm nhãn
-  // "Chưa phân loại") — để trống ô gán mới là "bỏ phân loại" (set NULL).
-  const realCategoryOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of devices) if (d.category) set.add(d.category);
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [devices]);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryBusy, setCategoryBusy] = useState<string | null>(null);
+
+  async function addCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (deviceCategories.includes(name)) {
+      setError(`Lĩnh vực "${name}" đã tồn tại — không tạo trùng.`);
+      return;
+    }
+    setCategoryBusy("__add__");
+    setError(null);
+    const { error: err } = await supabase.from("device_categories").insert({ name });
+    setCategoryBusy(null);
+    if (err) {
+      setError(translatePgError(err.message));
+      return;
+    }
+    setNewCategoryName("");
+    router.refresh();
+  }
+
+  async function deleteCategory(name: string) {
+    const count = deviceCountByCategory.get(name) ?? 0;
+    if (count > 0) {
+      setError(`Không xóa được lĩnh vực "${name}" — vẫn còn ${count} thiết bị đang thuộc lĩnh vực này, chuyển hết các thiết bị đó sang lĩnh vực khác (hoặc bỏ phân loại) trước.`);
+      return;
+    }
+    if (!confirm(`Xóa hẳn lĩnh vực "${name}"? Không thể hoàn tác.`)) return;
+    setCategoryBusy(name);
+    setError(null);
+    const { error: err } = await supabase.from("device_categories").delete().eq("name", name);
+    setCategoryBusy(null);
+    if (err) {
+      setError(translatePgError(err.message));
+      return;
+    }
+    router.refresh();
+  }
 
   const deviceNameOptions = useMemo(() => devices.map((d) => d.name).sort((a, b) => a.localeCompare(b)), [devices]);
 
@@ -611,11 +659,6 @@ export default function DeviceCategoryClient({
     <div>
       {error && <p className="mb-2 text-sm text-red-600">Lỗi: {error}</p>}
 
-      <datalist id="device-category-options">
-        {realCategoryOptions.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
       <datalist id="device-name-options">
         {deviceNameOptions.map((n) => (
           <option key={n} value={n} />
@@ -700,12 +743,14 @@ export default function DeviceCategoryClient({
             </label>
             <label className="text-sm">
               <span className="mb-1 block text-xs text-slate-500">Lĩnh vực (tùy chọn)</span>
-              <input
-                className="input w-40"
-                list="device-category-options"
-                value={newDeviceCategory}
-                onChange={(e) => setNewDeviceCategory(e.target.value)}
-              />
+              <select className="input w-40" value={newDeviceCategory} onChange={(e) => setNewDeviceCategory(e.target.value)}>
+                <option value="">— Bỏ phân loại —</option>
+                {deviceCategories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </label>
             <button type="button" className="btn-primary px-3 py-1.5 text-sm" onClick={addDevice} disabled={busy}>
               {busy ? "Đang tạo..." : "Tạo"}
@@ -744,23 +789,55 @@ export default function DeviceCategoryClient({
           </button>
           {categoryOptions.map((cat) => {
             const active = categoryFilter === null || categoryFilter.includes(cat);
+            const isRealCategory = cat !== UNCATEGORIZED_LABEL;
+            const count = deviceCountByCategory.get(cat) ?? 0;
             return (
-              <button
+              <span
                 key={cat}
-                type="button"
-                onClick={() => toggleCategory(cat)}
                 className={
-                  "rounded-full border px-3 py-1.5 text-sm " +
-                  (active
-                    ? "border-primary-600 bg-primary-600 text-white"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
+                  "inline-flex items-center overflow-hidden rounded-full border text-sm " +
+                  (active ? "border-primary-600 bg-primary-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
                 }
               >
-                {cat}
-              </button>
+                <button type="button" onClick={() => toggleCategory(cat)} className="px-3 py-1.5">
+                  {cat}
+                </button>
+                {isRealCategory && (
+                  <RoleGate allow={["admin"]}>
+                    <button
+                      type="button"
+                      title={count > 0 ? `Còn ${count} thiết bị — không xóa được cho tới khi hết` : `Xóa lĩnh vực "${cat}"`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteCategory(cat);
+                      }}
+                      disabled={categoryBusy !== null}
+                      className={"px-2 py-1.5 " + (active ? "hover:bg-primary-700" : "hover:bg-slate-100")}
+                    >
+                      ×
+                    </button>
+                  </RoleGate>
+                )}
+              </span>
             );
           })}
         </div>
+        <RoleGate allow={["operator", "admin"]}>
+          <div className="mt-2 flex items-center gap-1.5">
+            <input
+              className="input w-40 py-1 text-sm"
+              placeholder="+ Thêm lĩnh vực mới (vd ATBM)"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addCategory();
+              }}
+            />
+            <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={addCategory} disabled={categoryBusy !== null || !newCategoryName.trim()}>
+              {categoryBusy === "__add__" ? "Đang thêm..." : "Thêm"}
+            </button>
+          </div>
+        </RoleGate>
       </div>
 
       <div className="mb-2 flex flex-wrap items-center gap-3">
@@ -798,13 +875,14 @@ export default function DeviceCategoryClient({
             <p className="w-full text-sm font-medium text-primary-800 sm:w-auto">
               Đã chọn {selected.size} thiết bị — gán/đổi lĩnh vực:
             </p>
-            <input
-              className="input w-auto max-w-[220px]"
-              list="device-category-options"
-              placeholder="Để trống = bỏ phân loại"
-              value={bulkCategory}
-              onChange={(e) => setBulkCategory(e.target.value)}
-            />
+            <select className="input w-auto max-w-[220px]" value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}>
+              <option value="">— Bỏ phân loại —</option>
+              {deviceCategories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
             <RoleGate allow={["operator", "admin"]}>
               <button className="btn-primary" onClick={applyBulkCategory} disabled={busy}>
                 {busy ? "Đang lưu..." : "Áp dụng"}

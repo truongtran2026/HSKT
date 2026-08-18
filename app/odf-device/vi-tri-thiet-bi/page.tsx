@@ -2,6 +2,7 @@ import { fetchDevicePositionMap } from "@/lib/devicePositionMap";
 import { fetchDevices } from "@/lib/devices";
 import { fetchAllOdfPorts } from "@/lib/trunkPorts";
 import { fetchDeviceAliases } from "@/lib/deviceAliases";
+import { fetchDeviceCategories } from "@/lib/deviceCategories";
 import DevicePositionMapClient from "@/components/odf-device/DevicePositionMapClient";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import type { Metadata } from "next";
@@ -16,11 +17,12 @@ export const metadata: Metadata = { title: "Thư viện vị trí thiết bị" 
 
 export default async function DevicePositionMapPage() {
   const supabase = await createSupabaseServerClient();
-  const [rows, devices, trunkPorts, deviceAliases] = await Promise.all([
+  const [rows, devices, trunkPorts, deviceAliases, deviceCategories] = await Promise.all([
     fetchDevicePositionMap(supabase),
     fetchDevices(supabase),
     fetchAllOdfPorts(supabase),
     fetchDeviceAliases(supabase),
+    fetchDeviceCategories(supabase),
   ]);
 
   return (
@@ -31,7 +33,13 @@ export default async function DevicePositionMapPage() {
         luồng thiết bị chỉ cần chọn thiết bị + vị trí là tự điền đúng vị trí ODF/DDF, tránh gõ tay sai định dạng.
       </p>
       <div className="mt-6">
-        <DevicePositionMapClient rows={rows} devices={devices} trunkPorts={trunkPorts} deviceAliases={deviceAliases} />
+        <DevicePositionMapClient
+          rows={rows}
+          devices={devices}
+          trunkPorts={trunkPorts}
+          deviceAliases={deviceAliases}
+          deviceCategories={deviceCategories}
+        />
       </div>
     </div>
   );

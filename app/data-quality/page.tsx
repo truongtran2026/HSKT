@@ -79,6 +79,9 @@ export default async function DataQualityPage() {
   const trunkRackCodes = [...new Set(trunkPorts.filter((p) => p.rackDomain === "trunk").map((p) => p.rackCode))].sort();
   const deviceRackCodes = [...new Set(trunkPorts.filter((p) => p.rackDomain === "device").map((p) => p.rackCode))].sort();
   const deviceNames = devices.map((d) => d.name).sort();
+  // Thiết bị chưa gán Lĩnh vực (yêu cầu người dùng 2026-08-18, xem
+  // UncategorizedDevicesPanel trong DataQualityClient.tsx để biết lý do).
+  const devicesWithoutCategory = devices.filter((d) => !d.category).map((d) => d.name).sort();
 
   return (
     <div>
@@ -101,6 +104,7 @@ export default async function DataQualityPage() {
           unlinkedPairDetails={unlinkedPairDetails}
           mismatchedLinkedPairs={mismatchedLinkedPairs}
           divergentTransitGroups={divergentTransitGroups}
+          devicesWithoutCategory={devicesWithoutCategory}
           trunkRackCodes={trunkRackCodes}
           deviceRackCodes={deviceRackCodes}
           deviceNames={deviceNames}
