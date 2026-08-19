@@ -1374,9 +1374,12 @@ export default function DeviceCircuitList({
         ? `\n\nLƯU Ý: ${mirrors.length} luồng trong số này đã có luồng "mirror" tự sinh bên Hồ sơ ODF Trung kế — sẽ bị xóa theo, (các) port trung kế tương ứng trở về trạng thái trống.`
         : "";
     // confirmBulkDelete (Đợt 3.4 audit, 2026-08-07) thay confirm() OK/Cancel
-    // thường — bắt gõ "XÓA" + giới hạn 20 dòng/lần, xóa hàng loạt khó hoàn
-    // tác hơn xóa 1 dòng nên cần rào chắn mạnh hơn.
-    if (!confirmBulkDelete(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.${mirrorNote}`, selected.size))
+    // thường — bắt gõ "XÓA", xóa hàng loạt khó hoàn tác hơn xóa 1 dòng nên
+    // cần rào chắn mạnh hơn. Bỏ giới hạn 20 dòng/lần mặc định của hàm dùng
+    // chung (yêu cầu người dùng 2026-08-19, riêng ở Hồ sơ đấu nối) — DB xóa
+    // vẫn tự chia lô 200 dòng/lượt gọi (`chunkSize` bên dưới) nên không có
+    // rủi ro kỹ thuật khi bỏ giới hạn này, chỉ là rào chắn UX trước đây.
+    if (!confirmBulkDelete(`Xóa vĩnh viễn ${selected.size} luồng đã chọn? Không thể hoàn tác.${mirrorNote}`, selected.size, Infinity))
       return;
     setBusy(true);
     const chunkSize = 200;

@@ -5923,3 +5923,23 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   - Nút chuyển trang ("‹ Trước" / "Trang X/Y" / "Sau ›") chỉ hiện khi
     `pageCount > 1`, đặt `justify-end` ở cuối khung (góc phải dưới).
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 109. Hồ sơ đấu nối — bỏ giới hạn 20 dòng/lần khi xóa hàng loạt (2026-08-19)
+
+- **Yêu cầu người dùng**: "Hiện tại chỉ cho chọn tối đa 20 dòng để xóa trong
+  hồ sơ đấu nối; chuyển qua không giới hạn."
+- **Bối cảnh**: `lib/dangerousConfirm.ts`'s `confirmBulkDelete(message,
+  count, maxRows = 20)` (Đợt 3.4 audit, 2026-08-07) là rào chắn DÙNG CHUNG
+  cho 2 nút xóa hàng loạt trong app — `DeviceCircuitList.tsx` (Hồ sơ đấu
+  nối) và `DeviceCategoryClient.tsx` (Lĩnh vực thiết bị). Chỉ đổi đúng chỗ
+  người dùng nêu (Hồ sơ đấu nối), KHÔNG đụng mặc định `maxRows = 20` của
+  hàm dùng chung (giữ nguyên hành vi cho `DeviceCategoryClient.tsx`).
+- **Sửa**: `DeviceCircuitList.tsx` — `deleteSelectedCircuits()` gọi
+  `confirmBulkDelete(message, selected.size, Infinity)` (truyền thẳng
+  `Infinity` cho tham số `maxRows`, bỏ qua nhánh chặn `count > maxRows`) thay
+  vì để mặc định 20. Việc gõ "XÓA" xác nhận vẫn giữ nguyên — chỉ bỏ giới hạn
+  SỐ LƯỢNG, không bỏ bước xác nhận. Không có rủi ro kỹ thuật khi bỏ giới hạn:
+  vòng xóa thật (`for` batch bên dưới) đã tự chia lô `chunkSize = 200`/lượt
+  gọi Supabase từ trước, giới hạn 20 chỉ là rào UX, không phải giới hạn kỹ
+  thuật.
+- `npx tsc --noEmit` + `npm run build` sạch.
