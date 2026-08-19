@@ -11,6 +11,11 @@ export interface CircuitReportItem {
   text: string;
 }
 
+// Số đoạn text hiện tối đa mỗi "trang" trong khung (yêu cầu người dùng
+// 2026-08-19: tick chọn nhiều luồng thì mỗi luồng sinh 1 đoạn, tick quá nhiều
+// chiếm hết khung — chỉ hiện 3 đoạn/trang, còn lại chuyển trang xem tiếp).
+const PAGE_SIZE = 3;
+
 // Khung xem trước đoạn text đã sinh cho các luồng đang tick — GỘP nhiều luồng
 // thành 1 danh sách (quyết định người dùng 2026-08-07, không chỉ giữ luồng
 // tick gần nhất) — dùng chung cho cả PortTable.tsx (Hồ sơ ODF trung kế) và
@@ -21,8 +26,17 @@ export default function CircuitReportPanel({ items }: { items: CircuitReportItem
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Trang đang xem TRONG KHUNG này (khác hẳn phân trang của bảng chính) — 1
+  // luồng mới tick luôn được thêm vào CUỐI danh sách (Set giữ thứ tự chèn),
+  // nên không cần tự reset về trang 1 mỗi lần tick thêm: trang đang xem vẫn
+  // đúng nội dung cũ, chỉ sinh thêm trang mới ở cuối nếu cần.
+  const [page, setPage] = useState(1);
 
   if (items.length === 0) return null;
+
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageItems = items.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   async function copy(text: string, key: string) {
     await navigator.clipboard.writeText(text);
@@ -30,8 +44,12 @@ export default function CircuitReportPanel({ items }: { items: CircuitReportItem
     setTimeout(() => setCopiedKey((cur) => (cur === key ? null : cur)), 1500);
   }
 
+  // Copy TOÀN BỘ đoạn text đã sinh — kể cả các trang KHÔNG đang hiển thị
+  // (dùng thẳng `items` đầy đủ, không phải `pageItems`) — đánh số thứ tự
+  // "1/ ... 2/ ..." trước mỗi đoạn, cách nhau 1 dòng trống (yêu cầu người
+  // dùng 2026-08-19).
   async function copyAll() {
-    await navigator.clipboard.writeText(items.map((i) => i.text).join("\n\n"));
+    await navigator.clipboard.writeText(items.map((i, idx) => `${idx + 1}/ ${i.text}`).join("\n\n"));
     setCopiedKey("__all__");
     setTimeout(() => setCopiedKey((cur) => (cur === "__all__" ? null : cur)), 1500);
   }
@@ -60,7 +78,7 @@ export default function CircuitReportPanel({ items }: { items: CircuitReportItem
       </div>
       {error && <p className="mb-2 text-sm text-red-600">Lỗi: {error}</p>}
       <div className="space-y-2">
-        {items.map((item) => (
+        {pageItems.map((item) => (
           <div key={item.key} className="rounded-md border border-slate-200 bg-white p-2">
             <pre className="whitespace-pre-wrap break-words font-sans text-sm text-slate-700">{item.text}</pre>
             <div className="mt-1 flex items-center gap-4 text-xs">
@@ -82,6 +100,29 @@ export default function CircuitReportPanel({ items }: { items: CircuitReportItem
           </div>
         ))}
       </div>
+      {pageCount > 1 && (
+        <div className="mt-2 flex items-center justify-end gap-2 text-xs text-slate-600">
+          <button
+            type="button"
+            className="rounded border border-slate-300 bg-white px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40"
+            disabled={currentPage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ‹ Trước
+          </button>
+          <span>
+            Trang {currentPage}/{pageCount}
+          </span>
+          <button
+            type="button"
+            className="rounded border border-slate-300 bg-white px-2 py-0.5 hover:bg-slate-50 disabled:opacity-40"
+            disabled={currentPage >= pageCount}
+            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+          >
+            Sau ›
+          </button>
+        </div>
+      )}
     </div>
   );
 }

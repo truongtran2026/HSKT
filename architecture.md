@@ -5894,3 +5894,32 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   thư viện lần này (hiện thông tin khác — chi tiết thiết bị, không phải
   port/sợi).
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 108. CircuitReportPanel — phân trang 3 đoạn text/trang + Copy tất cả đánh số thứ tự (2026-08-19)
+
+- **Yêu cầu người dùng**: khung "Đoạn text đã sinh" ở Hồ sơ đấu nối (tick
+  chọn nhiều luồng để xóa hàng loạt thì mỗi luồng tick sinh sẵn 1 đoạn text
+  báo cáo trong khung này — xem Mục ghi 2026-08-07) tick càng nhiều đoạn
+  càng dài, chiếm hết khung. Chỉ nên hiện 3 đoạn/trang, quá 3 đoạn thì có nút
+  chuyển trang RIÊNG của khung này (không phải phân trang bảng chính) ở góc
+  phải dưới. "Copy tất cả" phải copy được HẾT mọi đoạn (kể cả các trang
+  không đang hiển thị), mỗi đoạn đánh số thứ tự "1/ ...", cách nhau 1 dòng
+  trống.
+- **Sửa `components/ui/CircuitReportPanel.tsx`** (dùng CHUNG cho cả
+  `PortTable.tsx` — Hồ sơ ODF trung kế — lẫn `DeviceCircuitList.tsx` — Hồ sơ
+  đấu nối — nên sửa 1 chỗ áp dụng cả 2 nơi):
+  - Thêm `PAGE_SIZE = 3` + state `page` — `pageItems = items.slice(...)`
+    theo `currentPage = Math.min(page, pageCount)` (tự kẹp về trang cuối nếu
+    danh sách co lại do bỏ tick bớt, không cần effect riêng). KHÔNG tự reset
+    `page` về 1 mỗi lần tick thêm 1 luồng — `[...selected]` (Set) giữ đúng
+    thứ tự đã tick, luồng mới luôn thêm vào CUỐI danh sách nên trang đang
+    xem vẫn đúng nội dung cũ, chỉ sinh thêm trang mới ở cuối nếu cần.
+  - Danh sách hiện (`.map`) đổi từ `items` sang `pageItems` — CHỈ áp dụng
+    cho phần hiển thị. `copyAll()` vẫn dùng `items` ĐẦY ĐỦ (không phải
+    `pageItems`) — copy hết mọi trang, không chỉ trang đang xem.
+  - `copyAll()` đổi định dạng: `${idx + 1}/ ${text}`, nối bằng `"\n\n"` —
+    ra đúng dạng "1/ Đoạn text 1\n\n2/ Đoạn text 2\n\n...". Nút Copy riêng
+    từng đoạn (không phải Copy tất cả) giữ nguyên, không đánh số.
+  - Nút chuyển trang ("‹ Trước" / "Trang X/Y" / "Sau ›") chỉ hiện khi
+    `pageCount > 1`, đặt `justify-end` ở cuối khung (góc phải dưới).
+- `npx tsc --noEmit` + `npm run build` sạch.
