@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeDeviceNameKey, normalizeDevicePositionKey, looksLikeRealPositionText } from "@/lib/deviceNotes";
-import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
+import { splitOdfDeviceStructure, combinePositionNext } from "@/lib/parsers/transit-text";
 
 // Tra cứu "thiết bị + vị trí thiết bị -> vị trí ODF/DDF" — xem migration
 // 20260724000001_device_position_map.sql. Bảng độc lập, KHÔNG đụng
@@ -275,6 +275,43 @@ export async function findCircuitsUsingLibraryRow(
     }
   }
   return result;
+}
+
+// Đẩy "Vị trí ODF/DDF" MỚI của 1 dòng thư viện vừa Sửa sang các luồng đang
+// THAM CHIẾU tọa độ CŨ (đã tìm bằng findCircuitsUsingLibraryRow ở TRÊN, gọi
+// TRƯỚC khi ghi thư viện — dùng dòng CŨ để tìm cho đúng) — người dùng phát
+// hiện 2026-08-20 (ca ADN1.ASBR#2-MX2020 (7/1/9), thư viện đổi ODF 3/16(27,28)
+// -> ODF 3/6(27,28) cho "ADN1.PSS24X#3 BB1 (1-4-5)" nhưng luồng khác đang ghi
+// "Vị trí ODF (tiếp theo)" trỏ về đúng thư viện đó KHÔNG tự cập nhật theo —
+// trước đây panel cảnh báo (xem findCircuitsUsingLibraryRow) chỉ cho 2 lựa
+// chọn "giữ nguyên" hoặc "xóa luồng", THIẾU hẳn lựa chọn "cập nhật lại text
+// theo giá trị mới"). CHỈ đổi đúng PHẦN ODF — giữ nguyên tên thiết bị/Trib đã
+// gõ trên từng luồng (an toàn hơn ghép lại từ tên thư viện, tránh lệch cách
+// viết khác nhau đã có sẵn trên từng luồng).
+export async function applyLibraryOdfChangeToCircuits(
+  client: SupabaseClient,
+  matches: RelatedCircuitRef[],
+  newOdfPosition: string
+): Promise<void> {
+  const ownIds = matches.filter((m) => m.side === "own").map((m) => m.id);
+  const nextIds = matches.filter((m) => m.side === "next").map((m) => m.id);
+
+  if (ownIds.length > 0) {
+    const { error } = await client.from("circuits").update({ device_position_own: newOdfPosition || null }).in("id", ownIds);
+    if (error) throw error;
+  }
+
+  if (nextIds.length > 0) {
+    const { data, error: fetchErr } = await client.from("circuits").select("id, device_position_next").in("id", nextIds);
+    if (fetchErr) throw fetchErr;
+    for (const row of (data ?? []) as { id: string; device_position_next: string | null }[]) {
+      const raw = row.device_position_next ?? "";
+      const split = splitOdfDeviceStructure(raw);
+      const newNext = split.matched ? combinePositionNext(newOdfPosition, split.deviceName ?? "", split.port ?? "") : newOdfPosition;
+      const { error: updErr } = await client.from("circuits").update({ device_position_next: newNext || null }).eq("id", row.id);
+      if (updErr) throw updErr;
+    }
+  }
 }
 
 export interface LibraryOwnPositionDuplicate {

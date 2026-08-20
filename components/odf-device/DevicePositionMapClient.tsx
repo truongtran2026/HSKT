@@ -23,7 +23,12 @@ import ExportExcelButton from "@/components/ui/ExportExcelButton";
 import RefreshButton from "@/components/ui/RefreshButton";
 import { IconEdit, IconTrash } from "@/components/ui/icons";
 import RoleGate from "@/components/ui/RoleGate";
-import { findCircuitsUsingLibraryRow, type DevicePositionMapRow, type RelatedCircuitRef } from "@/lib/devicePositionMap";
+import {
+  findCircuitsUsingLibraryRow,
+  applyLibraryOdfChangeToCircuits,
+  type DevicePositionMapRow,
+  type RelatedCircuitRef,
+} from "@/lib/devicePositionMap";
 import type { DeviceRow } from "@/lib/devices";
 
 type SortKey = "deviceName" | "devicePosition" | "odfPosition";
@@ -677,10 +682,12 @@ export default function DevicePositionMapClient({
     });
   }
 
-  // 3 lựa chọn ở panel cảnh báo (xem renderRelatedCircuitsPanel): giữ
-  // nguyên các luồng, xóa các luồng đã tick trước khi Sửa/Xóa thư viện, hoặc
+  // 4 lựa chọn ở panel cảnh báo (xem renderRelatedCircuitsPanel): giữ
+  // nguyên các luồng, CẬP NHẬT lại text các luồng theo giá trị thư viện MỚI
+  // (chỉ có ở action="edit" — action="delete" không có "giá trị mới" nào để
+  // cập nhật theo), xóa các luồng đã tick trước khi Sửa/Xóa thư viện, hoặc
   // hủy toàn bộ (không đụng gì).
-  async function resolveRelatedCircuitsPrompt(mode: "onlyLibrary" | "withCircuits" | "cancel") {
+  async function resolveRelatedCircuitsPrompt(mode: "onlyLibrary" | "updateCircuits" | "withCircuits" | "cancel") {
     const prompt = relatedCircuitsPrompt;
     if (!prompt) return;
     if (mode === "cancel") {
@@ -691,10 +698,14 @@ export default function DevicePositionMapClient({
     try {
       if (mode === "withCircuits" && prompt.selectedIds.size > 0) {
         await deleteCircuitsCascade([...prompt.selectedIds]);
+      } else if (mode === "updateCircuits" && prompt.action === "edit" && prompt.editDraft) {
+        await applyLibraryOdfChangeToCircuits(supabase, prompt.matches, prompt.editDraft.odfPosition.trim());
       }
     } catch (e) {
       setBusy(false);
-      setError(`Xóa luồng liên quan thất bại, CHƯA thực hiện thao tác thư viện: ${e instanceof Error ? translatePgError(e.message) : String(e)}`);
+      setError(
+        `${mode === "withCircuits" ? "Xóa" : "Cập nhật"} luồng liên quan thất bại, CHƯA thực hiện thao tác thư viện: ${e instanceof Error ? translatePgError(e.message) : String(e)}`
+      );
       return;
     }
     setBusy(false);
@@ -899,6 +910,7 @@ export default function DevicePositionMapClient({
   function renderRelatedCircuitsPanel(prompt: {
     action: "edit" | "delete";
     row: DevicePositionMapRow;
+    editDraft?: Draft;
     matches: RelatedCircuitRef[];
     selectedIds: Set<string>;
   }) {
@@ -924,7 +936,16 @@ export default function DevicePositionMapClient({
         </div>
         <p className="mt-2 text-xs text-red-700">Tick chọn luồng muốn XÓA LUÔN (không thể hoàn tác), hoặc để trống nếu chỉ muốn {actionLabel.toLowerCase()} thư viện.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button className="btn-primary" onClick={() => resolveRelatedCircuitsPrompt("withCircuits")} disabled={busy}>
+          {prompt.action === "edit" && prompt.editDraft && (
+            <button className="btn-primary" onClick={() => resolveRelatedCircuitsPrompt("updateCircuits")} disabled={busy}>
+              Sửa thư viện + cập nhật lại Vị trí ODF trên {prompt.matches.length} luồng trên theo giá trị mới ("{prompt.editDraft.odfPosition.trim()}")
+            </button>
+          )}
+          <button
+            className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            onClick={() => resolveRelatedCircuitsPrompt("withCircuits")}
+            disabled={busy}
+          >
             {actionLabel} thư viện + xóa luồng đã tick ({prompt.selectedIds.size})
           </button>
           <button className="btn-secondary" onClick={() => resolveRelatedCircuitsPrompt("onlyLibrary")} disabled={busy}>

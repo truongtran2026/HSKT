@@ -61,7 +61,7 @@ import {
   replaceOccupantAndCreateTrunkMirror,
   type MirrorTrunkMatch,
 } from "@/lib/mirrorTrunkCircuits";
-import { autoCreateMirrorForCircuit, replaceMismatchedDeviceMirror } from "@/lib/deviceDeviceSync";
+import { autoCreateMirrorForCircuit, replaceMismatchedDeviceMirror, buildCounterpartNextPosition } from "@/lib/deviceDeviceSync";
 import { resolveDeviceByExactOrAlias, findLooseDeviceCandidate, saveDeviceAlias, type DeviceAliasRow } from "@/lib/deviceAliases";
 import { translatePgError } from "@/lib/translatePgError";
 import type { DeviceRow } from "@/lib/devices";
@@ -1574,24 +1574,41 @@ export default function DeviceCircuitList({
     // mirrorOfId), hoặc circuit đang sửa LÀ NGUỒN của 1 mirror khác (1 dòng
     // khác có mirrorOfId = chính nó) — `circuits` ở đây CHỈ chứa luồng thiết
     // bị (không lẫn luồng trung kế) nên khớp được là chắc chắn đúng loại.
-    // KHÔNG đồng bộ Trib/Vị trí ODF own — đó là port THẬT RIÊNG của TỪNG
-    // thiết bị (khác cặp thiết bị-trung kế, nơi 2 phía cùng trỏ 1 vị trí vật
-    // lý) — chỉ đồng bộ đúng 3 trường mirror mới tạo đã copy sẵn (xem
-    // autoCreateMirrorForCircuit's insert()). Không hỏi confirm() — an toàn
-    // tự đẩy, cùng tinh thần đã áp dụng cho tên bên cặp thiết bị-trung kế.
+    // Trib/Vị trí ODF own của CHÍNH luồng đang sửa KHÔNG ghi thẳng sang cùng
+    // tên trường bên đối phương (đó là port THẬT RIÊNG của TỪNG thiết bị,
+    // không phải 1 vị trí vật lý dùng chung) — nhưng "own" của luồng đang
+    // sửa CHÍNH LÀ phần ODF phải nằm trong "device_position_next" của luồng
+    // ĐỐI PHƯƠNG (đối phương "đi tiếp" ra đúng vị trí own của bên này — cùng
+    // công thức lúc TẠO mirror, xem buildMirrorNextPosition/lib/deviceDeviceSync.ts).
+    // Lỗi thật người dùng phát hiện 2026-08-20 (ca ADN1.ASBR#2-MX2020 (7/1/9)
+    // <-> ADN1.PSS24X#3 BB1 (1-4-5)): sửa "own" bên B xong, "next" bên A vẫn
+    // giữ giá trị own CŨ của B — trước đây không hề tính lại field này.
+    // Không hỏi confirm() — an toàn tự đẩy, cùng tinh thần Tên/Giao tiếp/Đối
+    // phương ở trên (Vị trí ODF/Trib đổi SỐ THẬT của luồng ĐANG SỬA đã bị
+    // chặn lưu từ đầu hàm nếu luồng đó có liên kết trung kế — không áp dụng
+    // ở đây vì đây là liên kết thiết bị-thiết bị, không đi qua ODF trung kế).
     const deviceMirrorCounterpartId = originalCircuit?.mirrorOfId ?? circuits.find((c) => c.mirrorOfId === edit.id)?.id ?? null;
     if (deviceMirrorCounterpartId) {
+      const counterpartOwnNow = circuits.find((c) => c.id === deviceMirrorCounterpartId)?.devicePositionOwn ?? null;
+      const newNextForCounterpart =
+        buildCounterpartNextPosition({
+          counterpartOwnPosition: counterpartOwnNow,
+          sourceOwnPosition: edit.positionOwn.trim() || null,
+          sourceDeviceName: edit.deviceName,
+          sourceTrib: edit.tribText.trim() || null,
+        }) || null;
       const { error: syncErr } = await supabase
         .from("circuits")
         .update({
           name: edit.name.trim() || "(chưa đặt tên)",
           interface_type: edit.interfaceType.trim() || null,
           counterpart_text: edit.counterpartText.trim() || null,
+          device_position_next: newNextForCounterpart,
         })
         .eq("id", deviceMirrorCounterpartId);
       if (syncErr) {
         setError(
-          `Đã lưu luồng, nhưng đồng bộ Tên/Giao tiếp/Đối phương sang luồng thiết bị-thiết bị liên kết thất bại: ${translatePgError(syncErr.message)}`
+          `Đã lưu luồng, nhưng đồng bộ Tên/Giao tiếp/Đối phương/Vị trí ODF (tiếp theo) sang luồng thiết bị-thiết bị liên kết thất bại: ${translatePgError(syncErr.message)}`
         );
       }
     }

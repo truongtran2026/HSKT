@@ -5943,3 +5943,74 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   gọi Supabase từ trước, giới hạn 20 chỉ là rào UX, không phải giới hạn kỹ
   thuật.
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 110. "Vị trí ODF (tiếp theo)" không tự đồng bộ khi thư viện/phía đối phương đổi ODF (2026-08-20)
+
+- **Báo cáo người dùng**: luồng `100GE ADN1.ASBR#2-MX2020 (7/1/9) - HKG` có
+  "Chuyển tiếp"/"Vị trí ODF (tiếp theo)" ghi `ODF 3/16 (27,28) - ADN1.PSS24X#3
+  BB1 (1-4-5)`. Sau khi sửa dòng thư viện "ADN1.PSS24X#3 BB1" — "1-4-5" từ
+  `ODF 3/16 (27,28)` sang `ODF 3/6 (27,28)`, luồng trên vẫn giữ nguyên giá
+  trị CŨ — không tự cập nhật theo. Người dùng mô tả đây là quan hệ
+  "link/mirror" cần đồng bộ, yêu cầu rà thêm các luồng khác đã liên kết xanh.
+- **Điều tra thực tế phát hiện ĐÂY KHÔNG PHẢI lỗi cặp mirror thiết bị-thiết
+  bị (`circuits.mirror_of_id`)** như tưởng ban đầu — tra trực tiếp DB: luồng
+  ASBR#2-MX2020 (7/1/9) có `mirror_of_id = null`, và KHÔNG hề tồn tại dòng
+  `circuits` nào cho "ADN1.PSS24X#3 BB1" Trib "1-4-5" (0 kết quả). Vị trí
+  `ODF 3/16 (27,28)` → `ODF 3/6 (27,28)` mà người dùng "sửa" thực ra là sửa
+  1 dòng trong **"Thư viện vị trí thiết bị"** (`device_position_map`, trang
+  `/odf-device/vi-tri-thiet-bi`) — bảng tra cứu ĐỘC LẬP, không có FK tới
+  `circuits`. Cột "Vị trí ODF (tiếp theo)" của luồng ASBR#2-MX2020 chỉ là
+  TEXT TỰ DO trùng khớp giá trị thư viện lúc gõ — không có cơ chế nào giữ 2
+  bên đồng bộ khi thư viện đổi sau đó.
+- **2 chỗ sửa CODE** (áp dụng 2 lớp khác nhau, cả 2 đều liên quan nhưng độc lập):
+  1. **`lib/deviceDeviceSync.ts`** — tách `buildCounterpartNextPosition()` từ
+     `buildMirrorNextPosition()` (logic y hệt, chỉ đổi tên tham số cho tổng
+     quát). Dùng lại ở `DeviceCircuitList.tsx` `saveEdit()`: khối đồng bộ
+     mirror thiết bị-thiết bị (đã có từ Mục 2026-08-18, dòng ~1565) giờ tính
+     lại LUÔN `device_position_next` của luồng ĐỐI PHƯƠNG (qua
+     `mirror_of_id`, tra cả 2 chiều) mỗi khi lưu — trước đây khối này CHỦ Ý
+     bỏ qua Own/Trib với lý do "port THẬT RIÊNG của từng thiết bị", đúng cho
+     CHÍNH field own/trib nhưng SAI cho field "next" (nó chính là own của
+     PHÍA KIA). Đây là fix cho ĐÚNG quan hệ `mirror_of_id` (case khác case
+     người dùng báo, nhưng cùng họ lỗi — chủ động sửa luôn vì cùng phát hiện
+     trong lúc điều tra).
+  2. **`lib/devicePositionMap.ts`** — thêm `applyLibraryOdfChangeToCircuits()`:
+     nhận danh sách `RelatedCircuitRef` (từ `findCircuitsUsingLibraryRow()` có
+     sẵn) + ODF mới, ghi thẳng `device_position_own` cho các luồng khớp phía
+     "own", và ghép lại `device_position_next` (giữ nguyên tên thiết bị/port
+     đã gõ trên từng luồng, CHỈ thay phần ODF) cho các luồng khớp phía
+     "next". **`DevicePositionMapClient.tsx`** — panel cảnh báo khi Sửa 1
+     dòng thư viện đang có luồng liên quan (đã có từ trước, 2 lựa chọn "giữ
+     nguyên"/"xóa luồng") nay thêm lựa chọn THỨ 3 (chỉ hiện ở action="edit"):
+     "Sửa thư viện + cập nhật lại Vị trí ODF trên N luồng theo giá trị mới" —
+     gọi `applyLibraryOdfChangeToCircuits()` trước khi ghi thư viện. Nút xóa
+     luồng đổi màu đỏ (`bg-red-600`, tách khỏi `btn-primary` dùng chung cho
+     nút cập nhật — đỡ nhầm 2 hành động khác mức rủi ro).
+- **Dọn dữ liệu cũ đã lệch từ trước khi có 2 fix trên** (script tạm, dry-run
+  trước, đã xóa sau khi dùng): quét TOÀN BỘ 1468 luồng thiết bị đối chiếu với
+  1973 dòng thư viện hiện tại (khớp theo cặp device+Trib chuẩn hóa, bỏ qua
+  "Kết nối trực tiếp"). Tìm được 6 chỗ lệch thật (gồm đúng ca người dùng báo)
+  — đã cập nhật cả 6.
+- **Phát hiện thêm khi rà (quan trọng, CHƯA sửa — cần người dùng tự xử lý)**:
+  thư viện có ĐÚNG 3 cặp device+Trib bị **ghi 2 dòng TRÙNG** (khác nhau ở tiền
+  tố "ADN1." — vd "BNG#1" và "ADN1.BNG#1" cùng Trib "7/0/0") nhưng **ODF khác
+  nhau** — dữ liệu thư viện tự mâu thuẫn, không rõ dòng nào đúng. Không tự ý
+  chọn 1 trong 2 để sửa circuits (rủi ro chọn nhầm) — SKIP hẳn 3 key này khỏi
+  đợt dọn trên. Cần người dùng vào `/odf-device/vi-tri-thiet-bi`, lọc theo
+  tên thiết bị, tự xóa dòng SAI của từng cặp: **"BNG#1" — "7/0/0"** (2 dòng:
+  `ODF 7/6 (41,42)` bare-name cũ vs `ODF 9/6 (07,08)` có "ADN1." — dòng bare
+  có vẻ là dòng CŨ/rác vì luồng thật hiện đang khớp giá trị "ADN1."), **"ASBR#2-
+  MX2020" — "11/0/1"**, **"MPE#4" — "3/0/2"** (cùng dạng). Nguyên nhân gốc
+  nghi là do tăng trưởng thư viện tự động (`maybeGrowLibrary`/
+  `growDevicePositionMapByTrib`) ở giai đoạn đầu (dữ liệu seed 2026-07-25 sau
+  đó có dòng "ADN1."-prefix thêm 2026-07-26) không chuẩn hóa tên thiết bị khi
+  so trùng — CHƯA sửa code cho hướng này (ngoài phạm vi báo cáo lần này, cần
+  xác nhận thêm với người dùng nếu muốn rà kỹ hơn).
+- **Phát hiện phụ (không phải lỗi, chỉ cosmetic — KHÔNG tự sửa)**: rà riêng
+  33 cặp mirror thiết bị-thiết bị (`mirror_of_id`) thấy field "next" đang ghi
+  tên thiết bị CÓ tiền tố "ADN1." (vd "ADN1.PSS24X#3 BB1") trong khi công
+  thức `buildMirrorNextPosition` gốc luôn bỏ tiền tố khi tự tạo — không phải
+  lỗi dữ liệu sai, chỉ là 2 cách viết cùng tồn tại từ trước khi có quy ước.
+  Sẽ tự "lành" dần khi 1 trong 2 bên được Sửa+Lưu lại (đi qua code fix #1 ở
+  trên) — không cần dọn hàng loạt.
+- `npx tsc --noEmit` + `npm run build` sạch sau cả 2 fix code.

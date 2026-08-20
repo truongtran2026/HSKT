@@ -157,11 +157,38 @@ export function findMissingDeviceMirrors(circuits: DeviceCircuitRow[], devices: 
 // dùng "Kết nối trực tiếp" cho phần ODF của "next" bên mirror thay vì lặp
 // lại đúng tọa độ đã dùng cho "own" (own vẫn giữ tọa độ thật, chỉ next đổi).
 export function buildMirrorNextPosition(gap: DeviceMirrorGap): string {
-  const sourceDeviceBareName = (gap.sourceDeviceName ?? "").replace(/^ADN1\.\s*/i, "").replace(/^AĐN1\.\s*/i, "");
-  const ownKey = normalizeDevicePositionKey(gap.sourceOwnPosition ?? "");
-  const targetOwnKey = normalizeDevicePositionKey(gap.targetOwnPosition);
-  const nextOdfPart = ownKey && targetOwnKey && ownKey === targetOwnKey ? "Kết nối trực tiếp" : gap.sourceOwnPosition ?? "";
-  return combinePositionNext(nextOdfPart, sourceDeviceBareName, gap.sourceTrib ?? "");
+  return buildCounterpartNextPosition({
+    counterpartOwnPosition: gap.targetOwnPosition,
+    sourceOwnPosition: gap.sourceOwnPosition,
+    sourceDeviceName: gap.sourceDeviceName,
+    sourceTrib: gap.sourceTrib,
+  });
+}
+
+// Tách ra dùng CHUNG (2026-08-20, người dùng phát hiện ca ADN1.ASBR#2-MX2020
+// (7/1/9) <-> ADN1.PSS24X#3 BB1 (1-4-5)): "device_position_next" của 1 luồng
+// thiết bị-thiết bị chính là "device_position_own" + tên + Trib của PHÍA BÊN
+// KIA — đúng công thức đã dùng khi TẠO mirror mới (`buildMirrorNextPosition`
+// ở trên), nhưng trước đây KHÔNG hề chạy lại công thức này mỗi khi 1 bên đổi
+// `device_position_own`/`trib_text` cho 1 cặp ĐÃ liên kết sẵn — sửa
+// `device_position_own` bên B không hề đẩy sang `device_position_next` bên A
+// (điều mà mọi người nghĩ "đây là link + mirror" phải tự làm), để lại dữ
+// liệu "next" cũ lệch với "own" thật hiện tại của bên kia. Dùng lại ở
+// DeviceCircuitList.tsx (mirror sync khi Lưu) VÀ script rà/sửa lệch dữ liệu
+// cũ, tránh viết 2 bản công thức "Kết nối trực tiếp" lệch nhau.
+export function buildCounterpartNextPosition(params: {
+  /** device_position_own HIỆN TẠI của phía đang cần cập nhật "next" (dùng để phát hiện ca "Kết nối trực tiếp" trùng tọa độ, xem comment ở buildMirrorNextPosition gốc). */
+  counterpartOwnPosition: string | null;
+  /** device_position_own của phía NGUỒN — trở thành phần ODF trong "next" tính ra. */
+  sourceOwnPosition: string | null;
+  sourceDeviceName: string | null;
+  sourceTrib: string | null;
+}): string {
+  const sourceDeviceBareName = (params.sourceDeviceName ?? "").replace(/^ADN1\.\s*/i, "").replace(/^AĐN1\.\s*/i, "");
+  const ownKey = normalizeDevicePositionKey(params.counterpartOwnPosition ?? "");
+  const sourceOwnKey = normalizeDevicePositionKey(params.sourceOwnPosition ?? "");
+  const nextOdfPart = ownKey && sourceOwnKey && ownKey === sourceOwnKey ? "Kết nối trực tiếp" : params.sourceOwnPosition ?? "";
+  return combinePositionNext(nextOdfPart, sourceDeviceBareName, params.sourceTrib ?? "");
 }
 
 // Phát hiện 2026-07-31 (người dùng, sau khi thêm 2 luồng ADSR#2 (7/1/8) và
