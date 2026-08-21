@@ -6014,3 +6014,40 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   Sẽ tự "lành" dần khi 1 trong 2 bên được Sửa+Lưu lại (đi qua code fix #1 ở
   trên) — không cần dọn hàng loạt.
 - `npx tsc --noEmit` + `npm run build` sạch sau cả 2 fix code.
+
+## 111. ODF trung kế — Ô "Chuyển tiếp" (chế độ 3-ô) không nhận diện lại khi Ô1 đổi sang trỏ trung kế khác (2026-08-21)
+
+- **Báo cáo người dùng**: sửa luồng `GE 2T9.PE1 (7/1/1) - NOC3.SW4200 (0/0/13)
+  GS` tại ODF1/8 (33,34) — "Chuyển tiếp" đang lưu sẵn dạng cấu trúc 2 cũ
+  `"ODF2/9/3,4 - NOC3.SW4200(0/0/13)"`. Gõ lại Ô1 thành `ODF 2/9 (03,04)` thì
+  2 ô dưới (Thiết bị/Port) không hiểu đây là ODF trung kế + port mấy.
+- **Nguyên nhân**: `ODF2/9` (rack thật, `domain='trunk'`, tuyến "48FO ADN1 –
+  Tầng 2-Tầng 7") — theo ĐÚNG quy tắc đã áp dụng cho Ô2 "Cáp quang (tiếp
+  theo)" bên `DeviceCircuitList.tsx` ("hễ khớp được 1 rack trung kế thật là
+  CHẮC CHẮN đấu thẳng ra trung kế, không còn thiết bị trung gian nào nữa"),
+  đáng lẽ phải hiện tên tuyến cáp + port THAY VÌ 2 ô Thiết bị/Port tự do.
+  Nhận diện này (`bareMatch`/`bareTrunkCableRouteName`, Mục 105/107) TRƯỚC
+  ĐÂY chỉ tính khi CHƯA tách được cấu trúc 2 (`transitSplit=false`, chế độ 1
+  ô gộp) — dòng đang sửa của người dùng đã LỠ tách sẵn cấu trúc 2 từ dữ liệu
+  cũ (`transitSplit=true` tính 1 lần lúc mount) nên mãi mãi ở chế độ 3-ô, dù
+  gõ lại Ô1 thành tọa độ khớp trung kế khác — không có đường nào để nhận
+  diện lại.
+- **Sửa `PortTable.tsx`**: thêm `transitOdfTrunkMatch`/`transitOdfTrunkPortDisplay`
+  (tính LẠI mỗi lần Ô1 đổi, không đợi mount như `transitSplit`) — khi có kết
+  quả (rack khớp domain='trunk'), 2 ô Thiết bị/Port trong chế độ 3-ô được
+  THAY bằng khối chỉ đọc "Tên ODF trung kế"/"Port" (đối xứng chế độ 1-ô gộp
+  đã có) thay vì tiếp tục hiện 2 ô nhập tự do. `transitDeviceName`/
+  `transitDevicePort` trong state GIỮ NGUYÊN (không xóa) — chỉ ẨN đi, nếu sửa
+  lại Ô1 về dạng khác thì 2 ô hiện lại đúng dữ liệu cũ đã gõ, không mất gì.
+  Thêm `buildTransitTextForOdf()` — ghép `transitText` BARE (chỉ ODF, bỏ hẳn
+  phần "- thiết bị(port)") khi Ô1 đang khớp trung kế, dùng lại ở cả 3 chỗ Ô1
+  thay đổi (`onChange`/`onBlur`/`applyOdfSuggestion`) thay vì gọi thẳng
+  `buildTransitText` như trước — tránh lặp lại rule mới ở nhiều nơi.
+  `libraryDeviceMatch` (gợi ý thư viện thiết bị, Mục 107) cũng được chặn
+  không tính khi đang khớp trung kế (không có ý nghĩa gợi ý thiết bị ở đây).
+- **Không tự sửa dữ liệu port 33,34 rack ODF1/8** của ca người dùng báo —
+  chỉ là lỗi UI lúc đang gõ, chưa chắc người dùng đã bấm Lưu. Lần sau mở lại
+  đúng dòng này để Sửa, Ô1 (khởi tạo từ giá trị đã lưu "ODF2/9/3,4") sẽ TỰ
+  hiện đúng "Tên ODF trung kế"/"Port" ngay từ đầu (không cần gõ lại) — người
+  dùng tự xác nhận rồi bấm Lưu nếu đúng ý.
+- `npx tsc --noEmit` + `npm run build` sạch.

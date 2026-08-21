@@ -1808,6 +1808,44 @@ function EditRow({
     return `${odf} - ${deviceName} (${devicePort})`;
   }
 
+  // Nhận diện Ô1 "Vị trí ODF" (đang ở chế độ 3-ô, showSplit) trỏ THẲNG sang 1
+  // rack TRUNG KẾ khác — cùng quy tắc đã áp dụng cho chế độ 1-ô gộp
+  // (bareMatch/bareTrunkCableRouteName ở dưới): "hễ khớp được 1 rack trung
+  // kế thật là CHẮC CHẮN đấu thẳng ra trung kế, không còn thiết bị trung
+  // gian nào nữa" — ĐÚNG quy tắc đã dùng cho Ô2 "Cáp quang (tiếp theo)" bên
+  // DeviceCircuitList.tsx (isCableMode). Người dùng phát hiện 2026-08-21:
+  // đang sửa 1 luồng có sẵn cấu trúc 2 CŨ (thừa hưởng chữ thiết bị cũ), gõ
+  // lại Ô1 thành tọa độ khớp rack trung kế khác — 2 ô Thiết bị/Port cũ vẫn
+  // hiện ra, không hiểu đây là trung kế/port mấy (vì trước đây chỉ tính
+  // bareMatch khi CHƯA tách được cấu trúc 2, bỏ sót đúng ca "đã tách sẵn rồi
+  // sửa lại Ô1"). Giữ NGUYÊN transitDeviceName/transitDevicePort trong state
+  // (không xóa) — chỉ ẨN 2 ô đó + không đưa vào transitText khi đang khớp
+  // trung kế, để nếu sửa lại Ô1 về dạng khác thì dữ liệu cũ hiện lại đủ.
+  const transitOdfTrunkMatch = useMemo(() => {
+    const trimmed = transitOdfPart.trim();
+    if (!trimmed) return null;
+    const m = matchTrunkPosition(trimmed, trunkPorts);
+    return m.matched && m.rackDomain === "trunk" ? m : null;
+  }, [transitOdfPart, trunkPorts]);
+
+  const transitOdfTrunkPortDisplay = useMemo(() => {
+    if (!transitOdfTrunkMatch?.resolvedPorts || transitOdfTrunkMatch.resolvedPorts.length === 0) return null;
+    return transitOdfTrunkMatch.resolvedPorts
+      .map((p) => `${p.portNumber}${p.fiberNumber != null && p.fiberNumber !== p.portNumber ? ` (sợi ${p.fiberNumber})` : ""}`)
+      .join(", ");
+  }, [transitOdfTrunkMatch]);
+
+  // Ghép transitText cho Ô1 — bare (chỉ ODF) nếu giá trị MỚI đang gõ khớp
+  // rack trung kế, ngược lại ghép đủ 3 phần như cũ. Dùng LẠI mỗi nơi Ô1 thay
+  // đổi (onChange/onBlur/applyOdfSuggestion) thay vì gọi buildTransitText
+  // thẳng, tránh lặp lại rule vừa thêm ở 3 chỗ.
+  function buildTransitTextForOdf(odfValue: string): string {
+    const trimmed = odfValue.trim();
+    const trunkCheck = trimmed ? matchTrunkPosition(trimmed, trunkPorts) : { matched: false as const };
+    if (trunkCheck.matched && trunkCheck.rackDomain === "trunk") return odfValue;
+    return buildTransitText(odfValue, transitDeviceName, transitDevicePort);
+  }
+
   // Gợi ý chuẩn hóa "Vị trí ODF" NGAY khi đang gõ (yêu cầu người dùng
   // 2026-07-28: bấm áp dụng cho nhanh, đỡ phải gõ lại) — cùng phép tính
   // matchTrunkPosition/formatCanonicalOdfPosition đã dùng ở onBlur bên dưới,
@@ -1825,7 +1863,7 @@ function EditRow({
   function applyOdfSuggestion() {
     if (!odfSuggestion) return;
     setTransitOdfPart(odfSuggestion);
-    onChange({ ...edit, transitText: buildTransitText(odfSuggestion, transitDeviceName, transitDevicePort) });
+    onChange({ ...edit, transitText: buildTransitTextForOdf(odfSuggestion) });
   }
 
   // Gợi ý cho trường hợp CHƯA tách được cấu trúc 2 (transitSplit=false) —
@@ -1889,9 +1927,10 @@ function EditRow({
   // có, vì thư viện lưu đúng dạng chuẩn "ODF x/y (a,b)".
   const libraryDeviceMatch = useMemo(() => {
     if (transitDeviceName.trim() || transitDevicePort.trim()) return null;
+    if (transitOdfTrunkMatch) return null; // khớp trung kế -> hiện tên tuyến cáp, không phải gợi ý thiết bị
     const odfForLookup = showSplit ? odfSuggestion ?? transitOdfPart : bareOdfSuggestion ?? edit.transitText;
     return findLibraryMatchByOdfAny(odfForLookup, devicePositionMap);
-  }, [transitDeviceName, transitDevicePort, showSplit, odfSuggestion, transitOdfPart, bareOdfSuggestion, edit.transitText, devicePositionMap]);
+  }, [transitDeviceName, transitDevicePort, transitOdfTrunkMatch, showSplit, odfSuggestion, transitOdfPart, bareOdfSuggestion, edit.transitText, devicePositionMap]);
 
   function applyLibraryDeviceMatch() {
     if (!libraryDeviceMatch) return;
@@ -2016,7 +2055,7 @@ function EditRow({
                   value={transitOdfPart}
                   onChange={(e) => {
                     setTransitOdfPart(e.target.value);
-                    onChange({ ...edit, transitText: buildTransitText(e.target.value, transitDeviceName, transitDevicePort) });
+                    onChange({ ...edit, transitText: buildTransitTextForOdf(e.target.value) });
                   }}
                   onBlur={() => {
                     // Chuẩn hóa lại "ODF x/y (a,b)" (yêu cầu người dùng
@@ -2027,7 +2066,7 @@ function EditRow({
                     const canonical = formatCanonicalOdfPosition(trunkMatch);
                     if (canonical && canonical !== transitOdfPart) {
                       setTransitOdfPart(canonical);
-                      onChange({ ...edit, transitText: buildTransitText(canonical, transitDeviceName, transitDevicePort) });
+                      onChange({ ...edit, transitText: buildTransitTextForOdf(canonical) });
                     }
                   }}
                 />
@@ -2051,85 +2090,108 @@ function EditRow({
                     💡 Đã có trong thư viện: {libraryDeviceMatch.deviceName} ({libraryDeviceMatch.devicePosition ?? "?"}) — bấm để điền
                   </button>
                 )}
-                {/* Ô Thiết bị + ô Port tách riêng (yêu cầu người dùng
-                    2026-07-29) — trước đây gộp 1 ô "Thiết bị (port)". */}
-                <input
-                  className="input"
-                  list="port-table-transit-device-options"
-                  placeholder="Thiết bị, vd: ADN1.PE2"
-                  value={transitDeviceName}
-                  onChange={(e) => {
-                    setTransitDeviceName(e.target.value);
-                    onChange({ ...edit, transitText: buildTransitText(transitOdfPart, e.target.value, transitDevicePort) });
-                  }}
-                  onBlur={() => {
-                    // Tự chuẩn hóa về đúng tên thật đang lưu trong devices
-                    // (nếu khớp được — cùng cơ chế/mức an toàn với ô ODF ở
-                    // trên, vì đều đối chiếu với dữ liệu THẬT trong DB).
-                    if (deviceNameSuggestion) applyDeviceNameSuggestion();
-                  }}
-                />
-                <datalist id="port-table-transit-device-options">
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.name} />
-                  ))}
-                </datalist>
-                {deviceNameSuggestion && (
-                  <button
-                    type="button"
-                    className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
-                    onClick={applyDeviceNameSuggestion}
-                    title="Bấm để thay bằng đúng tên đang lưu trong hồ sơ thiết bị"
-                  >
-                    💡 Gợi ý: {deviceNameSuggestion} — bấm để áp dụng
-                  </button>
-                )}
-                {showWillCreateDeviceHint && looseDeviceCandidate && (
-                  <button
-                    type="button"
-                    className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
-                    onClick={applyLooseDeviceCandidate}
-                    title="Bấm nếu đúng là thiết bị này — ghi nhớ cách gõ để lần sau tự nhận ra, không hỏi lại"
-                  >
-                    💡 Có thể là thiết bị đã có: {looseDeviceCandidate.name} — bấm để dùng thiết bị này
-                  </button>
-                )}
-                {showWillCreateDeviceHint && (
-                  <p className="text-xs text-amber-600">
-                    {looseDeviceCandidate
-                      ? "Nếu không đúng thiết bị gợi ý trên, sẽ hỏi tạo mới khi bấm Lưu."
-                      : "Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu."}
-                  </p>
-                )}
-                {matchedDevice && (
-                  <button
-                    type="button"
-                    className="self-start text-xs text-primary-600 hover:underline"
-                    onClick={() => setQuickView("device")}
-                  >
-                    Xem nhanh thiết bị này →
-                  </button>
-                )}
-                <input
-                  className="input"
-                  list="port-table-transit-device-port-options"
-                  placeholder="Port của thiết bị, vd: et-13/0/0"
-                  value={transitDevicePort}
-                  onChange={(e) => {
-                    setTransitDevicePort(e.target.value);
-                    onChange({ ...edit, transitText: buildTransitText(transitOdfPart, transitDeviceName, e.target.value) });
-                  }}
-                />
-                <datalist id="port-table-transit-device-port-options">
-                  {devicePortSamples.map((v) => (
-                    <option key={v} value={v} />
-                  ))}
-                </datalist>
-                {devicePortSamples.length > 0 && (
-                  <p className="text-xs text-slate-400">
-                    Mẫu port đã dùng cho thiết bị này: {devicePortSamples.slice(0, 6).join(", ")}
-                    {devicePortSamples.length > 6 ? "..." : ""}
-                  </p>
+                {transitOdfTrunkMatch ? (
+                  // Ô1 khớp thẳng 1 rack TRUNG KẾ khác — thay 2 ô Thiết bị/Port
+                  // tự do bằng thông tin CHỈ ĐỌC tự nhận diện (đối xứng chế độ
+                  // 1-ô gộp bareTrunkCableRouteName/bareTrunkPortDisplay phía
+                  // dưới) — KHÔNG xóa transitDeviceName/transitDevicePort
+                  // trong state, chỉ ẩn đi, để sửa lại Ô1 về dạng khác thì 2
+                  // ô này hiện lại đúng dữ liệu cũ đã gõ.
+                  <>
+                    <div className="mt-1 text-[11px] text-slate-400">
+                      Tên ODF trung kế (tự nhận diện — nối thẳng, không qua thiết bị)
+                    </div>
+                    <div className="input flex items-center bg-slate-100 text-slate-500">{transitOdfTrunkMatch.cableRouteName ?? "—"}</div>
+                    {transitOdfTrunkPortDisplay && (
+                      <>
+                        <div className="mt-1 text-[11px] text-slate-400">Port</div>
+                        <div className="input flex items-center bg-slate-100 text-slate-500">{transitOdfTrunkPortDisplay}</div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Ô Thiết bị + ô Port tách riêng (yêu cầu người dùng
+                        2026-07-29) — trước đây gộp 1 ô "Thiết bị (port)". */}
+                    <input
+                      className="input"
+                      list="port-table-transit-device-options"
+                      placeholder="Thiết bị, vd: ADN1.PE2"
+                      value={transitDeviceName}
+                      onChange={(e) => {
+                        setTransitDeviceName(e.target.value);
+                        onChange({ ...edit, transitText: buildTransitText(transitOdfPart, e.target.value, transitDevicePort) });
+                      }}
+                      onBlur={() => {
+                        // Tự chuẩn hóa về đúng tên thật đang lưu trong devices
+                        // (nếu khớp được — cùng cơ chế/mức an toàn với ô ODF ở
+                        // trên, vì đều đối chiếu với dữ liệu THẬT trong DB).
+                        if (deviceNameSuggestion) applyDeviceNameSuggestion();
+                      }}
+                    />
+                    <datalist id="port-table-transit-device-options">
+                      {devices.map((d) => (
+                        <option key={d.id} value={d.name} />
+                      ))}
+                    </datalist>
+                    {deviceNameSuggestion && (
+                      <button
+                        type="button"
+                        className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
+                        onClick={applyDeviceNameSuggestion}
+                        title="Bấm để thay bằng đúng tên đang lưu trong hồ sơ thiết bị"
+                      >
+                        💡 Gợi ý: {deviceNameSuggestion} — bấm để áp dụng
+                      </button>
+                    )}
+                    {showWillCreateDeviceHint && looseDeviceCandidate && (
+                      <button
+                        type="button"
+                        className="self-start rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-100"
+                        onClick={applyLooseDeviceCandidate}
+                        title="Bấm nếu đúng là thiết bị này — ghi nhớ cách gõ để lần sau tự nhận ra, không hỏi lại"
+                      >
+                        💡 Có thể là thiết bị đã có: {looseDeviceCandidate.name} — bấm để dùng thiết bị này
+                      </button>
+                    )}
+                    {showWillCreateDeviceHint && (
+                      <p className="text-xs text-amber-600">
+                        {looseDeviceCandidate
+                          ? "Nếu không đúng thiết bị gợi ý trên, sẽ hỏi tạo mới khi bấm Lưu."
+                          : "Chưa có trong hồ sơ thiết bị — sẽ hỏi tạo mới khi bấm Lưu."}
+                      </p>
+                    )}
+                    {matchedDevice && (
+                      <button
+                        type="button"
+                        className="self-start text-xs text-primary-600 hover:underline"
+                        onClick={() => setQuickView("device")}
+                      >
+                        Xem nhanh thiết bị này →
+                      </button>
+                    )}
+                    <input
+                      className="input"
+                      list="port-table-transit-device-port-options"
+                      placeholder="Port của thiết bị, vd: et-13/0/0"
+                      value={transitDevicePort}
+                      onChange={(e) => {
+                        setTransitDevicePort(e.target.value);
+                        onChange({ ...edit, transitText: buildTransitText(transitOdfPart, transitDeviceName, e.target.value) });
+                      }}
+                    />
+                    <datalist id="port-table-transit-device-port-options">
+                      {devicePortSamples.map((v) => (
+                        <option key={v} value={v} />
+                      ))}
+                    </datalist>
+                    {devicePortSamples.length > 0 && (
+                      <p className="text-xs text-slate-400">
+                        Mẫu port đã dùng cho thiết bị này: {devicePortSamples.slice(0, 6).join(", ")}
+                        {devicePortSamples.length > 6 ? "..." : ""}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
