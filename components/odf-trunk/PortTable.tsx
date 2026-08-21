@@ -405,6 +405,48 @@ export default function PortTable({
   // form" ở trang danh sách rack) — cùng cơ chế rowAnchor/highlightId đã có ở
   // DeviceCircuitList.tsx, áp dụng cho ĐÚNG 1 port (không phải cả nhóm/luồng).
   const [highlightPortId, setHighlightPortId] = useState<string | null>(null);
+  // Sửa "Sợi" (fiber_number) TRỰC TIẾP tại ô trong bảng (yêu cầu người dùng
+  // 2026-08-21: "chưa hỗ trợ chỉnh sửa port/sợi... dữ liệu hiện tại do import
+  // vào chứ chưa thấy sửa"). CHỈ cho sửa "Sợi", KHÔNG cho sửa "Port"
+  // (port_number) — port_number là số đang dùng để so khớp "ODF x/y (a,b)"
+  // ở khắp nơi (Vị trí ODF thiết bị, Chuyển tiếp, Thư viện vị trí thiết bị...
+  // xem matchTrunkPosition()); sửa port_number của 1 port ĐANG có luồng/đang
+  // được tham chiếu bằng text ở chỗ khác sẽ làm lệch âm thầm, không tự cập
+  // nhật theo — rủi ro cao hơn hẳn "Sợi" (chỉ dùng để hiển thị "(sợi X)" +
+  // tra ngược Sợi->Port, không có gì tham chiếu ngược). Xác nhận phạm vi này
+  // với người dùng trước khi làm (chỉ sửa Sợi, không sửa Port).
+  const [editingFiberPortId, setEditingFiberPortId] = useState<string | null>(null);
+  const [fiberDraft, setFiberDraft] = useState("");
+  const [fiberBusy, setFiberBusy] = useState(false);
+
+  function openFiberEdit(port: PortView) {
+    setEditingFiberPortId(port.id);
+    setFiberDraft(port.fiberNumber != null ? String(port.fiberNumber) : "");
+    setError(null);
+  }
+
+  async function saveFiberNumber(portId: string) {
+    const trimmed = fiberDraft.trim();
+    let value: number | null = null;
+    if (trimmed) {
+      const n = Number(trimmed);
+      if (!Number.isInteger(n) || n <= 0) {
+        setError('Số sợi phải là số nguyên dương, hoặc để trống nếu chưa biết.');
+        return;
+      }
+      value = n;
+    }
+    setFiberBusy(true);
+    setError(null);
+    const { error: err } = await supabase.from("ports").update({ fiber_number: value }).eq("id", portId);
+    setFiberBusy(false);
+    if (err) {
+      setError(translatePgError(err.message));
+      return;
+    }
+    setEditingFiberPortId(null);
+    refreshAndThen();
+  }
   useEffect(() => {
     function applyHash() {
       const hash = window.location.hash;
@@ -1408,9 +1450,51 @@ export default function PortTable({
       );
     }
     if (col === "fiber") {
+      const isEditingFiber = editingFiberPortId === port.id;
       return (
         <td key={col} className="px-3 py-2 text-slate-700">
-          {port.fiberNumber ?? "—"}
+          {isEditingFiber ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={1}
+                className="input w-16 py-0.5 text-sm"
+                value={fiberDraft}
+                onChange={(e) => setFiberDraft(e.target.value)}
+                autoFocus
+                disabled={fiberBusy}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveFiberNumber(port.id);
+                  if (e.key === "Escape") setEditingFiberPortId(null);
+                }}
+              />
+              <button
+                type="button"
+                className="text-xs text-primary-600 hover:underline disabled:text-slate-300"
+                onClick={() => saveFiberNumber(port.id)}
+                disabled={fiberBusy}
+              >
+                Lưu
+              </button>
+              <button
+                type="button"
+                className="text-xs text-slate-500 hover:underline"
+                onClick={() => setEditingFiberPortId(null)}
+                disabled={fiberBusy}
+              >
+                Hủy
+              </button>
+            </div>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              {port.fiberNumber ?? "—"}
+              <RoleGate allow={["operator", "admin"]}>
+                <button type="button" className="text-slate-300 hover:text-primary-600" title="Sửa số sợi" aria-label="Sửa số sợi" onClick={() => openFiberEdit(port)}>
+                  <IconEdit className="h-3.5 w-3.5" />
+                </button>
+              </RoleGate>
+            </span>
+          )}
         </td>
       );
     }

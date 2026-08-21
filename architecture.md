@@ -6051,3 +6051,32 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   hiện đúng "Tên ODF trung kế"/"Port" ngay từ đầu (không cần gõ lại) — người
   dùng tự xác nhận rồi bấm Lưu nếu đúng ý.
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 112. ODF trung kế — sửa được "Sợi" (fiber_number) trực tiếp tại bảng (2026-08-21)
+
+- **Yêu cầu người dùng**: "Hồ sơ ODF trung kế chưa hỗ trợ việc chỉnh sửa
+  port/sợi của 1 ODF, có trường hợp port khác sợi mà chưa biết sửa chỗ nào.
+  Dữ liệu hiện tại là do import vào và ghi nhận vậy chứ chưa thấy sửa." —
+  đúng: `RackAdminPanel.tsx` (Thêm port/Block ƯC) chỉ TẠO port mới (luôn gán
+  `fiber_number = port_number` mặc định), và `PortTable.tsx` chỉ HIỆN cột
+  "Sợi" (`port.fiberNumber ?? "—"`), không có ô/nút sửa nào cho port ĐÃ có.
+- **Hỏi phạm vi trước khi làm** (AskUserQuestion) — người dùng chọn "Chỉ cột
+  Sợi (Recommended)", KHÔNG mở sửa "Port" (`port_number`): `port_number` là
+  số đang dùng để so khớp "ODF x/y (a,b)" ở khắp nơi (`matchTrunkPosition()`
+  — Vị trí ODF thiết bị, Chuyển tiếp, Thư viện vị trí thiết bị...), sửa số
+  này cho 1 port ĐANG được tham chiếu bằng text ở chỗ khác sẽ làm lệch âm
+  thầm, không tự cập nhật theo (cùng họ rủi ro với các Mục 105/110 vừa sửa).
+  `fiber_number` ngược lại chỉ dùng để HIỂN THỊ ("(sợi X)") + tra ngược
+  Sợi->Port (`findPortsByFiberNumbers`), không có gì tham chiếu ngược lại nó
+  — an toàn để cho sửa tự do.
+- **Sửa `PortTable.tsx`** (component bảng chính, không phải `EditRow`) —
+  thêm sửa TRỰC TIẾP tại ô "Sợi" của TỪNG port (không gộp rowSpan, đã ghi
+  chú sẵn trong code "gắn với port vật lý, không phải thuộc tính của luồng"
+  — nên KHÔNG gộp chung vào form "Sửa" luồng, port trống vẫn sửa được):
+  click icon ✎ cạnh số sợi (chỉ `operator`/`admin`, qua `RoleGate`) → hiện ô
+  input số + nút Lưu/Hủy tại chỗ (Enter = Lưu, Esc = Hủy) → `UPDATE ports SET
+  fiber_number = ...`. Để trống = ghi `null` (chưa biết/gỡ số sợi đã gán
+  nhầm); có nhập thì validate số nguyên dương, sai thì báo lỗi ngay không
+  cho lưu. Dùng lại `refreshAndThen()` sẵn có (giữ `busy` xuyên suốt lúc chờ
+  `router.refresh()`, đúng pattern toàn file) sau khi lưu xong.
+- `npx tsc --noEmit` + `npm run build` sạch.
