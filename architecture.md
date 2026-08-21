@@ -6072,11 +6072,18 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
 - **Sửa `PortTable.tsx`** (component bảng chính, không phải `EditRow`) —
   thêm sửa TRỰC TIẾP tại ô "Sợi" của TỪNG port (không gộp rowSpan, đã ghi
   chú sẵn trong code "gắn với port vật lý, không phải thuộc tính của luồng"
-  — nên KHÔNG gộp chung vào form "Sửa" luồng, port trống vẫn sửa được):
-  click icon ✎ cạnh số sợi (chỉ `operator`/`admin`, qua `RoleGate`) → hiện ô
-  input số + nút Lưu/Hủy tại chỗ (Enter = Lưu, Esc = Hủy) → `UPDATE ports SET
-  fiber_number = ...`. Để trống = ghi `null` (chưa biết/gỡ số sợi đã gán
-  nhầm); có nhập thì validate số nguyên dương, sai thì báo lỗi ngay không
-  cho lưu. Dùng lại `refreshAndThen()` sẵn có (giữ `busy` xuyên suốt lúc chờ
-  `router.refresh()`, đúng pattern toàn file) sau khi lưu xong.
+  — nên KHÔNG gộp chung vào form "Sửa" luồng, port trống vẫn sửa được).
+  Bản đầu gắn icon ✎ riêng từng dòng — người dùng phản hồi ngay sau đó "quá
+  nhiều icon, giao diện không đẹp", đổi sang **1 nút bật/tắt CHUNG** ở
+  toolbar đầu bảng ("Sửa Sợi"/"Xong (Sợi)", chỉ `operator`/`admin` qua
+  `RoleGate`, cùng nếp `categoryEditMode` đã dùng cho "Lĩnh vực" ở
+  `DeviceCategoryClient.tsx`) — mặc định TẮT (chỉ hiện chữ số thường, không
+  icon gì cả); bật lên thì MỌI ô "Sợi" đang hiện trên bảng cùng lúc chuyển
+  thành ô nhập số, tự lưu khi rời ô (`onBlur`, Enter = rời ô luôn), không cần
+  bấm Lưu/Hủy riêng từng dòng. Để trống = ghi `null` (chưa biết/gỡ số sợi đã
+  gán nhầm); có nhập thì validate số nguyên dương, sai thì báo lỗi không cho
+  lưu; giá trị KHÔNG đổi thì bỏ qua (không gọi Supabase/refresh vô ích khi
+  chỉ tab qua ô mà không sửa gì). Dùng lại `refreshAndThen()` sẵn có (giữ
+  `busy` xuyên suốt lúc chờ `router.refresh()`, đúng pattern toàn file) sau
+  khi lưu xong.
 - `npx tsc --noEmit` + `npm run build` sạch.

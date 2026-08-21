@@ -42,6 +42,7 @@ import { applySyncFromTrunk, hasPositionChanged, hasTribChanged, type CircuitPai
 import CircuitPairSyncPanel from "@/components/data-quality/CircuitPairSyncPanel";
 import { translatePgError } from "@/lib/translatePgError";
 import RoleGate from "@/components/ui/RoleGate";
+import { useRole } from "@/components/RoleProvider";
 
 export interface PortView {
   id: string;
@@ -405,28 +406,30 @@ export default function PortTable({
   // form" ở trang danh sách rack) — cùng cơ chế rowAnchor/highlightId đã có ở
   // DeviceCircuitList.tsx, áp dụng cho ĐÚNG 1 port (không phải cả nhóm/luồng).
   const [highlightPortId, setHighlightPortId] = useState<string | null>(null);
-  // Sửa "Sợi" (fiber_number) TRỰC TIẾP tại ô trong bảng (yêu cầu người dùng
+  // Sửa "Sợi" (fiber_number) TRỰC TIẾP tại bảng (yêu cầu người dùng
   // 2026-08-21: "chưa hỗ trợ chỉnh sửa port/sợi... dữ liệu hiện tại do import
   // vào chứ chưa thấy sửa"). CHỈ cho sửa "Sợi", KHÔNG cho sửa "Port"
   // (port_number) — port_number là số đang dùng để so khớp "ODF x/y (a,b)"
   // ở khắp nơi (Vị trí ODF thiết bị, Chuyển tiếp, Thư viện vị trí thiết bị...
   // xem matchTrunkPosition()); sửa port_number của 1 port ĐANG có luồng/đang
   // được tham chiếu bằng text ở chỗ khác sẽ làm lệch âm thầm, không tự cập
-  // nhật theo — rủi ro cao hơn hẳn "Sợi" (chỉ dùng để hiển thị "(sợi X)" +
-  // tra ngược Sợi->Port, không có gì tham chiếu ngược). Xác nhận phạm vi này
-  // với người dùng trước khi làm (chỉ sửa Sợi, không sửa Port).
-  const [editingFiberPortId, setEditingFiberPortId] = useState<string | null>(null);
-  const [fiberDraft, setFiberDraft] = useState("");
+  // nhật theo — rủi ro cao hơn hẳn "Sợi". Xác nhận phạm vi này với người
+  // dùng trước khi làm (chỉ sửa Sợi, không sửa Port).
+  //
+  // Bật/tắt CHUNG cho cả bảng qua 1 nút Sửa (yêu cầu người dùng, phản hồi
+  // ngay sau đợt đầu: gắn icon ✎ riêng từng dòng "quá nhiều icon, giao diện
+  // không đẹp") — cùng nếp đã dùng cho "Lĩnh vực" ở DeviceCategoryClient.tsx
+  // (categoryEditMode): mặc định TẮT, chỉ hiện chữ số thường; bật lên thì
+  // MỌI ô "Sợi" cùng lúc chuyển thành ô nhập, tự lưu khi rời ô (blur) — đỡ
+  // phải bấm Lưu/Hủy riêng từng dòng.
+  const role = useRole();
+  const [fiberEditMode, setFiberEditMode] = useState(false);
+  const canEditFiber = fiberEditMode && (role === "operator" || role === "admin");
+  const [fiberDrafts, setFiberDrafts] = useState<Record<string, string>>({});
   const [fiberBusy, setFiberBusy] = useState(false);
 
-  function openFiberEdit(port: PortView) {
-    setEditingFiberPortId(port.id);
-    setFiberDraft(port.fiberNumber != null ? String(port.fiberNumber) : "");
-    setError(null);
-  }
-
-  async function saveFiberNumber(portId: string) {
-    const trimmed = fiberDraft.trim();
+  async function saveFiberNumber(portId: string, rawValue: string, currentFiberNumber: number | null) {
+    const trimmed = rawValue.trim();
     let value: number | null = null;
     if (trimmed) {
       const n = Number(trimmed);
@@ -436,6 +439,7 @@ export default function PortTable({
       }
       value = n;
     }
+    if (value === currentFiberNumber) return; // không đổi gì — khỏi ghi/refresh vô ích
     setFiberBusy(true);
     setError(null);
     const { error: err } = await supabase.from("ports").update({ fiber_number: value }).eq("id", portId);
@@ -444,7 +448,11 @@ export default function PortTable({
       setError(translatePgError(err.message));
       return;
     }
-    setEditingFiberPortId(null);
+    setFiberDrafts((prev) => {
+      const next = { ...prev };
+      delete next[portId];
+      return next;
+    });
     refreshAndThen();
   }
   useEffect(() => {
@@ -1450,51 +1458,28 @@ export default function PortTable({
       );
     }
     if (col === "fiber") {
-      const isEditingFiber = editingFiberPortId === port.id;
+      if (canEditFiber) {
+        const draftValue = fiberDrafts[port.id] ?? (port.fiberNumber != null ? String(port.fiberNumber) : "");
+        return (
+          <td key={col} className="px-3 py-2">
+            <input
+              type="number"
+              min={1}
+              className="input w-16 py-0.5 text-sm"
+              value={draftValue}
+              disabled={fiberBusy}
+              onChange={(e) => setFiberDrafts((prev) => ({ ...prev, [port.id]: e.target.value }))}
+              onBlur={() => saveFiberNumber(port.id, draftValue, port.fiberNumber)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+            />
+          </td>
+        );
+      }
       return (
         <td key={col} className="px-3 py-2 text-slate-700">
-          {isEditingFiber ? (
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                min={1}
-                className="input w-16 py-0.5 text-sm"
-                value={fiberDraft}
-                onChange={(e) => setFiberDraft(e.target.value)}
-                autoFocus
-                disabled={fiberBusy}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveFiberNumber(port.id);
-                  if (e.key === "Escape") setEditingFiberPortId(null);
-                }}
-              />
-              <button
-                type="button"
-                className="text-xs text-primary-600 hover:underline disabled:text-slate-300"
-                onClick={() => saveFiberNumber(port.id)}
-                disabled={fiberBusy}
-              >
-                Lưu
-              </button>
-              <button
-                type="button"
-                className="text-xs text-slate-500 hover:underline"
-                onClick={() => setEditingFiberPortId(null)}
-                disabled={fiberBusy}
-              >
-                Hủy
-              </button>
-            </div>
-          ) : (
-            <span className="inline-flex items-center gap-1">
-              {port.fiberNumber ?? "—"}
-              <RoleGate allow={["operator", "admin"]}>
-                <button type="button" className="text-slate-300 hover:text-primary-600" title="Sửa số sợi" aria-label="Sửa số sợi" onClick={() => openFiberEdit(port)}>
-                  <IconEdit className="h-3.5 w-3.5" />
-                </button>
-              </RoleGate>
-            </span>
-          )}
+          {port.fiberNumber ?? "—"}
         </td>
       );
     }
@@ -1675,6 +1660,19 @@ export default function PortTable({
           </button>
         )}
         <div className="ml-auto flex gap-2">
+          <RoleGate allow={["operator", "admin"]}>
+            <button
+              type="button"
+              className={`flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium ${
+                fiberEditMode ? "border-primary-600 bg-primary-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={() => setFiberEditMode((v) => !v)}
+              title="Bật để sửa trực tiếp cột &quot;Sợi&quot; của từng port"
+            >
+              <IconEdit className="h-4 w-4" />
+              {fiberEditMode ? "Xong (Sợi)" : "Sửa Sợi"}
+            </button>
+          </RoleGate>
           <button type="button" className="btn-secondary" onClick={() => setHistoryOpen(true)}>
             Lịch sử tra cứu
           </button>
