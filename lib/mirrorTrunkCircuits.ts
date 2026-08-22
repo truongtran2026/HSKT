@@ -4,6 +4,7 @@ import { fetchDeviceCircuits, type DeviceCircuitRow } from "@/lib/deviceCircuits
 import { splitOdfDeviceStructure } from "@/lib/parsers/transit-text";
 import { rowAnchor } from "@/lib/deviceCircuitAnchor";
 import { writeTransitForPorts } from "@/lib/transitLinks";
+import { normalizeDevicePositionKey } from "@/lib/deviceNotes";
 
 // scripts/sync-missing-trunk-circuits.ts (2026-07-28, xem architecture.md mục
 // 15) tự tạo 1 `circuits` MỚI bên trung kế cho mỗi luồng thiết bị có
@@ -301,6 +302,95 @@ export async function autoCreateTrunkMirrorForCircuit(
   }
 
   return createdAny ? { status: "created", ...createdAny } : { status: "no-gap" };
+}
+
+// Chiều NGƯỢC LẠI của autoCreateTrunkMirrorForCircuit ở trên (đó là
+// thiết bị -> tự tạo mirror trung kế; đây là trung kế -> tự tạo mirror thiết
+// bị) — người dùng phát hiện 2026-08-22: "Chuyển tiếp" bên trung kế trỏ sang
+// 1 thiết bị+Trib ADN1 đã có thật trong hệ thống (qua
+// maybeStandardizeTransitDevice()/PortTable.tsx — hàm đó CHỈ tạo `devices` +
+// làm giàu thư viện, KHÔNG tạo luôn `circuits` cho phía thiết bị) nhưng KHÔNG
+// tự sinh dòng "Hồ sơ đấu nối" tương ứng như chiều kia đã làm — lỗ hổng CÙNG
+// HỌ với mục 34/35/38 (autoCreateTrunkMirrorForCircuit/
+// autoCreateMirrorForCircuit) nhưng bỏ sót đúng chiều thứ 3 trong 3 cặp có
+// thể có (thiết bị-trung kế, trung kế-trung kế, thiết bị-thiết bị — cả 3 đều
+// đã có 1 chiều tự tạo từ lâu, CHỈ riêng "trung kế -> thiết bị" là chưa).
+//
+// KHÁC 2 hàm anh em ở trên: hàm này KHÔNG tự parse/resolve tên thiết bị (việc
+// đó đã làm xong ở maybeStandardizeTransitDevice() — cần confirm()/tạo mới
+// `devices` qua UI, không hợp để lặp lại ở tầng lib thuần) — nhận thẳng
+// deviceName đã chuẩn hóa + odf/trib đã tách sẵn từ nơi gọi.
+//
+// Quy ước `mirror_of_id` cho cặp thiết bị-trung kế (đối chiếu dữ liệu thật
+// 2026-08-22): LUÔN nằm ở dòng TRUNG KẾ, trỏ VỀ dòng thiết bị — kể cả khi
+// thiết bị được tạo SAU (như ở đây) thì vẫn phải cập nhật `mirror_of_id` của
+// CHÍNH dòng trung kế nguồn, không phải gắn ngược lại trên dòng thiết bị mới
+// tạo.
+export async function autoCreateDeviceMirrorForCircuit(
+  client: SupabaseClient,
+  params: {
+    trunkCircuitId: string;
+    trunkCircuitName: string;
+    trunkInterfaceType: string | null;
+    trunkCounterpartText: string | null;
+    /** Vị trí port THẬT của chính luồng trung kế này, dạng chuẩn "ODF x/y
+     *  (a,b)" — ghi vào device_position_next của luồng thiết bị mới tạo. */
+    trunkOwnPositionCanonical: string;
+    /** Tên thiết bị ĐÃ chuẩn hóa (đã qua resolveDeviceByExactOrAlias/tạo mới
+     *  ở nơi gọi) — phải khớp CHÍNH XÁC 1 dòng trong bảng devices. */
+    deviceName: string;
+    trib: string;
+    odf: string;
+  }
+): Promise<
+  | { status: "created" }
+  | { status: "linked" }
+  | { status: "no-gap" }
+  | { status: "occupied"; occupantCircuitId: string; occupantCircuitName: string }
+  | { status: "error"; message: string }
+> {
+  const supabase = client;
+  const { data: deviceRow, error: devErr } = await supabase.from("devices").select("id").eq("name", params.deviceName).maybeSingle();
+  if (devErr) return { status: "error", message: devErr.message };
+  if (!deviceRow) return { status: "no-gap" }; // không nên xảy ra nếu nơi gọi đã resolve/tạo devices xong trước
+
+  const tribKey = normalizeDevicePositionKey(params.trib);
+  const { data: existingRows, error: existErr } = await supabase.from("circuits").select("id, name, trib_text").eq("device_id", deviceRow.id);
+  if (existErr) return { status: "error", message: existErr.message };
+  const occupant = (existingRows ?? []).find((r) => r.trib_text && normalizeDevicePositionKey(r.trib_text) === tribKey);
+
+  if (occupant) {
+    // Trùng tên -> chắc chắn cùng 1 luồng thật, tự liên kết luôn (đối xứng
+    // case B của 2 hàm auto-mirror anh em) — khác tên thì báo "occupied" để
+    // tầng gọi hỏi xác nhận, không tự ý ghi đè.
+    if (occupant.name === params.trunkCircuitName) {
+      const { error: linkErr } = await supabase.from("circuits").update({ mirror_of_id: occupant.id }).eq("id", params.trunkCircuitId);
+      if (linkErr) return { status: "error", message: linkErr.message };
+      return { status: "linked" };
+    }
+    return { status: "occupied", occupantCircuitId: occupant.id, occupantCircuitName: occupant.name };
+  }
+
+  const { data: newCircuit, error: insErr } = await supabase
+    .from("circuits")
+    .insert({
+      name: params.trunkCircuitName,
+      interface_type: params.trunkInterfaceType,
+      counterpart_text: params.trunkCounterpartText,
+      device_id: deviceRow.id,
+      trib_text: params.trib,
+      device_position_own: params.odf,
+      device_position_next: params.trunkOwnPositionCanonical,
+      notes: `Tự tạo từ luồng trung kế "${params.trunkCircuitName}" (Chuyển tiếp) — tự động ngay lúc lưu luồng gốc, xem lib/mirrorTrunkCircuits.ts.`,
+    })
+    .select("id")
+    .single();
+  if (insErr || !newCircuit) return { status: "error", message: insErr?.message ?? "không tạo được circuit" };
+
+  const { error: mirrorErr } = await supabase.from("circuits").update({ mirror_of_id: newCircuit.id }).eq("id", params.trunkCircuitId);
+  if (mirrorErr) return { status: "error", message: mirrorErr.message };
+
+  return { status: "created" };
 }
 
 export interface MirrorGapScanSummary {

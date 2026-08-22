@@ -6087,3 +6087,48 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
   `busy` xuyên suốt lúc chờ `router.refresh()`, đúng pattern toàn file) sau
   khi lưu xong.
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 113. ODF trung kế — "Chuyển tiếp" trỏ tới thiết bị không tự tạo luồng bên "Hồ sơ đấu nối" (2026-08-22)
+
+- **Báo cáo người dùng**: luồng `100GE 2T9.P1 (7/0/1) - HCM.P1 (12/1/8)` tại
+  ODF1/11 (09,10) có "Chuyển tiếp" `ODF 3/7 (21,22) - ADN1.PSS24X#2 BB1
+  (S1-3)". Đã tạo thiết bị "ADN1.PSS24X#2 BB1" + đồng bộ thư viện xong,
+  nhưng "Hồ sơ đấu nối" vẫn không tự sinh dòng `ADN1.PSS24X#2 BB1 (S1-3) -
+  ODF 3/7 (21,22)` tương ứng.
+- **Xác nhận đúng là thiếu 1 chiều tự-tạo-mirror**: `maybeStandardizeTransitDevice()`
+  (`PortTable.tsx`) trước giờ CHỈ làm 2 việc khi "Chuyển tiếp" khớp cấu trúc
+  2 và trỏ tới thiết bị ADN1 — (a) hỏi tạo `devices` nếu chưa có, (b) làm
+  giàu `device_position_map` — rồi DỪNG LẠI, không hề tạo `circuits` cho
+  phía thiết bị. Trong khi đó chiều NGƯỢC LẠI (thiết bị -> tự tạo mirror
+  trung kế) đã có từ lâu qua `autoCreateTrunkMirrorForCircuit()` (mục 34,
+  gọi từ `DeviceCircuitList.tsx`). Đối chiếu dữ liệu thật xác nhận quy ước
+  `mirror_of_id` cho cặp thiết bị-trung kế LUÔN nằm ở dòng TRUNG KẾ trỏ về
+  dòng THIẾT BỊ (dò 144 dòng trung kế có `mirror_of_id`, cả 3 mẫu kiểm tra
+  đều đúng chiều này, kể cả trường hợp thiết bị được tạo SAU).
+- **Sửa**:
+  - `lib/mirrorTrunkCircuits.ts` — thêm `autoCreateDeviceMirrorForCircuit()`
+    (chiều thứ 3 còn thiếu trong 3 cặp có thể có: thiết bị-trung kế đã có cả
+    2 chiều tự tạo, trung kế-trung kế mục 39, riêng trung kế -> thiết bị mới
+    có ở đây). Nhận thẳng `deviceName` đã chuẩn hóa + `odf`/`trib` đã tách
+    sẵn từ nơi gọi (không tự resolve/tạo `devices` — việc đó cần `confirm()`
+    qua UI, đã làm xong ở `maybeStandardizeTransitDevice()`). Có/không đã có
+    luồng ở đúng Trib đó: trùng tên -> tự liên kết ("linked"); khác tên ->
+    "occupied" (tầng gọi hỏi xác nhận xóa+tạo lại, đối xứng
+    `autoCreateTrunkTrunkMirrorForCircuit`); trống -> tạo mới + tự set
+    `mirror_of_id` cho ĐÚNG dòng trung kế (không phải dòng thiết bị mới), set
+    `device_position_own` = phần ODF trong Chuyển tiếp, `device_position_next`
+    = vị trí port THẬT của chính luồng trung kế (dạng chuẩn).
+  - `PortTable.tsx` — `maybeStandardizeTransitDevice()` thêm tham số
+    `trunkInfo` (null khi port trống chỉ gõ "Chuyển tiếp", không có luồng
+    trung kế thật để mirror tới) — sau khi `canonicalName` resolve xong,
+    tính `trunkOwnPositionCanonical` (rack+port của chính luồng đang lưu,
+    qua `matchTrunkPosition`/`formatCanonicalOdfPosition`, cùng công thức đã
+    dùng ở Mục 105) rồi gọi `autoCreateDeviceMirrorForCircuit()`. Nhận tham
+    số qua object thay vì đọc thẳng state `edit` (TypeScript không hẹp được
+    `edit` non-null qua ranh giới hàm async định nghĩa ngoài `saveEdit()`) —
+    nơi gọi (`saveEdit()`, đã tự hẹp `edit` xong) truyền đúng giá trị đã có
+    sẵn (`activePortIds`, `circuitFields.name/interface_type/counterpart_text`).
+  - **Dọn ca thật người dùng báo** (script tạm, gọi thẳng hàm vừa thêm — đã
+    xóa sau khi dùng): tạo thành công luồng `ADN1.PSS24X#2 BB1 (S1-3)` mirror
+    với luồng trung kế trên, đã verify `mirror_of_id` gắn đúng chiều.
+- `npx tsc --noEmit` + `npm run build` sạch.

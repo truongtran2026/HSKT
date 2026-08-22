@@ -13,7 +13,11 @@ import { growDevicePositionMapByTrib } from "@/lib/devicePositionMap";
 import { splitOdfDeviceStructure, parseTransitText, isManagedStationCode } from "@/lib/parsers/transit-text";
 import { writeTransitForPorts } from "@/lib/transitLinks";
 import { matchTrunkPosition, formatCanonicalOdfPosition, matchBareTrunkLink, transitDisplay, type TrunkPortRow } from "@/lib/trunkPorts";
-import { autoCreateTrunkTrunkMirrorForCircuit, replaceOccupantAndCreateTrunkTrunkMirror } from "@/lib/mirrorTrunkCircuits";
+import {
+  autoCreateTrunkTrunkMirrorForCircuit,
+  replaceOccupantAndCreateTrunkTrunkMirror,
+  autoCreateDeviceMirrorForCircuit,
+} from "@/lib/mirrorTrunkCircuits";
 import { distinctPositionsForDevice, findLibraryMatchByOdfAny, type DevicePositionMapRow } from "@/lib/devicePositionMap";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useColumnVisibility } from "@/lib/useColumnVisibility";
@@ -694,7 +698,22 @@ export default function PortTable({
   // viện "Vị trí thiết bị" theo device+port đã biết chắc (xem
   // growDevicePositionMapByTrib). Không chặn việc lưu Chuyển tiếp dù bước này
   // thất bại hay bị từ chối — chỉ là bước phụ sau khi đã lưu xong.
-  async function maybeStandardizeTransitDevice(transitText: string) {
+  // `trunkInfo`: null nếu port trống chỉ gõ mỗi "Chuyển tiếp" (KHÔNG có luồng
+  // trung kế thật nào để mirror sang thiết bị) — có giá trị thì dùng để tự
+  // tạo mirror bên "Hồ sơ đấu nối" ở cuối hàm (thêm 2026-08-22). Nhận qua
+  // tham số thay vì đọc thẳng `edit` (state ngoài, TypeScript không hẹp được
+  // kiểu non-null qua ranh giới hàm async riêng) — nơi gọi (saveEdit(), đã tự
+  // hẹp `edit` xong) truyền đúng giá trị đã tính sẵn.
+  async function maybeStandardizeTransitDevice(
+    transitText: string,
+    trunkInfo: {
+      trunkCircuitId: string;
+      activePortIds: string[];
+      circuitName: string;
+      interfaceType: string | null;
+      counterpartText: string | null;
+    } | null
+  ) {
     const split = splitOdfDeviceStructure(transitText);
     if (!split.matched || !split.odfPart || !split.devicePortText) return;
     const parsed = parseTransitText(split.devicePortText);
@@ -737,6 +756,59 @@ export default function PortTable({
       }
       if (!canonicalName) return; // không thể xảy ra (mọi nhánh trên đều gán), chỉ để TypeScript hẹp kiểu an toàn
       await growDevicePositionMapByTrib(supabase, canonicalName, port, odf);
+
+      // Tự tạo luồng "Hồ sơ đấu nối" (bên thiết bị) mirror với luồng trung kế
+      // này — người dùng phát hiện 2026-08-22: "đã tạo mới vào đồng bộ"
+      // (devices/thư viện) NHƯNG "Hồ sơ đấu nối" vẫn không tự sinh dòng
+      // tương ứng. Trước đây hàm này DỪNG Ở TRÊN (chỉ devices + thư viện) —
+      // đúng CHIỀU đối xứng còn thiếu so với autoCreateTrunkMirrorForCircuit
+      // (thiết bị -> trung kế) đã có từ mục 34. Bỏ qua khi trunkInfo null
+      // (chưa có luồng trung kế thật nào để mirror tới).
+      if (trunkInfo) {
+        const rackCode = trunkPorts.find((p) => p.portId === trunkInfo.activePortIds[0])?.rackCode;
+        const portNumbers = trunkInfo.activePortIds
+          .map((id) => trunkPorts.find((p) => p.portId === id)?.portNumber)
+          .filter((n): n is number => n != null)
+          .sort((a, b) => a - b);
+        const ownCanonical =
+          rackCode && portNumbers.length > 0
+            ? formatCanonicalOdfPosition(matchTrunkPosition(`${rackCode}(${portNumbers.join(",")})`, trunkPorts))
+            : null;
+        if (ownCanonical) {
+          const deviceMirrorParams = {
+            trunkCircuitId: trunkInfo.trunkCircuitId,
+            trunkCircuitName: trunkInfo.circuitName,
+            trunkInterfaceType: trunkInfo.interfaceType,
+            trunkCounterpartText: trunkInfo.counterpartText,
+            trunkOwnPositionCanonical: ownCanonical,
+            deviceName: canonicalName,
+            trib: port,
+            odf,
+          };
+          const deviceMirrorResult = await autoCreateDeviceMirrorForCircuit(supabase, deviceMirrorParams);
+          if (deviceMirrorResult.status === "occupied") {
+            // Đối xứng case B của autoCreateTrunkTrunkMirrorForCircuit ở
+            // saveEdit(): trùng tên thì hàm đã tự liên kết ("linked"), tới
+            // đây chỉ còn ca khác tên — hỏi xác nhận trước khi xóa+tạo lại.
+            const ok = confirm(
+              `Thiết bị "${canonicalName}" đã có luồng khác ở đúng Trib "${port}": "${deviceMirrorResult.occupantCircuitName}" — không trùng tên với luồng trung kế vừa lưu ("${deviceMirrorParams.trunkCircuitName}").\n\nXÓA luồng thiết bị đó và TẠO LẠI đúng theo luồng trung kế vừa lưu?`
+            );
+            if (ok) {
+              const { error: delErr } = await supabase.from("circuits").delete().eq("id", deviceMirrorResult.occupantCircuitId);
+              if (delErr) {
+                setError(`Đã lưu "Chuyển tiếp", nhưng xóa luồng thiết bị cũ thất bại: ${translatePgError(delErr.message)}`);
+              } else {
+                const retry = await autoCreateDeviceMirrorForCircuit(supabase, deviceMirrorParams);
+                if (retry.status === "error") {
+                  setError(`Đã xóa luồng thiết bị cũ, nhưng tạo lại thất bại: ${translatePgError(retry.message)}`);
+                }
+              }
+            }
+          } else if (deviceMirrorResult.status === "error") {
+            setError(`Đã lưu "Chuyển tiếp", nhưng tự tạo luồng thiết bị liên kết thất bại: ${translatePgError(deviceMirrorResult.message)}`);
+          }
+        }
+      }
     } catch (e) {
       setError(
         `Đã lưu "Chuyển tiếp", nhưng chuẩn hóa thiết bị/thư viện thất bại: ${e instanceof Error ? translatePgError(e.message) : String(e)}`
@@ -816,7 +888,10 @@ export default function PortTable({
         // port đang active) vào 1 hàm dùng chung với các nơi ghi khác, thêm
         // sẵn bảo vệ 11 luồng khuếch đại/DWDM có Tx/Rx đi khác port thật.
         await writeTransitForPorts(supabase, activePortIds, transitOnly || null);
-        if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly);
+        // trunkCircuitId=null — port trống, chỉ gõ mỗi "Chuyển tiếp", KHÔNG
+        // có luồng trung kế thật nào để mirror sang thiết bị (xem comment ở
+        // khai báo hàm).
+        if (transitOnly !== "") await maybeStandardizeTransitDevice(transitOnly, null);
         refreshAndThen(() => setEdit(null));
         return;
       }
@@ -903,7 +978,14 @@ export default function PortTable({
       // luồng khuếch đại/DWDM đã xác nhận Tx/Rx đi khác port thật.
       const transitText = edit.transitText.trim();
       await writeTransitForPorts(supabase, activePortIds, transitText || null);
-      if (transitText !== "") await maybeStandardizeTransitDevice(transitText);
+      if (transitText !== "")
+        await maybeStandardizeTransitDevice(transitText, {
+          trunkCircuitId: circuitId,
+          activePortIds,
+          circuitName: circuitFields.name,
+          interfaceType: circuitFields.interface_type,
+          counterpartText: circuitFields.counterpart_text,
+        });
 
       // Tự tạo mirror trung kế-trung kế nếu "Chuyển tiếp" vừa lưu trỏ sang 1
       // port trung kế THẬT khác đang trống (yêu cầu người dùng 2026-07-31,
