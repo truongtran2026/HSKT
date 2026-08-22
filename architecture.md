@@ -6132,3 +6132,28 @@ Các quyết định dưới đây đã hỏi và được người dùng xác n
     xóa sau khi dùng): tạo thành công luồng `ADN1.PSS24X#2 BB1 (S1-3)` mirror
     với luồng trung kế trên, đã verify `mirror_of_id` gắn đúng chiều.
 - `npx tsc --noEmit` + `npm run build` sạch.
+
+## 114. "Hồ sơ đấu nối" — thiếu tick tự đặt tên luồng khi "Vị trí ODF (tiếp theo)" trỏ thẳng ra trung kế (chế độ Cáp quang) (2026-08-22)
+
+- **Báo cáo người dùng**: sửa luồng `ADN1.BNG#1 (1/1/5)` (thực ra
+  `100GE AĐN1.BNG#1 (1/1/5) - IDC3.SW/Media.OTT`) không thấy các ô tick để
+  tự đặt tên luồng như bên form Thêm mới.
+- **Xác nhận**: dò DB, `device_position_next` của luồng này là
+  `ODF 2/10 (47,48)` — khớp thẳng 1 rack `domain='trunk'`
+  (`48FO#3 ADN1 - T2-T3`), nên `renderCircuitFormFields()` rơi vào nhánh
+  `isCableMode` (Ô2/Ô3 khóa read-only, tự điền tên tuyến cáp + sợi quang).
+  Nhánh này **chưa bao giờ có ô tick** — quyết định gốc 2026-07-27 "không có
+  tick cho Cáp quang/Sợi quang" — trong khi nhánh còn lại (Ô2 free-text tên
+  thiết bị) đã có tick từ đầu. Vậy 2 ticks còn lại (Thiết bị/own, Đối
+  phương/counterpart) VẪN hiện bình thường trong form Sửa (đã đúng từ mục
+  2026-08-02 "2 form thêm/sửa phải giống nhau") — chỉ riêng ô "Cáp quang
+  (tiếp theo)" là chưa từng có tick, ở CẢ form Thêm lẫn Sửa (không phải lỗi
+  riêng của Sửa, nhưng đúng là thiếu so với kỳ vọng người dùng).
+- **Sửa**: `components/odf-device/DeviceCircuitList.tsx` — thêm ô tick vào
+  nhãn "Cáp quang (tiếp theo)" trong nhánh `isCableMode`, dùng chung ĐÚNG
+  state/hàm `nameTicks.next`/`toggleNameTick("next")` với nhánh Thiết bị —
+  không cần logic tính tên mới vì `computeAutoName()`/`nameTickPart()` đã
+  ghép text từ `positionNextDevice`/`positionNextTrib`, mà 2 ô này ở chế độ
+  Cáp quang đã tự điền sẵn tên tuyến cáp + danh sách sợi quang (xem onChange
+  Ô1) — chỉ thiếu đúng cái checkbox.
+- `npx tsc --noEmit` + `npm run build` sạch.

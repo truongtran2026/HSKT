@@ -2072,7 +2072,24 @@ export default function DeviceCircuitList({
           />
           {isCableMode ? (
             <>
-              <div className="mt-1 text-[11px] text-slate-400">
+              <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                {/* Tick cho chế độ Cáp quang (thêm 2026-08-22, người dùng báo
+                    thiếu khi sửa 1 luồng mà "Chuyển tiếp" trỏ thẳng ra trung
+                    kế): trước đây CHỈ chế độ Thiết bị mới có tick — quyết định
+                    2026-07-27 "không có tick cho Cáp quang/Sợi quang" giờ bỏ,
+                    vì dùng chung ĐÚNG state/hàm nameTicks.next/toggleNameTick
+                    — computeAutoName() ghép text từ positionNextDevice/
+                    positionNextTrib, mà 2 ô này ở chế độ Cáp quang đã tự điền
+                    sẵn tên tuyến cáp + sợi (xem onChange Ô1 phía trên), nên
+                    không cần logic tính tên riêng, chỉ thiếu ô tick. */}
+                {enableNameTicks && (
+                  <input
+                    type="checkbox"
+                    checked={nameTicks.next}
+                    onChange={() => toggleNameTick("next")}
+                    title="Dùng tuyến cáp quang (tiếp theo) này để tự đặt tên luồng (tối đa 2 mục)"
+                  />
+                )}
                 Cáp quang (tiếp theo) <span className="text-red-500">*</span>
               </div>
               {/* Read-only (yêu cầu người dùng: khóa không cho sửa tay để đảm
@@ -2104,9 +2121,9 @@ export default function DeviceCircuitList({
           ) : (
             <>
               <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
-                {/* Tick "dùng để tự đặt tên luồng" — CHỈ khi enableNameTicks
-                    (form Thêm mới) VÀ đang ở chế độ Thiết bị (yêu cầu người
-                    dùng 2026-07-27: không có tick cho Cáp quang/Sợi quang). */}
+                {/* Tick "dùng để tự đặt tên luồng" — cùng state/hàm với tick
+                    ở chế độ Cáp quang phía trên (từ 2026-08-22 cả 2 chế độ
+                    đều có tick, xem chú thích ở nhánh isCableMode). */}
                 {enableNameTicks && (
                   <input
                     type="checkbox"
